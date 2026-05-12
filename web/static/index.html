@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>需求管理系统</title>
+    <link rel="stylesheet" href="static/style.css?v=9">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+</head>
+<body>
+    <!-- 左侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h1 class="logo">ReqFlow</h1>
+        </div>
+        <div class="sidebar-section">
+            <div class="section-title">
+                <span>项目</span>
+                <button class="btn-icon" onclick="showProjectModal()" title="新建项目">+</button>
+            </div>
+            <div id="project-list" class="nav-list"></div>
+        </div>
+        <div class="sidebar-section" id="version-section" style="display:none">
+            <div class="section-title">
+                <span id="version-section-label">版本</span>
+                <button class="btn-icon" onclick="showVersionModal()" title="新建版本">+</button>
+            </div>
+            <div id="version-list" class="nav-list"></div>
+        </div>
+        <div class="sidebar-footer">
+            <div class="stats-mini" id="sidebar-stats"></div>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="main" id="main">
+        <!-- 欢迎页 -->
+        <div class="welcome" id="welcome-view">
+            <div class="welcome-icon">&#128203;</div>
+            <h2>需求管理系统</h2>
+            <p>选择左侧项目和版本，或创建一个新项目开始</p>
+            <button class="btn-primary" onclick="showProjectModal()">创建第一个项目</button>
+            <button class="btn-arch" id="btn-welcome-arch" style="display:none" onclick="showArchView()">查看架构文档</button>
+        </div>
+
+        <!-- 需求看板视图 -->
+        <div class="board-view" id="board-view" style="display:none">
+            <div class="board-header">
+                <div class="board-title">
+                    <h2 id="board-title-text"></h2>
+                    <span class="version-badge" id="board-version-badge"></span>
+                </div>
+                <div class="board-actions">
+                    <div class="view-toggle">
+                        <button class="toggle-btn active" id="btn-board-mode" onclick="switchView('board')">看板</button>
+                        <button class="toggle-btn" id="btn-tag-mode" onclick="switchView('tag')" style="display:none">标签</button>
+                        <button class="toggle-btn" id="btn-arch-mode" onclick="switchView('arch')">架构</button>
+                    </div>
+                    <input type="text" id="search-input" placeholder="搜索需求 / 输入编号跳转..." class="search-input" oninput="onSearchInput()" onkeydown="if(event.key==='Enter')onSearchEnter()"/>
+                    <select id="filter-priority" class="filter-select" onchange="onFilterChange()">
+                        <option value="">全部优先级</option>
+                        <option value="P0">P0 紧急</option>
+                        <option value="P1">P1 高</option>
+                        <option value="P2">P2 中</option>
+                        <option value="P3">P3 低</option>
+                    </select>
+                    <button class="btn-primary" onclick="showReqModal()">+ 新建需求</button>
+                </div>
+            </div>
+            <!-- 可折叠描述区域（看板视图：版本描述 / 标签视图：标签描述） -->
+            <details class="desc-collapsible" id="desc-collapsible" style="display:none">
+                <summary class="desc-toggle" id="desc-toggle-label">版本介绍</summary>
+                <div class="desc-body md-content" id="desc-body"></div>
+            </details>
+            <div class="board-columns" id="board-columns"></div>
+
+            <!-- 标签视图 -->
+            <div class="tag-view" id="tag-view" style="display:none">
+                <div class="tag-list" id="tag-list"></div>
+                <div class="tag-detail" id="tag-detail" style="display:none"></div>
+            </div>
+        </div>
+
+        <!-- 项目文档视图（架构/Advisor Skill/产品记忆） -->
+        <div class="arch-view" id="arch-view" style="display:none">
+            <div class="arch-header">
+                <h2 id="arch-title"></h2>
+                <button class="btn-cancel" onclick="hideArchView()">返回</button>
+            </div>
+            <div class="doc-tabs" id="doc-tabs">
+                <button class="doc-tab active" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
+                <button class="doc-tab" data-tab="skill" onclick="switchDocTab('skill')">Advisor Skill</button>
+                <button class="doc-tab" data-tab="memory" onclick="switchDocTab('memory')">产品记忆</button>
+            </div>
+            <div class="arch-content md-content" id="arch-content"></div>
+            <div class="arch-actions" id="arch-actions">
+                <button class="btn-primary" id="btn-arch-edit" onclick="toggleArchEdit()">编辑</button>
+                <button class="btn-secondary" id="btn-load-template" onclick="loadTemplate()" style="display:none">从模板创建</button>
+                <button class="btn-secondary" id="btn-view-template" onclick="viewTemplate()" style="display:none">查看通用模板</button>
+            </div>
+            <div class="arch-editor hidden" id="arch-editor">
+                <textarea id="arch-textarea" rows="20" placeholder="使用 Markdown 格式编写..."></textarea>
+                <div class="arch-editor-actions">
+                    <button class="btn-cancel" onclick="cancelArchEdit()">取消</button>
+                    <button class="btn-primary" onclick="saveDoc()">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模板预览弹窗 -->
+        <div class="modal-overlay hidden" id="template-modal" onclick="closeModal('template-modal', event)">
+            <div class="modal modal-lg" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>通用产品顾问 Skill 模板</h3>
+                    <button class="modal-close" onclick="hideModal('template-modal')">&times;</button>
+                </div>
+                <div class="modal-body" style="max-height:70vh;overflow-y:auto">
+                    <div class="md-content" id="template-preview-content"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-cancel" onclick="hideModal('template-modal')">关闭</button>
+                    <button class="btn-primary" onclick="useTemplate()">使用此模板</button>
+                </div>
+            </div>
+        </div>
+        </div>
+    </main>
+
+    <!-- 项目弹窗 -->
+    <div class="modal-overlay hidden" id="project-modal" onclick="closeModal('project-modal', event)">
+        <div class="modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="project-modal-title">新建项目</h3>
+                <button class="modal-close" onclick="hideModal('project-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label>项目名称 <span class="req">*</span></label>
+                <input type="text" id="proj-name" placeholder="例如：商城系统" />
+                <label>项目描述</label>
+                <textarea id="proj-desc" rows="3" placeholder="简要描述项目目标"></textarea>
+                <label>主题色</label>
+                <div class="color-picker" id="color-picker">
+                    <button class="color-dot selected" data-color="#4f46e5" style="background:#4f46e5" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#0891b2" style="background:#0891b2" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#059669" style="background:#059669" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#d97706" style="background:#d97706" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#dc2626" style="background:#dc2626" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#7c3aed" style="background:#7c3aed" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#db2777" style="background:#db2777" onclick="pickColor(this)"></button>
+                    <button class="color-dot" data-color="#475569" style="background:#475569" onclick="pickColor(this)"></button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="hideModal('project-modal')">取消</button>
+                <button class="btn-primary" onclick="saveProject()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 版本弹窗 -->
+    <div class="modal-overlay hidden" id="version-modal" onclick="closeModal('version-modal', event)">
+        <div class="modal modal-sm" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="version-modal-title">新建版本</h3>
+                <button class="modal-close" onclick="hideModal('version-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label>版本号 <span class="req">*</span></label>
+                <input type="text" id="ver-name" placeholder="例如：v1.0.0" />
+                <label>版本说明</label>
+                <textarea id="ver-desc" rows="2" placeholder="本版本主要目标"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="hideModal('version-modal')">取消</button>
+                <button class="btn-primary" onclick="saveVersion()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 需求弹窗 -->
+    <div class="modal-overlay hidden" id="req-modal" onclick="closeModal('req-modal', event)">
+        <div class="modal modal-lg" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="req-modal-title">新建需求</h3>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <button class="btn-fullscreen" id="btn-fullscreen" onclick="toggleFullscreen()" title="全屏">&#x26F6;</button>
+                    <button class="modal-close" onclick="hideModal('req-modal')">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="modal-body-left">
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label>标题 <span class="req">*</span></label>
+                            <input type="text" id="req-title" placeholder="需求标题" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label>描述 <span class="hint">支持 Markdown</span>
+                                <button type="button" class="btn-preview" id="btn-desc-preview" onclick="toggleDescPreview()">预览</button>
+                            </label>
+                            <textarea id="req-desc" rows="6" placeholder="支持 Markdown：# 标题、**粗体**、- 列表、`代码`、| 表格 |" oninput="updateDescPreview()"></textarea>
+                            <div id="req-desc-preview" class="md-preview hidden"></div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>优先级</label>
+                            <select id="req-priority">
+                                <option value="P0">P0 紧急</option>
+                                <option value="P1">P1 高</option>
+                                <option value="P2" selected>P2 中</option>
+                                <option value="P3">P3 低</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>状态</label>
+                            <select id="req-status">
+                                <option value="pending">待开发</option>
+                                <option value="dev">开发中</option>
+                                <option value="testing">测试中</option>
+                                <option value="done">已完成</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row" id="commits-section" style="display:none">
+                        <div class="form-group flex-1">
+                            <div id="commits-list"></div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-1">
+                            <label>备注</label>
+                            <textarea id="req-notes" rows="3" placeholder="完成说明、技术方案、已知限制"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-row" id="comments-section-inline" style="display:none">
+                        <div class="form-group flex-1">
+                            <label>评论</label>
+                            <div id="comment-list-inline" class="comment-list"></div>
+                            <div class="comment-input-area">
+                                <textarea id="comment-input-inline" rows="2" placeholder="添加评论，支持 Markdown..."></textarea>
+                                <button class="btn-primary btn-sm" onclick="addComment()">发送</button>
+                            </div>
+                        </div>
+                    </div>
+                    <details style="margin-top:8px">
+                        <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none">更多字段（负责人、工时、截止日期、标签、附件）</summary>
+                        <div style="margin-top:8px">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>负责人</label>
+                                    <input type="text" id="req-assignee" placeholder="负责人" />
+                                </div>
+                                <div class="form-group">
+                                    <label>截止日期</label>
+                                    <input type="date" id="req-deadline" />
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>预估工时(h)</label>
+                                    <input type="number" id="req-hours" min="0" step="0.5" value="0" />
+                                </div>
+                                <div class="form-group">
+                                    <label>实际工时(h)</label>
+                                    <input type="number" id="req-actual" min="0" step="0.5" value="0" />
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group flex-1">
+                                    <label>标签 <span class="hint">逗号分隔</span></label>
+                                    <input type="text" id="req-tags" placeholder="例如：feature, UI, 后端" />
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group flex-1">
+                                    <label>附件</label>
+                                    <div class="attachment-area">
+                                        <div id="attachment-list" class="attachment-list"></div>
+                                        <label class="upload-btn">
+                                            <input type="file" id="file-upload" multiple style="display:none" onchange="handleFileSelect(this)" />
+                                            + 上传文件
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+                <div class="modal-body-right" id="comments-panel">
+                    <label>评论</label>
+                    <div id="comment-list" class="comment-list"></div>
+                    <div class="comment-input-area">
+                        <textarea id="comment-input" rows="2" placeholder="添加评论，支持 Markdown..."></textarea>
+                        <button class="btn-primary btn-sm" onclick="addComment()">发送</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="hideModal('req-modal')">取消</button>
+                <button class="btn-primary" onclick="saveRequirement()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/app.js?v=12"></script>
+</body>
+</html>
