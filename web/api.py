@@ -304,6 +304,195 @@ async def delete_comment(cid: int, db: aiosqlite.Connection = Depends(get_db)):
     await db.commit()
     return {"ok": True}
 
+
+# ==================== 1b. Missing CRUD Endpoints ====================
+
+@router.get("/requirements/by-code/{code}")
+async def get_requirement_by_code(code: str, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute(
+        "SELECT r.*, v.project_id FROM requirements r "
+        "JOIN versions v ON r.version_id=v.id WHERE r.code=?", (code.upper(),)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, f"requirement {code} not found")
+    return dict(row)
+
+
+@router.get("/tags")
+async def list_tags(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
+    if not project_id:
+        return []
+    cursor = await db.execute(
+        "SELECT r.tags FROM requirements r JOIN versions v ON r.version_id=v.id "
+        "WHERE v.project_id=? AND r.archived=0 AND r.tags != '[]' AND r.tags != ''",
+        (project_id,),
+    )
+    rows = await cursor.fetchall()
+    import json as _json
+    tag_stats = {}
+    for row in rows:
+        try:
+            tags = _json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        for t in tags:
+            if t not in tag_stats:
+                tag_stats[t] = {"tag": t, "total": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0, "description": ""}
+            tag_stats[t]["total"] += 1
+
+    cursor = await db.execute(
+        "SELECT r.tags, r.status FROM requirements r JOIN versions v ON r.version_id=v.id "
+        "WHERE v.project_id=? AND r.archived=0 AND r.tags != '[]' AND r.tags != ''",
+        (project_id,),
+    )
+    for row in await cursor.fetchall():
+        try:
+            tags = _json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        status = row[1]
+        for t in tags:
+            if t in tag_stats and status in tag_stats[t]:
+                tag_stats[t][status] += 1
+
+    return list(tag_stats.values())
+
+
+@router.get("/tags/{tag}/requirements")
+async def get_tag_requirements(tag: str, project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
+    import json as _json
+    cursor = await db.execute(
+        "SELECT r.*, v.name as version_name FROM requirements r "
+        "JOIN versions v ON r.version_id=v.id "
+        "WHERE v.project_id=? AND r.archived=0 AND r.tags LIKE ?",
+        (project_id, f'%{tag}%'),
+    )
+    reqs = [dict(row) for row in await cursor.fetchall()]
+    filtered = []
+    for r in reqs:
+        try:
+            tags = _json.loads(r.get("tags", "[]"))
+        except (ValueError, TypeError):
+            tags = []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        if tag in tags:
+            filtered.append(r)
+
+    grouped = {"pending": [], "dev": [], "testing": [], "done": []}
+    for r in filtered:
+        if r["status"] in grouped:
+            grouped[r["status"]].append(r)
+
+    done_count = len(grouped["done"])
+    return {
+        "tag": tag,
+        "description": "",
+        "summary": {"total": len(filtered), "done": done_count},
+        "grouped": grouped,
+    }
+
+
+@router.get("/projects/{pid}/architecture")
+async def get_architecture(pid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT content FROM project_architecture WHERE project_id=?", (pid,))
+    row = await cursor.fetchone()
+    return {"content": row[0] if row else ""}
+
+
+@router.put("/projects/{pid}/architecture")
+async def put_architecture(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    from fastapi import Body
+    content = body.get("content", "")
+    cursor = await db.execute("SELECT 1 FROM project_architecture WHERE project_id=?", (pid,))
+    if await cursor.fetchone():
+        await db.execute("UPDATE project_architecture SET content=?, updated_at=datetime('now','localtime') WHERE project_id=?", (content, pid))
+    else:
+        await db.execute("INSERT INTO project_architecture (project_id, content) VALUES (?,?)", (pid, content))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/projects/{pid}/advisor-skill")
+async def get_advisor_skill(pid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT advisor_skill FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    return {"content": row[0] if row else ""}
+
+
+@router.put("/projects/{pid}/advisor-skill")
+async def put_advisor_skill(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    content = body.get("content", "")
+    await db.execute("UPDATE projects SET advisor_skill=?, updated_at=datetime('now','localtime') WHERE id=?", (content, pid))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/projects/{pid}/product-memory")
+async def get_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    return {"content": row[0] if row else ""}
+
+
+@router.put("/projects/{pid}/product-memory")
+async def put_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    content = body.get("content", "")
+    await db.execute("UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?", (content, pid))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/skill-template")
+async def get_skill_template():
+    template_path = os.path.join(os.path.dirname(__file__), "skill_template.md")
+    if os.path.exists(template_path):
+        with open(template_path, "r") as f:
+            return {"content": f.read()}
+    return {"content": "# 产品顾问 Skill 模板\n\n暂无模板内容，请联系管理员配置。"}
+
+
+@router.post("/requirements/{rid}/attachments")
+async def upload_attachment(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    from fastapi import UploadFile, File, Request
+    return {"error": "attachment upload not yet implemented"}
+
+
+@router.delete("/attachments/{aid}")
+async def delete_attachment(aid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT filepath FROM attachments WHERE id=?", (aid,))
+    row = await cursor.fetchone()
+    if row and row[0] and os.path.exists(row[0]):
+        os.remove(row[0])
+    await db.execute("DELETE FROM attachments WHERE id=?", (aid,))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/attachments/{aid}/preview")
+async def preview_attachment(aid: int, db: aiosqlite.Connection = Depends(get_db)):
+    from fastapi.responses import FileResponse
+    cursor = await db.execute("SELECT filepath, filename, content_type FROM attachments WHERE id=?", (aid,))
+    row = await cursor.fetchone()
+    if not row or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(404, "attachment not found")
+    return FileResponse(row[0], filename=row[1], media_type=row[2] or "application/octet-stream")
+
+
+@router.get("/attachments/{aid}/download")
+async def download_attachment(aid: int, db: aiosqlite.Connection = Depends(get_db)):
+    from fastapi.responses import FileResponse
+    cursor = await db.execute("SELECT filepath, filename, content_type FROM attachments WHERE id=?", (aid,))
+    row = await cursor.fetchone()
+    if not row or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(404, "attachment not found")
+    return FileResponse(row[0], filename=row[1], media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{row[1]}"'})
+
 # ==================== 2. Scheduler Control API ====================
 
 def _get_scheduler():
