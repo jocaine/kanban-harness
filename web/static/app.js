@@ -235,7 +235,7 @@ function renderGitSection(project) {
                 <div>${syncInfo}</div>
             </div>
             <div style="margin-top:8px;font-size:11px;color:var(--text3)">
-                AI 调用 <code>kanban_sync_commits(project_id=${project.id})</code> 即可同步提交记录
+                Coach-Dev 完成任务后自动关联 commit，也可在对话窗口说"把 git 仓库设为 /path"来更新配置
             </div>
         </div>`;
     }
@@ -247,31 +247,20 @@ function renderGitSection(project) {
             <span style="font-size:11px;color:var(--text3);background:var(--bg3);padding:2px 6px;border-radius:4px">未配置</span>
         </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:8px">
-            配置后可追踪每个需求改了哪些代码（文件列表 + 行数统计），支持一键同步和 changelog 生成。
+            配置后 Coach-Dev 会在 worktree 中自动开发，完成后 commit 自动关联到需求卡。
         </div>
         <details style="font-size:12px;color:var(--text2)">
-            <summary style="cursor:pointer;color:var(--primary);font-weight:500">如何配置？（Claude Code）</summary>
+            <summary style="cursor:pointer;color:var(--primary);font-weight:500">如何配置？</summary>
             <div style="margin-top:8px;padding:10px 12px;background:var(--bg3);border-radius:6px;font-size:11px;line-height:1.7">
 
-                <div style="font-weight:600;margin-bottom:4px">1. 全局 MCP 连接（~/.claude.json）</div>
-                <div style="color:var(--text3);margin-bottom:4px">在 mcpServers 中添加 kanban 服务器：</div>
-                <pre style="margin:0 0 12px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">"kanban": {
-  "type": "sse",
-  "url": "http://服务器IP:8002/sse",
-  "headers": {
-    "Authorization": "Basic base64(用户名:密码)"
-  }
-}</pre>
+                <div style="font-weight:600;margin-bottom:4px">配置方式</div>
+                <div style="color:var(--text3);margin-bottom:4px">打开右下角 AI 对话，直接说：</div>
+                <pre style="margin:0 0 4px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">把 git 仓库设为 /path/to/your/repo</pre>
+                <div style="color:var(--text3);margin-bottom:12px">路径存储在数据库中，重启不丢失。KH 与目标仓库运行在同一台机器上，直接访问本地路径。</div>
 
-                <div style="font-weight:600;margin-bottom:4px">2. 关联 Git 仓库</div>
-                <div style="color:var(--text3);margin-bottom:4px">复制以下内容发送给 Claude，AI 会自动执行：</div>
-                <pre style="margin:0 0 4px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">kanban_update_project(project_id=${project.id}, git_repo_path="/你的/本地/仓库路径", git_remote_url="git@github.com:user/repo.git")</pre>
-                <div style="color:var(--text3);margin-bottom:12px">路径存储在服务端，换机器时再执行一次即可。</div>
-
-                <div style="font-weight:600;margin-bottom:4px">3. 同步提交记录</div>
-                <pre style="margin:0 0 10px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">kanban_sync_commits(project_id = ${project.id})</pre>
+                <div style="font-weight:600;margin-bottom:4px">工作流程</div>
                 <div style="color:var(--text3)">
-                    AI 在本地执行 git log，自动识别 commit 中的 ${esc(project.prefix)}-xxx 编号并关联卡片。
+                    卡片移到「开发中」→ Scheduler 自动触发 Coach-Dev → 在 git worktree 中编码 → commit 自动关联卡片 → 卡片移到「测试中」
                 </div>
             </div>
         </details>
