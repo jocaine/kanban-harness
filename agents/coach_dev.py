@@ -1,15 +1,16 @@
-"""Coach-Dev Agent — executes coding tasks via claude CLI on feature branches."""
+"""Coach-Dev Agent — executes coding tasks via claude CLI in isolated git worktrees."""
 
 import asyncio
 import logging
 import os
-import json
+import shutil
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 600  # 10 minutes
 REPO_PATH = os.getenv("KH_REPO_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")
 
 
 class CoachDev:
@@ -22,20 +23,26 @@ class CoachDev:
         title = card.get("title", "")
         description = card.get("description", "")
         branch_name = f"feature/{code.lower()}"
+        worktree_path = os.path.join(WORKTREE_BASE, code.lower())
 
         logger.info(f"Coach-Dev starting: [{code}] {title}")
 
         try:
-            await self._create_branch(branch_name)
+            await self._setup_worktree(branch_name, worktree_path)
             prompt = self._build_prompt(card)
-            output = await self._run_claude(prompt)
+            output = await self._run_claude(prompt, worktree_path)
             has_commits = await self._check_commits(branch_name)
 
             if has_commits:
-                commit_hash = await self._get_latest_commit()
+                commit_hash = await self._get_latest_commit(worktree_path)
+                commit_message = await self._get_commit_message(worktree_path)
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
                 logger.info(f"Coach-Dev completed: [{code}] {summary}")
-                return {"success": True, "summary": summary, "branch": branch_name, "commit": commit_hash}
+                return {
+                    "success": True, "summary": summary,
+                    "branch": branch_name, "commit": commit_hash,
+                    "commit_message": commit_message,
+                }
             else:
                 logger.warning(f"Coach-Dev produced no commits for [{code}]")
                 return {"success": False, "summary": "No commits produced", "output": output}
@@ -46,6 +53,8 @@ class CoachDev:
         except Exception as e:
             logger.error(f"Coach-Dev failed for [{code}]: {e}")
             raise
+        finally:
+            await self._cleanup_worktree(worktree_path)
 
     def _build_prompt(self, card: dict) -> str:
         code = card.get("code", "")
@@ -67,32 +76,57 @@ class CoachDev:
             f"5. Do not modify unrelated files\n"
         )
 
-    async def _create_branch(self, branch_name: str):
+    async def _setup_worktree(self, branch_name: str, worktree_path: str):
+        os.makedirs(WORKTREE_BASE, exist_ok=True)
+
+        # Remove stale worktree if exists
+        if os.path.exists(worktree_path):
+            await self._run_git("worktree", "remove", "--force", worktree_path)
+
+        # Create branch from main if it doesn't exist
+        proc = await self._run_git("branch", "--list", branch_name)
+        if not proc.strip():
+            await self._run_git("branch", branch_name, "main")
+
+        # Create worktree
+        await self._run_git("worktree", "add", worktree_path, branch_name)
+
+    async def _cleanup_worktree(self, worktree_path: str):
+        try:
+            if os.path.exists(worktree_path):
+                await self._run_git("worktree", "remove", "--force", worktree_path)
+        except Exception as e:
+            logger.warning(f"Worktree cleanup failed: {e}")
+            # Fallback: just delete the directory
+            if os.path.exists(worktree_path):
+                shutil.rmtree(worktree_path, ignore_errors=True)
+            try:
+                await self._run_git("worktree", "prune")
+            except Exception:
+                pass
+
+    async def _run_git(self, *args) -> str:
         proc = await asyncio.create_subprocess_exec(
-            "git", "checkout", "-b", branch_name,
+            "git", *args,
             cwd=self.repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            # Branch might already exist, try switching to it
-            proc = await asyncio.create_subprocess_exec(
-                "git", "checkout", branch_name,
-                cwd=self.repo_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
+            err = stderr.decode(errors="replace").strip()
+            if err and "already exists" not in err:
+                logger.debug(f"git {' '.join(args)}: {err}")
+        return stdout.decode(errors="replace").strip()
 
-    async def _run_claude(self, prompt: str) -> str:
+    async def _run_claude(self, prompt: str, worktree_path: str) -> str:
         cmd = [
             "claude", "-p", prompt,
             "--allowedTools", "Bash,Edit,Read,Write",
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            cwd=self.repo_path,
+            cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -106,19 +140,23 @@ class CoachDev:
             raise
 
     async def _check_commits(self, branch_name: str) -> bool:
+        output = await self._run_git("log", f"main..{branch_name}", "--oneline")
+        return len(output.strip()) > 0
+
+    async def _get_latest_commit(self, worktree_path: str) -> str:
         proc = await asyncio.create_subprocess_exec(
-            "git", "log", "main.." + branch_name, "--oneline",
-            cwd=self.repo_path,
+            "git", "rev-parse", "HEAD",
+            cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
-        return len(stdout.decode().strip()) > 0
+        return stdout.decode().strip()
 
-    async def _get_latest_commit(self) -> str:
+    async def _get_commit_message(self, worktree_path: str) -> str:
         proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "HEAD",
-            cwd=self.repo_path,
+            "git", "log", "-1", "--format=%s",
+            cwd=worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

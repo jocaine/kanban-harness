@@ -35,6 +35,17 @@
 
     <!-- 主内容区 -->
     <main class="main" id="main">
+        <!-- Agent 活动条 + 暂停按钮 -->
+        <div class="activity-bar" id="activity-bar">
+            <div class="activity-info" id="activity-info">
+                <span class="activity-idle">AI 团队空闲</span>
+            </div>
+            <button class="scheduler-toggle running" id="scheduler-toggle" onclick="toggleScheduler()">
+                <span class="toggle-dot"></span>
+                <span class="toggle-label">AI 运行中</span>
+            </button>
+        </div>
+
         <!-- 欢迎页 -->
         <div class="welcome" id="welcome-view">
             <div class="welcome-icon">&#128203;</div>

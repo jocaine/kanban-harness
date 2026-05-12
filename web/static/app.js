@@ -1115,46 +1115,69 @@ async function loadCommits(rid) {
         </div>`;
         return;
     }
-    const first = commits[0];
-    const firstHash = first.commit_hash.slice(0, 7);
-    const firstDate = first.committed_at ? first.committed_at.split('T')[0] : '';
 
-    const renderCommitRow = (c) => {
-        const hash = c.commit_hash.slice(0, 7);
-        const date = c.committed_at ? c.committed_at.split('T')[0] : '';
-        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-top:1px solid var(--border)">
-            <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;color:var(--primary);font-size:10px;flex-shrink:0">${hash}</code>
-            <span style="flex:1;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.message)}</span>
-            <span style="color:var(--green);flex-shrink:0">+${c.total_additions || 0}</span>
-            <span style="color:#f87171;flex-shrink:0">-${c.total_deletions || 0}</span>
-            <span style="color:var(--text3);flex-shrink:0;font-size:10px">${date}</span>
-        </div>`;
-    };
+    list.innerHTML = `
+    <div class="commits-container" style="border-left:3px solid var(--primary);background:var(--bg2);border-radius:0 6px 6px 0;padding:8px 12px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px">${commits.length} 次提交（点击查看 diff）</div>
+        ${commits.map(c => {
+            const hash = c.commit_hash.slice(0, 7);
+            const date = c.committed_at ? c.committed_at.split('T')[0] : '';
+            return `<div class="commit-row" style="cursor:pointer" onclick="toggleDiff('${c.commit_hash}', this)">
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-top:1px solid var(--border)">
+                    <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;color:var(--primary);font-size:10px;flex-shrink:0">${hash}</code>
+                    <span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.message)}</span>
+                    <span style="color:var(--success);flex-shrink:0">+${c.total_additions || 0}</span>
+                    <span style="color:#f87171;flex-shrink:0">-${c.total_deletions || 0}</span>
+                    <span style="color:var(--text3);flex-shrink:0;font-size:10px">${date}</span>
+                    <span style="color:var(--text3);font-size:10px">▾</span>
+                </div>
+                <div class="diff-panel" style="display:none"></div>
+            </div>`;
+        }).join('')}
+    </div>`;
+}
 
-    if (commits.length === 1) {
-        list.innerHTML = `
-        <div style="border-left:3px solid var(--primary);background:var(--bg2);border-radius:0 6px 6px 0;padding:8px 12px">
-            <div style="display:flex;align-items:center;gap:8px;font-size:11px">
-                <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;color:var(--primary);font-size:10px">${firstHash}</code>
-                <span style="flex:1;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(first.message)}</span>
-                <span style="color:var(--green)">+${first.total_additions || 0}</span>
-                <span style="color:#f87171">-${first.total_deletions || 0}</span>
-                <span style="color:var(--text3);font-size:10px">${firstDate}</span>
-            </div>
-        </div>`;
-    } else {
-        list.innerHTML = `
-        <details style="border-left:3px solid var(--primary);background:var(--bg2);border-radius:0 6px 6px 0;padding:8px 12px">
-            <summary style="cursor:pointer;display:flex;align-items:center;gap:8px;font-size:11px;list-style:none">
-                <code style="background:var(--bg3);padding:1px 4px;border-radius:3px;color:var(--primary);font-size:10px">${firstHash}</code>
-                <span style="flex:1;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(first.message)}</span>
-                <span style="color:var(--text3);font-size:10px;flex-shrink:0">${commits.length} 次提交 ▾</span>
-            </summary>
-            <div style="margin-top:6px">
-                ${commits.map(renderCommitRow).join('')}
-            </div>
-        </details>`;
+async function toggleDiff(hash, el) {
+    const panel = el.querySelector('.diff-panel');
+    if (panel.style.display !== 'none') {
+        panel.style.display = 'none';
+        return;
     }
+    if (panel.dataset.loaded) {
+        panel.style.display = '';
+        return;
+    }
+    panel.innerHTML = '<div style="padding:8px;color:var(--text3);font-size:11px">加载中...</div>';
+    panel.style.display = '';
+    try {
+        const data = await api('/api/commits/' + hash + '/diff');
+        panel.innerHTML = renderDiff(data.diff);
+        panel.dataset.loaded = '1';
+    } catch(e) {
+        panel.innerHTML = '<div style="padding:8px;color:var(--danger);font-size:11px">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+function renderDiff(diffText) {
+    const lines = diffText.split('\n');
+    let html = '<div class="diff-view" style="margin-top:6px;font-family:monospace;font-size:11px;line-height:1.6;max-height:400px;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px">';
+    for (const line of lines) {
+        if (line.startsWith('+++') || line.startsWith('---')) {
+            html += `<div style="color:var(--text3);font-weight:600">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('+')) {
+            html += `<div style="background:rgba(34,197,94,.1);color:#4ade80">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('-')) {
+            html += `<div style="background:rgba(239,68,68,.1);color:#f87171">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('@@')) {
+            html += `<div style="color:var(--text3);background:var(--bg3);padding:2px 4px;margin:4px 0;border-radius:3px">${escapeHtml(line)}</div>`;
+        } else if (line.startsWith('diff --git')) {
+            html += `<div style="color:var(--primary);font-weight:600;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">${escapeHtml(line)}</div>`;
+        } else {
+            html += `<div style="color:var(--text2)">${escapeHtml(line)}</div>`;
+        }
+    }
+    html += '</div>';
+    return html;
 }
 
 // ==================== Comments ====================
@@ -1473,6 +1496,119 @@ async function initApp() {
 
 initApp();
 
+// ==================== Activity Bar & Scheduler Control ====================
+
+let schedulerMode = 'running';
+let activityInterval = null;
+let timerInterval = null;
+let activitySessionStart = null;
+
+async function pollActivity() {
+    try {
+        const [status, sessions] = await Promise.all([
+            api('/api/scheduler/status'),
+            api('/api/agents/sessions'),
+        ]);
+        updateSchedulerToggle(status.mode);
+        updateActivityInfo(sessions, status);
+    } catch(e) {}
+}
+
+function updateSchedulerToggle(mode) {
+    schedulerMode = mode;
+    const btn = document.getElementById('scheduler-toggle');
+    const bar = document.getElementById('activity-bar');
+    if (mode === 'paused') {
+        btn.className = 'scheduler-toggle paused';
+        btn.querySelector('.toggle-label').textContent = '已暂停';
+        bar.classList.add('paused');
+    } else {
+        btn.className = 'scheduler-toggle running';
+        btn.querySelector('.toggle-label').textContent = 'AI 运行中';
+        bar.classList.remove('paused');
+    }
+}
+
+function updateActivityInfo(sessions, status) {
+    const info = document.getElementById('activity-info');
+    const running = sessions.find(s => s.status === 'running');
+
+    if (running) {
+        const startTime = new Date(running.started_at.replace(' ', 'T'));
+        activitySessionStart = startTime;
+        const timeout = running.timeout_seconds || 600;
+        let ctx = {};
+        try { ctx = JSON.parse(running.input_context || '{}'); } catch(e) {}
+        const taskTitle = ctx.title || ctx.code || running.agent_role;
+        const role = running.agent_role === 'coach_dev' ? 'Coach-Dev' : running.agent_role;
+
+        info.innerHTML = `
+            <div class="activity-running">
+                <span class="activity-role">${esc(role)}</span>
+                <span class="activity-task">${esc(taskTitle)}</span>
+                <span class="activity-timer" id="activity-timer"></span>
+                <div class="activity-progress"><div class="activity-progress-fill" id="activity-progress-fill"></div></div>
+            </div>`;
+        updateTimer(timeout);
+        if (!timerInterval) {
+            timerInterval = setInterval(() => updateTimer(timeout), 1000);
+        }
+    } else {
+        activitySessionStart = null;
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        const recent = sessions.find(s => s.status === 'completed' || s.status === 'failed');
+        if (recent) {
+            let ctx = {};
+            try { ctx = JSON.parse(recent.input_context || '{}'); } catch(e) {}
+            const label = ctx.code || recent.agent_role;
+            const ago = timeAgo(recent.completed_at);
+            const icon = recent.status === 'completed' ? '✓' : '✗';
+            info.innerHTML = `<span class="activity-idle">AI 团队空闲</span><span class="activity-history">${icon} ${esc(label)} ${ago}</span>`;
+        } else {
+            info.innerHTML = '<span class="activity-idle">AI 团队空闲</span>';
+        }
+    }
+}
+
+function updateTimer(timeout) {
+    if (!activitySessionStart) return;
+    const elapsed = Math.floor((Date.now() - activitySessionStart.getTime()) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timerEl = document.getElementById('activity-timer');
+    if (timerEl) timerEl.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+    const progressEl = document.getElementById('activity-progress-fill');
+    if (progressEl) {
+        const pct = Math.min((elapsed / timeout) * 100, 100);
+        progressEl.style.width = pct + '%';
+        progressEl.classList.toggle('warning', pct > 80);
+    }
+}
+
+function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr.replace(' ', 'T'));
+    const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (diff < 60) return '刚刚';
+    if (diff < 3600) return Math.floor(diff / 60) + '分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + '小时前';
+    return Math.floor(diff / 86400) + '天前';
+}
+
+async function toggleScheduler() {
+    try {
+        if (schedulerMode === 'paused') {
+            await api('/api/scheduler/resume', {method: 'POST'});
+        } else {
+            await api('/api/scheduler/pause', {method: 'POST'});
+        }
+        await pollActivity();
+    } catch(e) {}
+}
+
+pollActivity();
+activityInterval = setInterval(pollActivity, 5000);
+
 // ==================== Chat Panel ====================
 function toggleChat() {
     const panel = document.getElementById('chat-panel');
@@ -1515,6 +1651,10 @@ async function sendChat() {
                     if (data.type === 'text') {
                         fullText += data.content;
                         assistantDiv.innerHTML = renderMarkdown(fullText);
+                    } else if (data.type === 'tool_start') {
+                        assistantDiv.innerHTML = renderMarkdown(fullText) + `<div style="font-size:11px;color:var(--primary);padding:4px 0">⚙ 执行 ${escapeHtml(data.name)}...</div>`;
+                    } else if (data.type === 'tool_done') {
+                        // tool finished, next stream chunk will have AI summary
                     } else if (data.type === 'error') {
                         assistantDiv.innerHTML = `<span style="color:var(--danger)">${escapeHtml(data.content)}</span>`;
                     }

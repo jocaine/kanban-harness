@@ -223,6 +223,31 @@ async def list_comments(rid: int, db: aiosqlite.Connection = Depends(get_db)):
     )
     return [dict(row) for row in await cursor.fetchall()]
 
+@router.get("/requirements/{rid}/commits")
+async def list_commits(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute(
+        "SELECT * FROM requirement_commits WHERE requirement_id=? ORDER BY created_at DESC", (rid,)
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+@router.get("/commits/{commit_hash}/diff")
+async def get_commit_diff(commit_hash: str):
+    import asyncio
+    import os
+
+    repo_path = os.getenv("KH_REPO_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    proc = await asyncio.create_subprocess_exec(
+        "git", "show", "--stat", "--patch", commit_hash,
+        cwd=repo_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(404, f"commit not found: {stderr.decode().strip()}")
+    return {"hash": commit_hash, "diff": stdout.decode(errors="replace")}
+
 @router.post("/requirements/{rid}/comments")
 async def add_comment(rid: int, data: CommentCreate, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(

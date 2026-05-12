@@ -123,19 +123,41 @@ class SchedulerEngine:
 
     async def _run_agent(self, session_id: int, card: dict):
         try:
+            from agents.coach_dev import CoachDev
             agent = CoachDev()
             result = await agent.execute(card)
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
 
             if result.get("success"):
+                commit_hash = result.get("commit", "")
+                commit_msg = result.get("commit_message", "")
+                branch = result.get("branch", "")
                 async with aiosqlite.connect(DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
                     await db.execute(
                         "UPDATE requirements SET status='testing', "
                         "updated_at=datetime('now','localtime') WHERE id=?",
                         (card["id"],),
                     )
+                    if commit_hash:
+                        await db.execute(
+                            "INSERT OR IGNORE INTO requirement_commits "
+                            "(requirement_id, commit_hash, message, committed_at) "
+                            "VALUES (?, ?, ?, datetime('now','localtime'))",
+                            (card["id"], commit_hash, commit_msg),
+                        )
+                    comment = (
+                        f"**Coach-Dev** 已完成开发\n\n"
+                        f"- 分支: `{branch}`\n"
+                        f"- Commit: `{commit_hash[:8]}`\n"
+                        f"- 说明: {commit_msg}"
+                    )
+                    await db.execute(
+                        "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
+                        (card["id"], "Coach-Dev", comment),
+                    )
                     await db.commit()
-                logger.info(f"[{card['code']}] moved to testing")
+                logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
         except Exception as e:
             logger.error(f"Agent execution failed for [{card['code']}]: {e}")
             await self.session_manager.fail_session(session_id, str(e))
