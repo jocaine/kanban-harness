@@ -159,6 +159,14 @@ async def update_version(vid: int, data: VersionUpdate, db: aiosqlite.Connection
     row = await db.execute("SELECT * FROM versions WHERE id=?", (vid,))
     return dict(await row.fetchone())
 
+
+@router.delete("/versions/{vid}")
+async def delete_version(vid: int, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("DELETE FROM requirements WHERE version_id=?", (vid,))
+    await db.execute("DELETE FROM versions WHERE id=?", (vid,))
+    await db.commit()
+    return {"ok": True}
+
 @router.get("/versions/{vid}/requirements")
 async def list_requirements(vid: int, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(
@@ -265,6 +273,36 @@ async def add_comment(rid: int, data: CommentCreate, db: aiosqlite.Connection = 
     await db.commit()
     row = await db.execute("SELECT * FROM comments WHERE id=?", (cursor.lastrowid,))
     return dict(await row.fetchone())
+
+
+@router.delete("/projects/{pid}")
+async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("UPDATE projects SET archived=1, updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/requirements/{rid}")
+async def delete_requirement(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("DELETE FROM comments WHERE requirement_id=?", (rid,))
+    await db.execute("DELETE FROM requirement_commits WHERE requirement_id=?", (rid,))
+    await db.execute("DELETE FROM requirements WHERE id=?", (rid,))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.put("/requirements/{rid}/archive")
+async def archive_requirement(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("UPDATE requirements SET archived=1, updated_at=datetime('now','localtime') WHERE id=?", (rid,))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/comments/{cid}")
+async def delete_comment(cid: int, db: aiosqlite.Connection = Depends(get_db)):
+    await db.execute("DELETE FROM comments WHERE id=?", (cid,))
+    await db.commit()
+    return {"ok": True}
 
 # ==================== 2. Scheduler Control API ====================
 
