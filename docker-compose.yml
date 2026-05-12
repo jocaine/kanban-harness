@@ -1,0 +1,33 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=data/kanban.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/projects')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mcp:
+    build: .
+    command: ["python3", "-m", "mcp_server.server"]
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=data/kanban.db
+      - KH_BASE_URL=http://web:8000
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped

@@ -9,11 +9,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.database import init_db
+from scheduler import SchedulerEngine
+
+scheduler = SchedulerEngine()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await scheduler.start()
     yield
+    await scheduler.stop()
 
 app = FastAPI(
     title="Kanban Harness",

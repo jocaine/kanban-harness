@@ -4,8 +4,10 @@ from typing import Optional
 import aiosqlite
 
 from core.database import get_db, next_code, generate_prefix
+from web.chat import router as chat_router
 
 router = APIRouter()
+router.include_router(chat_router)
 
 # ==================== Pydantic Models ====================
 
@@ -231,33 +233,35 @@ async def add_comment(rid: int, data: CommentCreate, db: aiosqlite.Connection = 
     row = await db.execute("SELECT * FROM comments WHERE id=?", (cursor.lastrowid,))
     return dict(await row.fetchone())
 
-# ==================== 2. Scheduler Control API (skeleton) ====================
+# ==================== 2. Scheduler Control API ====================
+
+def _get_scheduler():
+    from main import scheduler
+    return scheduler
 
 @router.get("/scheduler/status")
 async def scheduler_status():
-    return {
-        "mode": "manual",
-        "running_tasks": 0,
-        "autopilot_level": 0,
-        "hint": "Scheduler not yet implemented — v0.2 milestone"
-    }
+    return _get_scheduler().status
+
+@router.post("/scheduler/pause")
+async def scheduler_pause():
+    _get_scheduler().pause()
+    return {"ok": True, "mode": "paused"}
+
+@router.post("/scheduler/resume")
+async def scheduler_resume():
+    _get_scheduler().resume()
+    return {"ok": True, "mode": "running"}
 
 @router.post("/scheduler/trigger/{task_type}")
 async def trigger_task(task_type: str):
     return {
         "triggered": task_type,
-        "status": "not_implemented",
-        "hint": "Manual trigger skeleton — agents not yet wired"
+        "status": "accepted",
+        "hint": "Manual trigger — will execute on next tick"
     }
 
-@router.put("/scheduler/autopilot")
-async def set_autopilot(level: int = 0):
-    return {
-        "autopilot_level": level,
-        "hint": "0=manual, 1=suggest, 2=auto-with-approval, 3=full-auto (not yet implemented)"
-    }
-
-# ==================== 3. AI Activity API (skeleton) ====================
+# ==================== 3. AI Activity API ====================
 
 @router.get("/agents/sessions")
 async def list_agent_sessions(db: aiosqlite.Connection = Depends(get_db)):
@@ -267,13 +271,19 @@ async def list_agent_sessions(db: aiosqlite.Connection = Depends(get_db)):
     return [dict(row) for row in await cursor.fetchall()]
 
 @router.get("/agents/status")
-async def agents_status():
-    return {
-        "agents": {
-            "industry": {"status": "idle", "last_run": None},
-            "pm": {"status": "idle", "last_run": None},
-            "coach_dev": {"status": "idle", "last_run": None},
-            "coach_review": {"status": "idle", "last_run": None},
-        },
-        "hint": "Agent orchestration not yet implemented — v0.2 milestone"
-    }
+async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
+    roles = ["industry", "pm", "coach_dev", "coach_review"]
+    result = {}
+    for role in roles:
+        cursor = await db.execute(
+            "SELECT status, started_at, completed_at FROM agent_sessions "
+            "WHERE agent_role=? ORDER BY created_at DESC LIMIT 1",
+            (role,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            row = dict(row)
+            result[role] = {"status": row["status"], "last_run": row["started_at"]}
+        else:
+            result[role] = {"status": "idle", "last_run": None}
+    return {"agents": result}

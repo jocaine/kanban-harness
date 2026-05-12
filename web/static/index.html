@@ -306,6 +306,20 @@
         </div>
     </div>
 
+    <!-- Chat Panel -->
+    <div class="chat-panel" id="chat-panel" style="display:none">
+        <div class="chat-header">
+            <span>AI 助手</span>
+            <button class="btn-icon" onclick="toggleChat()">✕</button>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input-area">
+            <textarea id="chat-input" rows="2" placeholder="输入消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+            <button class="btn-primary btn-sm" onclick="sendChat()">发送</button>
+        </div>
+    </div>
+    <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话">💬</button>
+
     <script src="static/app.js?v=12"></script>
 </body>
 </html>

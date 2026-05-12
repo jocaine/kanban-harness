@@ -1472,3 +1472,68 @@ async function initApp() {
 }
 
 initApp();
+
+// ==================== Chat Panel ====================
+function toggleChat() {
+    const panel = document.getElementById('chat-panel');
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+}
+
+async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    input.value = '';
+
+    const messages = document.getElementById('chat-messages');
+    messages.innerHTML += `<div class="chat-msg user">${escapeHtml(msg)}</div>`;
+    const assistantDiv = document.createElement('div');
+    assistantDiv.className = 'chat-msg assistant';
+    assistantDiv.innerHTML = '<span class="typing">...</span>';
+    messages.appendChild(assistantDiv);
+    messages.scrollTop = messages.scrollHeight;
+
+    try {
+        const resp = await fetch(API + '/api/chat/stream', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: msg, project_id: currentProject?.id || 0}),
+        });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        assistantDiv.innerHTML = '';
+
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, {stream: true});
+            for (const line of chunk.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.type === 'text') {
+                        fullText += data.content;
+                        assistantDiv.innerHTML = renderMarkdown(fullText);
+                    } else if (data.type === 'error') {
+                        assistantDiv.innerHTML = `<span style="color:var(--danger)">${escapeHtml(data.content)}</span>`;
+                    }
+                } catch(e) {}
+            }
+            messages.scrollTop = messages.scrollHeight;
+        }
+    } catch(e) {
+        assistantDiv.innerHTML = `<span style="color:var(--danger)">连接失败: ${escapeHtml(e.message)}</span>`;
+    }
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderMarkdown(text) {
+    if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        return '<div class="md-preview">' + DOMPurify.sanitize(marked.parse(text)) + '</div>';
+    }
+    return '<pre>' + escapeHtml(text) + '</pre>';
+}
