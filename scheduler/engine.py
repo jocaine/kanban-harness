@@ -1,6 +1,7 @@
 """Scheduler engine — polls kanban for dev cards and triggers AI agents."""
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 
@@ -9,6 +10,7 @@ import aiosqlite
 from core.database import DB_PATH
 from core.config import get_project_repo_path
 from core.session_manager import SessionManager
+from agents.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +76,18 @@ class SchedulerEngine:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _tick(self):
+        # Existing: find dev cards for coach_dev
         cards = await self._find_actionable_cards()
-        if not cards:
-            return
+        if cards:
+            for card in cards:
+                has_running = await self._has_running_session(card["id"])
+                if has_running:
+                    continue
+                logger.info(f"Triggering Coach-Dev for [{card['code']}] {card['title']}")
+                await self._trigger_coach_dev(card)
 
-        for card in cards:
-            has_running = await self._has_running_session(card["id"])
-            if has_running:
-                continue
-            logger.info(f"Triggering Coach-Dev for [{card['code']}] {card['title']}")
-            await self._trigger_coach_dev(card)
+        # Process pending events for comment agents
+        await self._process_events()
 
     async def _find_actionable_cards(self) -> list[dict]:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -162,8 +166,103 @@ class SchedulerEngine:
                         "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
                         (card["id"], "Coach-Dev", comment),
                     )
+                    # Emit status_changed event
+                    await db.execute(
+                        "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                        (card["project_id"], "status_changed", card["id"],
+                         json.dumps({"old_status": "dev", "new_status": "testing"})),
+                    )
                     await db.commit()
                 logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
         except Exception as e:
             logger.error(f"Agent execution failed for [{card['code']}]: {e}")
             await self.session_manager.fail_session(session_id, str(e))
+
+    # ==================== Event-driven comment agents ====================
+
+    async def _process_events(self):
+        """Check for unprocessed events and trigger comment agents."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM agent_events WHERE processed=0 ORDER BY created_at LIMIT 10"
+            )
+            events = [dict(row) for row in await cursor.fetchall()]
+
+        for event in events:
+            try:
+                context = json.loads(event.get("context", "{}"))
+                roles = registry.roles_for_trigger(event["event_type"], context)
+
+                for role_name in roles:
+                    if role_name == "coach_dev":
+                        continue  # coach_dev handled via worktree flow above
+                    await self._trigger_comment_agent(role_name, event, context)
+
+            except Exception as e:
+                logger.error(f"Event processing failed for event {event['id']}: {e}")
+
+            # Mark processed
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "UPDATE agent_events SET processed=1 WHERE id=?", (event["id"],)
+                )
+                await db.commit()
+
+    async def _trigger_comment_agent(self, role_name: str, event: dict, context: dict):
+        """Spawn a CommentAgent for the given role and event."""
+        requirement_id = event.get("requirement_id")
+        if not requirement_id:
+            return
+
+        # Load card data
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,))
+            card_row = await cursor.fetchone()
+            if not card_row:
+                return
+            card = dict(card_row)
+
+        input_context = json.dumps({"requirement_id": requirement_id, "code": card.get("code", "")})
+        session_id = await self.session_manager.create_session(
+            project_id=event["project_id"],
+            agent_role=role_name,
+            trigger_type=f"event:{event['event_type']}",
+            input_context=input_context,
+        )
+
+        asyncio.create_task(self._run_comment_agent(session_id, role_name, card))
+
+    async def _run_comment_agent(self, session_id: int, role_name: str, card: dict):
+        """Execute a comment agent and post its output."""
+        try:
+            from agents.comment_agent import CommentAgent
+
+            # Fetch existing comments for context
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT * FROM comments WHERE requirement_id=? ORDER BY created_at",
+                    (card["id"],),
+                )
+                comments = [dict(row) for row in await cursor.fetchall()]
+
+            agent = CommentAgent(role_name)
+            result = await agent.execute(card, comments)
+
+            if result["success"] and result["comment"]:
+                role_config = registry.get(role_name)
+                author = role_config.display_name if role_config else role_name
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                        (card["id"], author, result["comment"]),
+                    )
+                    await db.commit()
+
+            await self.session_manager.complete_session(session_id, result.get("summary", ""))
+        except Exception as e:
+            logger.error(f"Comment agent {role_name} failed: {e}")
+            await self.session_manager.fail_session(session_id, str(e))
+

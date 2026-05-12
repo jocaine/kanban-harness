@@ -1018,7 +1018,20 @@ function switchDocTab(tab) {
     currentDocTab = tab;
     updateDocTabs();
     cancelArchEdit();
-    loadDoc();
+    const teamView = document.getElementById('team-view');
+    const archContent = document.getElementById('arch-content');
+    const archActions = document.getElementById('arch-actions');
+    if (tab === 'team') {
+        teamView.style.display = 'block';
+        archContent.style.display = 'none';
+        archActions.style.display = 'none';
+        loadTeamView();
+    } else {
+        teamView.style.display = 'none';
+        archContent.style.display = '';
+        archActions.style.display = '';
+        loadDoc();
+    }
 }
 
 function updateDocTabs() {
@@ -1664,4 +1677,55 @@ function renderMarkdown(text) {
         return '<div class="md-preview">' + DOMPurify.sanitize(marked.parse(text)) + '</div>';
     }
     return '<pre>' + escapeHtml(text) + '</pre>';
+}
+
+// ==================== Team View (Agent Role Panels) ====================
+
+let teamDataCache = null;
+
+async function loadTeamView() {
+    try {
+        const data = await api('/api/agents/status');
+        teamDataCache = data.agents;
+        renderTeamGrid(data.agents);
+    } catch(e) {
+        document.getElementById('team-grid').innerHTML = '<div class="arch-empty">无法加载团队状态</div>';
+    }
+}
+
+function renderTeamGrid(agents) {
+    const grid = document.getElementById('team-grid');
+    let html = '';
+    for (const [role, info] of Object.entries(agents)) {
+        const statusClass = info.status === 'running' ? 'working' : (info.status === 'completed' ? 'idle' : 'idle');
+        const statusLabel = info.status === 'running' ? '工作中' : (info.status === 'completed' ? '空闲' : '空闲');
+        const modelShort = info.model.split('/').pop();
+        const lastActivity = info.last_run ? timeAgo(info.last_run) : '暂无活动';
+        const commentPreview = info.last_comment ? truncate(info.last_comment.content, 80) : '';
+
+        html += `
+        <div class="agent-card" style="--agent-color: ${esc(info.color)}">
+            <div class="agent-card-header">
+                <span class="agent-icon">${info.icon}</span>
+                <div class="agent-meta">
+                    <span class="agent-name">${esc(info.display_name)}</span>
+                    <span class="agent-model">${esc(modelShort)}</span>
+                </div>
+                <span class="agent-status-dot ${statusClass}" title="${statusLabel}"></span>
+            </div>
+            <div class="agent-card-desc">${esc(info.description)}</div>
+            <div class="agent-card-stats">
+                <span class="agent-stat">${statusLabel}</span>
+                <span class="agent-stat">${info.activity_24h} 次/24h</span>
+                <span class="agent-stat">${lastActivity}</span>
+            </div>
+            ${commentPreview ? `<div class="agent-card-comment">${renderMd(commentPreview)}</div>` : ''}
+        </div>`;
+    }
+    grid.innerHTML = html;
+}
+
+function truncate(str, len) {
+    if (!str) return '';
+    return str.length > len ? str.substring(0, len) + '...' : str;
 }

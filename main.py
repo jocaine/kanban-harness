@@ -23,9 +23,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Kanban Harness",
     description="AI Team Orchestration Engine — Dashboard API",
-    version="0.1.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
+
+from web.middleware import PermissionGateway
+app.add_middleware(PermissionGateway)
 
 from web.api import router as api_router
 app.include_router(api_router, prefix="/api")

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 import os
 import aiosqlite
 
 from core.database import get_db, next_code, generate_prefix
+from agents.registry import registry
 from web.chat import router as chat_router
 
 router = APIRouter()
@@ -60,6 +61,7 @@ class ReqUpdate(BaseModel):
 class ReqMove(BaseModel):
     status: str
     position: int = 0
+    reason: str = ""
 
 class CommentCreate(BaseModel):
     author: str = ""
@@ -176,7 +178,10 @@ async def list_requirements(vid: int, db: aiosqlite.Connection = Depends(get_db)
     return [dict(row) for row in await cursor.fetchall()]
 
 @router.post("/requirements")
-async def create_requirement(data: ReqCreate, db: aiosqlite.Connection = Depends(get_db)):
+async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Connection = Depends(get_db)):
+    agent_role = getattr(request.state, "agent_role", None) if hasattr(request, "state") else None
+    if agent_role and not registry.check_permission(agent_role, "create", "requirements"):
+        raise HTTPException(403, f"Role '{agent_role}' cannot create requirements")
     code = await next_code(db, data.version_id)
     if not code:
         raise HTTPException(404, "version not found")
@@ -192,7 +197,21 @@ async def create_requirement(data: ReqCreate, db: aiosqlite.Connection = Depends
          data.assignee, data.deadline, data.estimated_hours, data.notes, code, pos)
     )
     await db.commit()
-    row = await db.execute("SELECT * FROM requirements WHERE id=?", (cursor.lastrowid,))
+    rid = cursor.lastrowid
+
+    # Emit event for async collaboration
+    vcursor = await db.execute("SELECT project_id FROM versions WHERE id=?", (data.version_id,))
+    vrow = await vcursor.fetchone()
+    if vrow:
+        import json
+        await db.execute(
+            "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+            (vrow[0], "requirement_created", rid,
+             json.dumps({"status": data.status, "priority": data.priority})),
+        )
+        await db.commit()
+
+    row = await db.execute("SELECT * FROM requirements WHERE id=?", (rid,))
     return dict(await row.fetchone())
 
 @router.put("/requirements/{rid}")
@@ -213,14 +232,57 @@ async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection
     return dict(await row.fetchone())
 
 @router.put("/requirements/{rid}/move")
-async def move_requirement(rid: int, data: ReqMove, db: aiosqlite.Connection = Depends(get_db)):
-    valid = ("pending", "dev", "testing", "done")
+async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosqlite.Connection = Depends(get_db)):
+    valid = ("pending", "dev", "testing", "done", "blocked")
     if data.status not in valid:
         raise HTTPException(400, f"status must be one of {valid}")
+
+    # Permission check for agent roles
+    agent_role = getattr(request.state, "agent_role", None) if hasattr(request, "state") else None
+    cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (rid,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, f"requirement {rid} not found")
+    old_status = row[0]
+
+    if agent_role:
+        if not registry.check_move(agent_role, old_status, data.status):
+            allowed = registry.get_permissions(agent_role).can_move if registry.get_permissions(agent_role) else []
+            raise HTTPException(
+                403,
+                f"Role '{agent_role}' cannot move {old_status}->{data.status}, allowed: {allowed}"
+            )
+        # Dev moving to pending/blocked MUST provide a reason
+        if agent_role == "coach_dev" and data.status in ("pending", "blocked") and not data.reason:
+            raise HTTPException(
+                400,
+                f"Role 'coach_dev' must provide a reason when moving to '{data.status}'"
+            )
+
     await db.execute(
         "UPDATE requirements SET status=?, position=?, updated_at=datetime('now','localtime') WHERE id=?",
         (data.status, data.position, rid)
     )
+
+    # Audit trail
+    actor = agent_role or "human"
+    await _audit_status_change(db, rid, old_status, data.status, actor, data.reason)
+
+    # Emit status_changed event for async collaboration
+    if old_status != data.status:
+        import json
+        vcursor = await db.execute(
+            "SELECT v.project_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
+            (rid,),
+        )
+        vrow = await vcursor.fetchone()
+        if vrow:
+            await db.execute(
+                "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                (vrow[0], "status_changed", rid,
+                 json.dumps({"old_status": old_status, "new_status": data.status})),
+            )
+
     await db.commit()
     row = await db.execute("SELECT * FROM requirements WHERE id=?", (rid,))
     return dict(await row.fetchone())
@@ -231,6 +293,28 @@ async def list_comments(rid: int, db: aiosqlite.Connection = Depends(get_db)):
         "SELECT * FROM comments WHERE requirement_id=? ORDER BY created_at", (rid,)
     )
     return [dict(row) for row in await cursor.fetchall()]
+
+
+async def _audit_status_change(
+    db: aiosqlite.Connection,
+    rid: int,
+    old_status: str,
+    new_status: str,
+    actor: str = "human",
+    reason: str = "",
+):
+    """Insert audit comment when status changes."""
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    role_config = registry.get(actor)
+    display = role_config.display_name if role_config else actor
+    content = f"**[系统]** 状态变更 `{old_status}` → `{new_status}`\n\n- 操作者: {display}\n- 时间: {timestamp}\n"
+    if reason:
+        content += f"- 原因: {reason}\n"
+    await db.execute(
+        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+        (rid, "system", content),
+    )
 
 @router.get("/requirements/{rid}/commits")
 async def list_commits(rid: int, db: aiosqlite.Connection = Depends(get_db)):
@@ -532,18 +616,41 @@ async def list_agent_sessions(db: aiosqlite.Connection = Depends(get_db)):
 
 @router.get("/agents/status")
 async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
-    roles = ["industry", "pm", "coach_dev", "coach_review"]
     result = {}
-    for role in roles:
+    for role_name, role_config in registry.all_roles().items():
         cursor = await db.execute(
-            "SELECT status, started_at, completed_at FROM agent_sessions "
+            "SELECT status, started_at, completed_at, output_summary FROM agent_sessions "
             "WHERE agent_role=? ORDER BY created_at DESC LIMIT 1",
-            (role,),
+            (role_name,),
         )
         row = await cursor.fetchone()
-        if row:
-            row = dict(row)
-            result[role] = {"status": row["status"], "last_run": row["started_at"]}
-        else:
-            result[role] = {"status": "idle", "last_run": None}
+
+        # Count 24h activity
+        cursor2 = await db.execute(
+            "SELECT COUNT(*) FROM agent_sessions WHERE agent_role=? AND status='completed' "
+            "AND completed_at > datetime('now', '-24 hours', 'localtime')",
+            (role_name,),
+        )
+        count_24h = (await cursor2.fetchone())[0]
+
+        # Get latest comment by this role
+        cursor3 = await db.execute(
+            "SELECT content, created_at FROM comments WHERE author=? ORDER BY created_at DESC LIMIT 1",
+            (role_config.display_name,),
+        )
+        last_comment = await cursor3.fetchone()
+
+        session_data = dict(row) if row else {}
+        result[role_name] = {
+            "display_name": role_config.display_name,
+            "icon": role_config.icon,
+            "color": role_config.color,
+            "description": role_config.description,
+            "model": f"{role_config.model.provider}/{role_config.model.name}",
+            "status": session_data.get("status", "idle"),
+            "last_run": session_data.get("started_at"),
+            "completed_at": session_data.get("completed_at"),
+            "activity_24h": count_24h,
+            "last_comment": dict(last_comment) if last_comment else None,
+        }
     return {"agents": result}

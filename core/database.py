@@ -59,7 +59,7 @@ async def init_db():
                 title TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
-                status TEXT DEFAULT 'pending' CHECK(status IN ('pending','dev','testing','done')),
+                status TEXT DEFAULT 'pending' CHECK(status IN ('pending','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
                 estimated_hours REAL DEFAULT 0,
@@ -147,6 +147,17 @@ async def init_db():
                 config TEXT DEFAULT '{}',
                 created_at DATETIME DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            -- KH-specific: Agent event queue for async collaboration
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                requirement_id INTEGER,
+                context TEXT DEFAULT '{}',
+                processed INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT (datetime('now','localtime'))
             );
 
             -- Indexes

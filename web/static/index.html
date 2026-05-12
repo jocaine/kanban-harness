@@ -103,8 +103,12 @@
                 <button class="doc-tab active" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
                 <button class="doc-tab" data-tab="skill" onclick="switchDocTab('skill')">Advisor Skill</button>
                 <button class="doc-tab" data-tab="memory" onclick="switchDocTab('memory')">产品记忆</button>
+                <button class="doc-tab" data-tab="team" onclick="switchDocTab('team')">AI 团队</button>
             </div>
             <div class="arch-content md-content" id="arch-content"></div>
+            <div class="team-view" id="team-view" style="display:none">
+                <div class="team-grid" id="team-grid"></div>
+            </div>
             <div class="arch-actions" id="arch-actions">
                 <button class="btn-primary" id="btn-arch-edit" onclick="toggleArchEdit()">编辑</button>
                 <button class="btn-secondary" id="btn-load-template" onclick="loadTemplate()" style="display:none">从模板创建</button>
