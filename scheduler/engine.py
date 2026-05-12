@@ -7,6 +7,7 @@ from datetime import datetime
 import aiosqlite
 
 from core.database import DB_PATH
+from core.config import get_project_repo_path
 from core.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,9 @@ class SchedulerEngine:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT r.*, v.project_id FROM requirements r "
+                "SELECT r.*, v.project_id, p.git_remote_url FROM requirements r "
                 "JOIN versions v ON r.version_id = v.id "
+                "JOIN projects p ON v.project_id = p.id "
                 "WHERE r.status = 'dev' AND r.archived = 0 "
                 "ORDER BY r.priority, r.position"
             )
@@ -108,6 +110,10 @@ class SchedulerEngine:
     async def _trigger_coach_dev(self, card: dict):
         from agents.coach_dev import CoachDev
 
+        repo_path = await get_project_repo_path(
+            card["project_id"], card.get("git_remote_url", "")
+        )
+
         input_context = (
             f'{{"requirement_id": {card["id"]}, "code": "{card["code"]}", '
             f'"title": "{card["title"]}"}}'
@@ -119,12 +125,12 @@ class SchedulerEngine:
             input_context=input_context,
         )
 
-        asyncio.create_task(self._run_agent(session_id, card))
+        asyncio.create_task(self._run_agent(session_id, card, repo_path))
 
-    async def _run_agent(self, session_id: int, card: dict):
+    async def _run_agent(self, session_id: int, card: dict, repo_path: str):
         try:
             from agents.coach_dev import CoachDev
-            agent = CoachDev()
+            agent = CoachDev(repo_path=repo_path)
             result = await agent.execute(card)
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
 

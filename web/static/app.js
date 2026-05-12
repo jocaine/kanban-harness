@@ -218,8 +218,7 @@ async function selectProject(pid) {
 function renderGitSection(project) {
     const remoteUrl = project.git_remote_url || '';
     const lastSynced = project.git_last_synced_at || '';
-    const configured = remoteUrl || project.git_repo_path;
-    if (configured) {
+    if (remoteUrl) {
         const syncInfo = lastSynced
             ? `<span style="color:var(--text3)">最近同步：</span><span>${new Date(lastSynced).toLocaleString('zh-CN', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>`
             : `<span style="color:var(--text3)">尚未同步</span>`;
@@ -231,11 +230,11 @@ function renderGitSection(project) {
                 <span style="font-size:11px;color:var(--green);background:rgba(34,197,94,0.1);padding:2px 6px;border-radius:4px">已配置</span>
             </div>
             <div style="font-size:12px;color:var(--text2);display:flex;flex-direction:column;gap:4px">
-                ${remoteUrl ? '<div><span style="color:var(--text3)">仓库：</span><code style="background:var(--bg3);padding:1px 4px;border-radius:3px">' + esc(remoteUrl) + '</code></div>' : ''}
+                <div><span style="color:var(--text3)">仓库：</span><code style="background:var(--bg3);padding:1px 4px;border-radius:3px">${esc(remoteUrl)}</code></div>
                 <div>${syncInfo}</div>
             </div>
             <div style="margin-top:8px;font-size:11px;color:var(--text3)">
-                Coach-Dev 完成任务后自动关联 commit，也可在对话窗口说"把 git 仓库设为 /path"来更新配置
+                KH 自动管理 workspace，卡片进入「开发中」后 Coach-Dev 会自动在独立 worktree 中编码并关联 commit
             </div>
         </div>`;
     }
@@ -247,7 +246,7 @@ function renderGitSection(project) {
             <span style="font-size:11px;color:var(--text3);background:var(--bg3);padding:2px 6px;border-radius:4px">未配置</span>
         </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:8px">
-            配置后 Coach-Dev 会在 worktree 中自动开发，完成后 commit 自动关联到需求卡。
+            告诉 AI 你的仓库地址，KH 会自动 clone 并管理独立 workspace，多项目互不干扰。
         </div>
         <details style="font-size:12px;color:var(--text2)">
             <summary style="cursor:pointer;color:var(--primary);font-weight:500">如何配置？</summary>
@@ -255,8 +254,8 @@ function renderGitSection(project) {
 
                 <div style="font-weight:600;margin-bottom:4px">配置方式</div>
                 <div style="color:var(--text3);margin-bottom:4px">打开右下角 AI 对话，直接说：</div>
-                <pre style="margin:0 0 4px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">把 git 仓库设为 /path/to/your/repo</pre>
-                <div style="color:var(--text3);margin-bottom:12px">路径存储在数据库中，重启不丢失。KH 与目标仓库运行在同一台机器上，直接访问本地路径。</div>
+                <pre style="margin:0 0 4px;padding:6px 8px;background:var(--bg1);border-radius:4px;overflow-x:auto;white-space:pre">git 仓库是 git@github.com:user/repo.git</pre>
+                <div style="color:var(--text3);margin-bottom:12px">KH 会自动 clone 到 <code>~/.kh/workspaces/project_${project.id}/</code>，每个项目独立目录，互不冲突。</div>
 
                 <div style="font-weight:600;margin-bottom:4px">工作流程</div>
                 <div style="color:var(--text3)">

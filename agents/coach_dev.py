@@ -9,13 +9,12 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 600  # 10 minutes
-REPO_PATH = os.getenv("KH_REPO_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")
 
 
 class CoachDev:
-    def __init__(self, repo_path: str = ""):
-        self.repo_path = repo_path or REPO_PATH
+    def __init__(self, repo_path: str):
+        self.repo_path = repo_path
         self.timeout = DEFAULT_TIMEOUT
 
     async def execute(self, card: dict) -> dict:

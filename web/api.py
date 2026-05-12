@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+import os
 import aiosqlite
 
 from core.database import get_db, next_code, generate_prefix
@@ -232,11 +233,18 @@ async def list_commits(rid: int, db: aiosqlite.Connection = Depends(get_db)):
 
 
 @router.get("/commits/{commit_hash}/diff")
-async def get_commit_diff(commit_hash: str):
+async def get_commit_diff(commit_hash: str, project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
     import asyncio
-    import os
+    from core.config import get_project_repo_path
 
-    repo_path = os.getenv("KH_REPO_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if project_id:
+        cursor = await db.execute("SELECT git_remote_url FROM projects WHERE id=?", (project_id,))
+        row = await cursor.fetchone()
+        git_remote_url = row["git_remote_url"] if row else ""
+        repo_path = await get_project_repo_path(project_id, git_remote_url)
+    else:
+        repo_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     proc = await asyncio.create_subprocess_exec(
         "git", "show", "--stat", "--patch", commit_hash,
         cwd=repo_path,
