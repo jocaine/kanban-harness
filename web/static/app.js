@@ -1753,7 +1753,10 @@ function renderTeamGrid(agents) {
                 <span class="agent-persona-name">${esc(info.display_name)}</span>
                 <span class="agent-persona-desc">${esc(info.description)}</span>
                 <div class="agent-tools">${toolsHtml}${triggersHtml}</div>
-                <div class="agent-moves">${movesHtml}</div>
+                <details class="agent-moves-details">
+                    <summary class="agent-moves-summary">流转权限</summary>
+                    <div class="agent-moves">${movesHtml}</div>
+                </details>
                 <span class="agent-persona-activity">${statusLabel} · ${lastActivity}</span>
             </div>
         </div>`;
