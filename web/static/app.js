@@ -1715,21 +1715,30 @@ function renderTeamGrid(agents) {
             'testing->dev': '打回修改',
             'blocked->pending': '解除阻塞重排',
         };
-        const ROLE_AVATAR_SMALL = {
-            pm: '/static/avatars/pm_256.png',
-            industry: '/static/avatars/industry_256.png',
-            coach_dev: '/static/avatars/coach_dev_256.png',
-            coach_review: '/static/avatars/coach_review_256.png',
+        const STATUS_ROLE = {
+            'pending': 'pm',
+            'dev': 'coach_dev',
+            'testing': 'coach_review',
+            'done': '',
+            'blocked': '',
         };
         const movesHtml = (info.permissions?.can_move || []).map(m => {
-            const label = m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ');
-            const explain = MOVE_EXPLAIN[m] || '';
             const parts = m.split('->');
-            const targetRole = parts[1] === 'dev' ? 'coach_dev' : parts[1] === 'testing' ? 'coach_review' : parts[1] === 'pending' ? 'pm' : '';
-            const targetAvatar = ROLE_AVATAR_SMALL[targetRole] || '';
+            const fromStatus = parts[0];
+            const toStatus = parts[1];
+            const fromLabel = fromStatus.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const toLabel = toStatus.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const explain = MOVE_EXPLAIN[m] || '';
+            const fromRole = STATUS_ROLE[fromStatus] || '';
+            const toRole = STATUS_ROLE[toStatus] || '';
+            const fromAvatar = AVATAR_MAP[fromRole] || '';
+            const toAvatar = AVATAR_MAP[toRole] || '';
             return `<div class="move-item">
-                <span class="move-arrow">${esc(label)}</span>
-                ${targetAvatar ? `<img class="move-target-avatar" src="${targetAvatar}">` : ''}
+                ${fromAvatar ? `<img class="move-avatar" src="${fromAvatar}">` : '<span class="move-avatar-placeholder"></span>'}
+                <span class="move-label">${esc(fromLabel)}</span>
+                <span class="move-arrow-icon">→</span>
+                ${toAvatar ? `<img class="move-avatar" src="${toAvatar}">` : '<span class="move-avatar-placeholder"></span>'}
+                <span class="move-label">${esc(toLabel)}</span>
                 <span class="move-explain">${esc(explain)}</span>
             </div>`;
         }).join('') || '<div class="move-item"><span class="move-explain">仅评论，不流转卡片</span></div>';

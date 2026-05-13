@@ -451,11 +451,13 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 .agent-tools{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;width:100%}
 .tool-tag{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--agent-color,var(--primary));color:#fff;opacity:0.9}
 .tool-tag.common{background:var(--bg4);color:var(--text3)}
-.agent-moves{width:100%;margin-bottom:8px;display:flex;flex-direction:column;gap:4px}
-.move-item{display:flex;align-items:center;gap:6px;font-size:11px}
-.move-arrow{color:var(--text);font-weight:500;white-space:nowrap}
-.move-target-avatar{width:16px;height:16px;border-radius:50%;object-fit:cover;flex-shrink:0}
-.move-explain{color:var(--text3);font-size:10px}
+.agent-moves{width:100%;margin-bottom:8px;display:flex;flex-direction:column;gap:6px}
+.move-item{display:flex;align-items:center;gap:5px;font-size:11px}
+.move-avatar{width:22px;height:22px;border-radius:50%;object-fit:cover;flex-shrink:0}
+.move-avatar-placeholder{width:22px;height:22px;flex-shrink:0}
+.move-label{color:var(--text);font-weight:500;white-space:nowrap}
+.move-arrow-icon{color:var(--text3);font-size:12px}
+.move-explain{color:var(--text3);font-size:10px;margin-left:auto}
 .agent-persona-activity{font-size:11px;color:var(--text3);margin-top:6px}
 .agent-status-dot{width:10px;height:10px;border-radius:50%;background:var(--text3);flex-shrink:0}
 .agent-status-dot.working{background:var(--success);box-shadow:0 0 6px var(--success);animation:pulse 1.5s infinite}
