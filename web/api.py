@@ -650,6 +650,7 @@ async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
             "description": role_config.description,
             "model": f"{role_config.model.provider}/{role_config.model.name}",
             "allowed_tools": role_config.allowed_tools,
+            "triggers": [t.event for t in role_config.triggers],
             "permissions": {
                 "can_move": role_config.permissions.can_move,
             },

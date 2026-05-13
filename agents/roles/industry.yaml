@@ -30,6 +30,8 @@ system_prompt: |
   - 格式：**[行业顾问]:** 你的评审意见
 
 allowed_tools:
+  - web_search
+  - web_fetch
   - kanban_get_requirement
   - kanban_list_comments
   - kanban_add_comment
@@ -52,3 +54,5 @@ permissions:
 triggers:
   - event: requirement_created
     condition: ""
+  - event: scheduled
+    condition: "interval == 'daily'"

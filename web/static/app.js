@@ -1683,6 +1683,8 @@ function renderTeamGrid(agents) {
             'kanban_update_requirement': '改需求',
             'kanban_move_requirement': '移卡片',
             'kanban_list_commits': '看提交',
+            'web_search': '联网搜索',
+            'web_fetch': '抓取网页',
             'Bash': '终端',
             'Edit': '改文件',
             'Read': '读文件',
@@ -1695,6 +1697,14 @@ function renderTeamGrid(agents) {
             `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
         ).join('');
         const moves = (info.permissions?.can_move || []).map(m => m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
+        const TRIGGER_LABELS = {
+            'requirement_created': '新需求触发',
+            'status_changed': '状态变更触发',
+            'scheduled': '定期巡查',
+        };
+        const triggersHtml = (info.triggers || []).map(t =>
+            `<span class="tool-tag common">${esc(TRIGGER_LABELS[t] || t)}</span>`
+        ).join('');
 
         html += `
         <div class="agent-persona" style="--agent-color: ${esc(info.color)}">
@@ -1705,7 +1715,7 @@ function renderTeamGrid(agents) {
             <div class="agent-persona-info">
                 <span class="agent-persona-name">${esc(info.display_name)}</span>
                 <span class="agent-persona-desc">${esc(info.description)}</span>
-                <div class="agent-tools">${toolsHtml}</div>
+                <div class="agent-tools">${toolsHtml}${triggersHtml}</div>
                 <div class="agent-persona-meta">
                     <span class="agent-meta-label">流转</span>
                     <span class="agent-meta-value">${esc(moves)}</span>
