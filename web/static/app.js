@@ -1674,8 +1674,22 @@ function renderTeamGrid(agents) {
         const statusLabel = info.status === 'running' ? '工作中' : '空闲';
         const avatarSrc = AVATAR_MAP[role] || info.avatar || '';
         const lastActivity = info.last_run ? timeAgo(info.last_run) : '暂无活动';
-        const tools = (info.allowed_tools || []).join(', ') || '—';
-        const moves = (info.permissions?.can_move || []).map(m => m.replace('->', '→')).join(', ') || '—';
+        const TOOL_LABELS = {
+            'kanban_get_requirement': '读卡片',
+            'kanban_list_requirements': '列需求',
+            'kanban_list_comments': '看评论',
+            'kanban_add_comment': '写评论',
+            'kanban_create_requirements': '建卡片',
+            'kanban_update_requirement': '改需求',
+            'kanban_move_requirement': '移卡片',
+            'kanban_list_commits': '看提交',
+            'Bash': '终端',
+            'Edit': '改文件',
+            'Read': '读文件',
+            'Write': '写文件',
+        };
+        const tools = (info.allowed_tools || []).map(t => TOOL_LABELS[t] || t).join(' · ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
 
         html += `
         <div class="agent-persona" style="--agent-color: ${esc(info.color)}">
