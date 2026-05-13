@@ -1706,6 +1706,34 @@ function renderTeamGrid(agents) {
             `<span class="tool-tag common">${esc(TRIGGER_LABELS[t] || t)}</span>`
         ).join('');
 
+        const MOVE_EXPLAIN = {
+            'pending->dev': '分配任务给开发',
+            'dev->testing': '提交代码送测',
+            'dev->pending': '退回需求给PM',
+            'dev->blocked': '请求CEO裁决',
+            'testing->done': '验收通过完成',
+            'testing->dev': '打回修改',
+            'blocked->pending': '解除阻塞重排',
+        };
+        const ROLE_AVATAR_SMALL = {
+            pm: '/static/avatars/pm_256.png',
+            industry: '/static/avatars/industry_256.png',
+            coach_dev: '/static/avatars/coach_dev_256.png',
+            coach_review: '/static/avatars/coach_review_256.png',
+        };
+        const movesHtml = (info.permissions?.can_move || []).map(m => {
+            const label = m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ');
+            const explain = MOVE_EXPLAIN[m] || '';
+            const parts = m.split('->');
+            const targetRole = parts[1] === 'dev' ? 'coach_dev' : parts[1] === 'testing' ? 'coach_review' : parts[1] === 'pending' ? 'pm' : '';
+            const targetAvatar = ROLE_AVATAR_SMALL[targetRole] || '';
+            return `<div class="move-item">
+                <span class="move-arrow">${esc(label)}</span>
+                ${targetAvatar ? `<img class="move-target-avatar" src="${targetAvatar}">` : ''}
+                <span class="move-explain">${esc(explain)}</span>
+            </div>`;
+        }).join('') || '<div class="move-item"><span class="move-explain">仅评论，不流转卡片</span></div>';
+
         html += `
         <div class="agent-persona" style="--agent-color: ${esc(info.color)}">
             <div class="agent-persona-img" data-role="${esc(role)}">
@@ -1716,10 +1744,7 @@ function renderTeamGrid(agents) {
                 <span class="agent-persona-name">${esc(info.display_name)}</span>
                 <span class="agent-persona-desc">${esc(info.description)}</span>
                 <div class="agent-tools">${toolsHtml}${triggersHtml}</div>
-                <div class="agent-persona-meta">
-                    <span class="agent-meta-label">流转</span>
-                    <span class="agent-meta-value">${esc(moves)}</span>
-                </div>
+                <div class="agent-moves">${movesHtml}</div>
                 <span class="agent-persona-activity">${statusLabel} · ${lastActivity}</span>
             </div>
         </div>`;
