@@ -24,17 +24,18 @@ class CommentAgent:
     For other providers, calls the LLM API directly (text-only, no tools).
     """
 
-    def __init__(self, role_name: str):
+    def __init__(self, role_name: str, project_id: int = 0):
         self.role_config: AgentRole = registry.get(role_name)
         if not self.role_config:
             raise ValueError(f"Unknown role: {role_name}")
+        self.project_id = project_id
 
     async def execute(self, card: dict, existing_comments: list[dict] | None = None) -> dict:
         """Generate a review comment for the given card.
 
         Returns: {"success": bool, "comment": str, "summary": str}
         """
-        prompt = self._build_prompt(card, existing_comments or [])
+        prompt = await self._build_prompt(card, existing_comments or [])
         try:
             response = await self._call_model(prompt)
             return {
@@ -46,8 +47,13 @@ class CommentAgent:
             logger.error(f"CommentAgent({self.role_config.role}) failed: {e}")
             return {"success": False, "comment": "", "summary": str(e)}
 
-    def _build_prompt(self, card: dict, comments: list[dict]) -> str:
+    async def _build_prompt(self, card: dict, comments: list[dict]) -> str:
         system = self.role_config.system_prompt
+
+        # Inject project context for hermes provider (it has tool capabilities)
+        context_section = ""
+        if self.project_id and self.role_config.model.provider == "hermes":
+            context_section = await self._get_project_context()
 
         card_context = (
             f"## 需求卡片\n\n"
@@ -69,7 +75,42 @@ class CommentAgent:
             "如果没有补充意见，写一句简短确认即可。"
         )
 
-        return f"{system}\n\n{card_context}"
+        return f"{system}\n\n{context_section}\n\n{card_context}"
+
+    async def _get_project_context(self) -> str:
+        """Read project context from database for prompt injection."""
+        import aiosqlite
+        from core.database import DB_PATH
+
+        sections = []
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT name, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
+                (self.project_id,),
+            )
+            proj = await cursor.fetchone()
+            if proj:
+                sections.append(f"## 项目：{proj['name']} ({proj['prefix']})")
+                if proj["advisor_skill"]:
+                    sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:1500]}")
+                if proj["product_memory"]:
+                    sections.append(f"\n## 产品记忆\n\n{proj['product_memory'][:1000]}")
+
+            cursor = await db.execute(
+                "SELECT r.code, r.title, r.status, r.priority "
+                "FROM requirements r JOIN versions v ON r.version_id=v.id "
+                "WHERE v.project_id=? AND r.archived=0 "
+                "ORDER BY r.priority LIMIT 15",
+                (self.project_id,),
+            )
+            reqs = await cursor.fetchall()
+            if reqs:
+                sections.append("\n## 当前看板\n")
+                for r in reqs:
+                    sections.append(f"- [{r['code']}] {r['title']} ({r['status']}, {r['priority']})")
+
+        return "\n".join(sections)
 
     async def _call_model(self, prompt: str) -> str:
         cfg = self.role_config.model
@@ -83,6 +124,9 @@ class CommentAgent:
 
     async def _call_hermes(self, prompt: str, cfg) -> str:
         """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
+        from web.hermes_chat import ensure_hermes_config, _build_hermes_env
+        await ensure_hermes_config()
+
         toolsets = cfg.toolsets if hasattr(cfg, "toolsets") and cfg.toolsets else []
         cmd = ["hermes", "-z", prompt]
         if toolsets:
@@ -95,6 +139,7 @@ class CommentAgent:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_build_hermes_env(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(

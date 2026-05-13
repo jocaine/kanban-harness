@@ -232,9 +232,9 @@ class SchedulerEngine:
             input_context=input_context,
         )
 
-        asyncio.create_task(self._run_comment_agent(session_id, role_name, card))
+        asyncio.create_task(self._run_comment_agent(session_id, role_name, card, event["project_id"]))
 
-    async def _run_comment_agent(self, session_id: int, role_name: str, card: dict):
+    async def _run_comment_agent(self, session_id: int, role_name: str, card: dict, project_id: int = 0):
         """Execute a comment agent and post its output."""
         try:
             from agents.comment_agent import CommentAgent
@@ -248,7 +248,7 @@ class SchedulerEngine:
                 )
                 comments = [dict(row) for row in await cursor.fetchall()]
 
-            agent = CommentAgent(role_name)
+            agent = CommentAgent(role_name, project_id=project_id)
             result = await agent.execute(card, comments)
 
             if result["success"] and result["comment"]:
