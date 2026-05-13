@@ -456,8 +456,8 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 .agent-moves-summary:hover{color:var(--text2)}
 .agent-moves{width:100%;display:flex;flex-direction:column;gap:8px;padding:8px 0}
 .move-item{display:flex;align-items:center;gap:6px;font-size:12px}
-.move-avatar{width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0}
-.move-avatar-placeholder{width:28px;height:28px;flex-shrink:0}
+.move-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0}
+.move-avatar-placeholder{display:none}
 .move-label{color:var(--text);font-weight:500;white-space:nowrap}
 .move-arrow-icon{color:var(--text3);font-size:14px}
 .move-explain{color:var(--text3);font-size:11px;margin-left:auto}
