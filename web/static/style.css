@@ -448,6 +448,9 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 .agent-persona-info{display:flex;flex-direction:column;align-items:center}
 .agent-persona-name{font-weight:700;font-size:16px;color:var(--text);margin-bottom:4px}
 .agent-persona-desc{font-size:12px;color:var(--text2);line-height:1.4;margin-bottom:8px}
+.agent-tools{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;width:100%}
+.tool-tag{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--agent-color,var(--primary));color:#fff;opacity:0.9}
+.tool-tag.common{background:var(--bg4);color:var(--text3)}
 .agent-persona-meta{display:flex;gap:6px;align-items:baseline;font-size:11px;margin-bottom:4px;width:100%}
 .agent-meta-label{color:var(--text3);flex-shrink:0;min-width:28px}
 .agent-meta-value{color:var(--text2);word-break:break-all}

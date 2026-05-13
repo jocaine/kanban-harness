@@ -1688,7 +1688,12 @@ function renderTeamGrid(agents) {
             'Read': '读文件',
             'Write': '写文件',
         };
-        const tools = (info.allowed_tools || []).map(t => TOOL_LABELS[t] || t).join(' · ') || '—';
+        const COMMON_TOOLS = ['kanban_get_requirement', 'kanban_list_comments', 'kanban_add_comment'];
+        const uniqueTools = (info.allowed_tools || []).filter(t => !COMMON_TOOLS.includes(t));
+        const commonTools = (info.allowed_tools || []).filter(t => COMMON_TOOLS.includes(t));
+        const toolsHtml = [...uniqueTools, ...commonTools].map(t =>
+            `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
+        ).join('');
         const moves = (info.permissions?.can_move || []).map(m => m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
 
         html += `
@@ -1700,10 +1705,7 @@ function renderTeamGrid(agents) {
             <div class="agent-persona-info">
                 <span class="agent-persona-name">${esc(info.display_name)}</span>
                 <span class="agent-persona-desc">${esc(info.description)}</span>
-                <div class="agent-persona-meta">
-                    <span class="agent-meta-label">工具</span>
-                    <span class="agent-meta-value">${esc(tools)}</span>
-                </div>
+                <div class="agent-tools">${toolsHtml}</div>
                 <div class="agent-persona-meta">
                     <span class="agent-meta-label">流转</span>
                     <span class="agent-meta-value">${esc(moves)}</span>
