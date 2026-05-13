@@ -91,6 +91,15 @@ function renderRoleChat(content) {
     const rolePattern = /\*\*\[?([^\]*:→]+?)\]?\s*(?:→\s*([^\]*:]+?))?\s*[：:]\s*\*\*/;
     if (!rolePattern.test(content)) return renderMd(content);
 
+    const ROLE_AVATARS = {
+        'PM': '/static/avatars/pm_256.png',
+        '产品经理': '/static/avatars/pm_256.png',
+        'Industry': '/static/avatars/industry_256.png',
+        '行业顾问': '/static/avatars/industry_256.png',
+        'Coach-Dev': '/static/avatars/coach_dev_256.png',
+        'Coach': '/static/avatars/coach_dev_256.png',
+        'Coach-Review': '/static/avatars/coach_review_256.png',
+    };
     const colorMap = {};
     let colorIdx = 0;
     function getColor(role) {
@@ -152,8 +161,11 @@ function renderRoleChat(content) {
                 const color = getColor(b.role);
                 const initial = getInitial(b.role);
                 const targetHtml = b.target ? `<span class="chat-target">→ ${esc(b.target)}</span>` : '';
+                const avatarUrl = ROLE_AVATARS[b.role];
                 html += `<div class="chat-bubble">
-                    <div class="chat-avatar" style="background:${color}">${esc(initial)}</div>
+                    ${avatarUrl
+                        ? `<img class="chat-avatar" src="${avatarUrl}" alt="${esc(b.role)}">`
+                        : `<div class="chat-avatar" style="background:${color}">${esc(initial)}</div>`}
                     <div class="chat-content">
                         <div class="chat-meta"><span class="chat-role">${esc(b.role)}</span>${targetHtml}</div>
                         <div class="md-content">${renderMd(b.text.trim())}</div>
@@ -303,9 +315,8 @@ function renderProjectOverview() {
             </div>
             <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
                 <button class="btn-arch" onclick="showDocView('arch')">架构文档</button>
-                <button class="btn-arch" onclick="showDocView('skill')">Advisor Skill${currentProject.has_advisor_skill ? ' ●' : ''}</button>
+                <button class="btn-arch" onclick="showDocView('team')">AI 团队</button>
                 <button class="btn-arch" onclick="showDocView('memory')">产品记忆</button>
-                <button class="btn-arch" onclick="viewTemplate()" style="opacity:0.7">Skill 模板</button>
             </div>
             ${renderGitSection(currentProject)}
             <h3 style="margin:0 0 10px;font-size:15px">版本列表</h3>
@@ -945,11 +956,9 @@ async function showReqModalFromTag(rid, tag) {
 
 let docContent = '';
 let currentDocTab = 'arch';
-let templateCache = null;
 
 const DOC_CONFIG = {
     arch: {label: '架构文档', apiPath: '/architecture', emptyMsg: '暂无架构文档，点击「编辑」添加项目架构与技术栈说明'},
-    skill: {label: 'Advisor Skill', apiPath: '/advisor-skill', emptyMsg: '暂无 Advisor Skill，可从通用模板创建'},
     memory: {label: '产品记忆', apiPath: '/product-memory', emptyMsg: '暂无产品记忆文档，点击「编辑」开始记录产品决策历史'},
 };
 
@@ -964,11 +973,6 @@ async function loadDoc() {
 function renderDoc() {
     const el = document.getElementById('arch-content');
     const cfg = DOC_CONFIG[currentDocTab];
-    const btnTemplate = document.getElementById('btn-load-template');
-    const btnViewTemplate = document.getElementById('btn-view-template');
-
-    btnTemplate.style.display = (currentDocTab === 'skill' && !docContent) ? '' : 'none';
-    btnViewTemplate.style.display = (currentDocTab === 'skill') ? '' : 'none';
 
     if (!docContent) {
         el.innerHTML = '<div class="arch-empty">' + cfg.emptyMsg + '</div>';
@@ -1009,7 +1013,17 @@ function showDocView(tab) {
     document.getElementById('arch-view').style.display = 'block';
     document.getElementById('arch-title').textContent = currentProject.name + ' - 项目文档';
     updateDocTabs();
-    loadDoc();
+    if (tab === 'team') {
+        document.getElementById('team-view').style.display = 'block';
+        document.getElementById('arch-content').style.display = 'none';
+        document.getElementById('arch-actions').style.display = 'none';
+        loadTeamView();
+    } else {
+        document.getElementById('team-view').style.display = 'none';
+        document.getElementById('arch-content').style.display = '';
+        document.getElementById('arch-actions').style.display = '';
+        loadDoc();
+    }
 }
 
 function showArchView() { showDocView('arch'); }
@@ -1075,30 +1089,6 @@ async function saveDoc() {
     docContent = content;
     cancelArchEdit();
     renderDoc();
-}
-
-async function loadTemplate() {
-    if (!templateCache) {
-        const data = await api('/api/skill-template');
-        templateCache = data.content || '';
-    }
-    toggleArchEdit();
-    document.getElementById('arch-textarea').value = templateCache;
-}
-
-async function viewTemplate() {
-    if (!templateCache) {
-        const data = await api('/api/skill-template');
-        templateCache = data.content || '';
-    }
-    document.getElementById('template-preview-content').innerHTML = renderMd(templateCache);
-    document.getElementById('template-modal').classList.remove('hidden');
-}
-
-function useTemplate() {
-    hideModal('template-modal');
-    toggleArchEdit();
-    document.getElementById('arch-textarea').value = templateCache || '';
 }
 
 // ==================== Commits ====================
@@ -1652,6 +1642,9 @@ async function sendChat() {
                     if (data.type === 'text') {
                         fullText += data.content;
                         assistantDiv.innerHTML = renderMarkdown(fullText);
+                    } else if (data.type === 'route') {
+                        const roleLabel = data.role === 'pm' ? '🎯 PM' : data.role;
+                        assistantDiv.innerHTML = `<div class="chat-route-badge">${escapeHtml(roleLabel)} 接管</div>`;
                     } else if (data.type === 'tool_start') {
                         assistantDiv.innerHTML = renderMarkdown(fullText) + `<div style="font-size:11px;color:var(--primary);padding:4px 0">⚙ 执行 ${escapeHtml(data.name)}...</div>`;
                     } else if (data.type === 'tool_done') {
@@ -1695,31 +1688,30 @@ async function loadTeamView() {
 
 function renderTeamGrid(agents) {
     const grid = document.getElementById('team-grid');
+    const AVATAR_MAP = {
+        pm: '/static/avatars/pm_avatar.png',
+        industry: '/static/avatars/industry_avatar.png',
+        coach_dev: '/static/avatars/coach_dev_avatar.png',
+        coach_review: '/static/avatars/coach_review_avatar.png',
+    };
     let html = '';
     for (const [role, info] of Object.entries(agents)) {
-        const statusClass = info.status === 'running' ? 'working' : (info.status === 'completed' ? 'idle' : 'idle');
-        const statusLabel = info.status === 'running' ? '工作中' : (info.status === 'completed' ? '空闲' : '空闲');
-        const modelShort = info.model.split('/').pop();
+        const statusClass = info.status === 'running' ? 'working' : 'idle';
+        const statusLabel = info.status === 'running' ? '工作中' : '空闲';
+        const avatarSrc = AVATAR_MAP[role] || info.avatar || '';
         const lastActivity = info.last_run ? timeAgo(info.last_run) : '暂无活动';
-        const commentPreview = info.last_comment ? truncate(info.last_comment.content, 80) : '';
 
         html += `
-        <div class="agent-card" style="--agent-color: ${esc(info.color)}">
-            <div class="agent-card-header">
-                <span class="agent-icon">${info.icon}</span>
-                <div class="agent-meta">
-                    <span class="agent-name">${esc(info.display_name)}</span>
-                    <span class="agent-model">${esc(modelShort)}</span>
-                </div>
-                <span class="agent-status-dot ${statusClass}" title="${statusLabel}"></span>
+        <div class="agent-persona" style="--agent-color: ${esc(info.color)}">
+            <div class="agent-persona-img" data-role="${esc(role)}">
+                <img src="${esc(avatarSrc)}" alt="${esc(info.display_name)}" draggable="false">
+                <span class="agent-status-dot ${statusClass}"></span>
             </div>
-            <div class="agent-card-desc">${esc(info.description)}</div>
-            <div class="agent-card-stats">
-                <span class="agent-stat">${statusLabel}</span>
-                <span class="agent-stat">${info.activity_24h} 次/24h</span>
-                <span class="agent-stat">${lastActivity}</span>
+            <div class="agent-persona-info">
+                <span class="agent-persona-name">${esc(info.display_name)}</span>
+                <span class="agent-persona-desc">${esc(info.description)}</span>
+                <span class="agent-persona-activity">${statusLabel} · ${lastActivity}</span>
             </div>
-            ${commentPreview ? `<div class="agent-card-comment">${renderMd(commentPreview)}</div>` : ''}
         </div>`;
     }
     grid.innerHTML = html;

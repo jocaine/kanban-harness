@@ -644,6 +644,7 @@ async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
         result[role_name] = {
             "display_name": role_config.display_name,
             "icon": role_config.icon,
+            "avatar": f"/static/avatars/{role_name}_256.png",
             "color": role_config.color,
             "description": role_config.description,
             "model": f"{role_config.model.provider}/{role_config.model.name}",
