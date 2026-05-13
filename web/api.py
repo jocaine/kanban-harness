@@ -616,6 +616,7 @@ async def list_agent_sessions(db: aiosqlite.Connection = Depends(get_db)):
 
 @router.get("/agents/status")
 async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
+    ROLE_ORDER = ["industry", "pm", "coach_dev", "coach_review"]
     result = {}
     for role_name, role_config in registry.all_roles().items():
         cursor = await db.execute(
@@ -648,10 +649,18 @@ async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
             "color": role_config.color,
             "description": role_config.description,
             "model": f"{role_config.model.provider}/{role_config.model.name}",
+            "allowed_tools": role_config.allowed_tools,
+            "permissions": {
+                "can_move": role_config.permissions.can_move,
+            },
             "status": session_data.get("status", "idle"),
             "last_run": session_data.get("started_at"),
             "completed_at": session_data.get("completed_at"),
             "activity_24h": count_24h,
             "last_comment": dict(last_comment) if last_comment else None,
         }
-    return {"agents": result}
+    ordered = {k: result[k] for k in ROLE_ORDER if k in result}
+    for k in result:
+        if k not in ordered:
+            ordered[k] = result[k]
+    return {"agents": ordered}

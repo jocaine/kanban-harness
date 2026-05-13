@@ -1063,33 +1063,7 @@ function hideArchView() {
     }
 }
 
-function toggleArchEdit() {
-    const editor = document.getElementById('arch-editor');
-    const content = document.getElementById('arch-content');
-    const actions = document.getElementById('arch-actions');
-    editor.classList.remove('hidden');
-    content.style.display = 'none';
-    actions.style.display = 'none';
-    document.getElementById('arch-textarea').value = docContent;
-}
-
-function cancelArchEdit() {
-    document.getElementById('arch-editor').classList.add('hidden');
-    document.getElementById('arch-content').style.display = '';
-    document.getElementById('arch-actions').style.display = '';
-}
-
-async function saveDoc() {
-    const content = document.getElementById('arch-textarea').value;
-    const cfg = DOC_CONFIG[currentDocTab];
-    await api('/api/projects/' + currentProject.id + cfg.apiPath, {
-        method: 'PUT',
-        body: {content}
-    });
-    docContent = content;
-    cancelArchEdit();
-    renderDoc();
-}
+function cancelArchEdit() {}
 
 // ==================== Commits ====================
 
@@ -1700,6 +1674,8 @@ function renderTeamGrid(agents) {
         const statusLabel = info.status === 'running' ? '工作中' : '空闲';
         const avatarSrc = AVATAR_MAP[role] || info.avatar || '';
         const lastActivity = info.last_run ? timeAgo(info.last_run) : '暂无活动';
+        const tools = (info.allowed_tools || []).join(', ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('->', '→')).join(', ') || '—';
 
         html += `
         <div class="agent-persona" style="--agent-color: ${esc(info.color)}">
@@ -1710,6 +1686,14 @@ function renderTeamGrid(agents) {
             <div class="agent-persona-info">
                 <span class="agent-persona-name">${esc(info.display_name)}</span>
                 <span class="agent-persona-desc">${esc(info.description)}</span>
+                <div class="agent-persona-meta">
+                    <span class="agent-meta-label">工具</span>
+                    <span class="agent-meta-value">${esc(tools)}</span>
+                </div>
+                <div class="agent-persona-meta">
+                    <span class="agent-meta-label">流转</span>
+                    <span class="agent-meta-value">${esc(moves)}</span>
+                </div>
                 <span class="agent-persona-activity">${statusLabel} · ${lastActivity}</span>
             </div>
         </div>`;
