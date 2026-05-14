@@ -86,6 +86,8 @@ class SchedulerEngine:
                 has_running = await self._has_running_session(card["id"])
                 if has_running:
                     continue
+                if not await self._repo_is_ready(card["project_id"], card.get("git_remote_url", "")):
+                    continue
                 logger.info("[SCHED] → trigger coach_dev for [%s] %s", card["code"], card["title"])
                 await self._trigger_coach_dev(card)
 
@@ -112,6 +114,31 @@ class SchedulerEngine:
                 (f'%"requirement_id": {requirement_id}%',),
             )
             return await cursor.fetchone() is not None
+
+    async def _repo_is_ready(self, project_id: int, git_remote_url: str) -> bool:
+        """Check if the project repo has real code (not just an empty init commit)."""
+        repo_path = os.path.join(
+            os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces")),
+            f"project_{project_id}",
+        )
+        if not os.path.isdir(os.path.join(repo_path, ".git")):
+            if not git_remote_url:
+                logger.info("[SCHED] skip project_%d: no repo and no remote URL (needs init flow)", project_id)
+                return False
+            return True
+
+        # Check if repo has more than just the init commit
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", repo_path, "rev-list", "--count", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        commit_count = int(stdout.decode().strip() or "0")
+        if commit_count <= 1:
+            logger.info("[SCHED] skip project_%d: repo is empty (%d commits, needs init flow)", project_id, commit_count)
+            return False
+        return True
 
     async def _trigger_coach_dev(self, card: dict):
         from agents.coach_dev import CoachDev
