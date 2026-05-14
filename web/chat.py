@@ -1,8 +1,9 @@
-"""Chat API — SSE streaming chat with tool use support."""
+"""Chat API — SSE streaming chat with PM engine (tool loop + streaming)."""
 
 import os
 import json
 import logging
+import time
 from typing import AsyncGenerator
 
 import aiosqlite
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 
 from core.database import DB_PATH
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.chat")
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -34,7 +35,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "enum": ["pending", "dev", "testing", "done"], "description": "Filter by status"},
+                    "status": {"type": "string", "enum": ["research", "pending", "dev", "testing", "done"], "description": "Filter by status"},
                     "limit": {"type": "integer", "description": "Max results", "default": 20},
                 },
             },
@@ -44,17 +45,32 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "create_requirement",
-            "description": "Create a new requirement card",
+            "description": "Create a new requirement card (status=pending for actionable tasks)",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Requirement title"},
-                    "description": {"type": "string", "description": "Markdown description"},
+                    "description": {"type": "string", "description": "Markdown description with goals and acceptance criteria"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
-                    "status": {"type": "string", "enum": ["pending", "dev", "testing", "done"], "default": "pending"},
                 },
                 "required": ["title"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_research_card",
+            "description": "Create a research card (status=research). Use when the topic needs investigation — competitor analysis, market research, tech feasibility study. The industry advisor will pick it up asynchronously.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Research topic title"},
+                    "description": {"type": "string", "description": "What to investigate, key questions to answer"},
+                    "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
+                },
+                "required": ["title"],
+  },
         },
     },
     {
@@ -66,7 +82,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "Requirement code like KH-001"},
-                    "status": {"type": "string", "enum": ["pending", "dev", "testing", "done"]},
+                    "status": {"type": "string", "enum": ["research", "pending", "dev", "testing", "done"]},
                 },
                 "required": ["code", "status"],
             },
@@ -107,7 +123,7 @@ class ChatMessage(BaseModel):
 
 async def _execute_tool(name: str, args: dict, project_id: int) -> str:
     """Execute a tool call and return the result as a string."""
-    logger.info("[CHAT] tool_exec: %s(%s) project=%d", name, json.dumps(args, ensure_ascii=False)[:120], project_id)
+    logger.info("[PM] tool_exec: %s(%s) project=%d", name, json.dumps(args, ensure_ascii=False)[:120], project_id)
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -136,7 +152,7 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 rows = [dict(r) for r in await cursor.fetchall()]
                 return json.dumps(rows, ensure_ascii=False)
 
-            elif name == "create_requirement":
+            elif name in ("create_requirement", "create_research_card"):
                 if not project_id:
                     return json.dumps({"error": "no project selected"})
                 cursor = await db.execute(
@@ -157,13 +173,23 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 title = args.get("title", "")
                 desc = args.get("description", "")
                 priority = args.get("priority", "P2")
-                status = args.get("status", "pending")
+                status = "research" if name == "create_research_card" else "pending"
                 await db.execute(
                     "INSERT INTO requirements (version_id,title,description,priority,status,code,position) VALUES (?,?,?,?,?,?,?)",
                     (version_id, title, desc, priority, status, code, pos),
                 )
+                # Get the new requirement ID for event emit
+                cursor = await db.execute("SELECT last_insert_rowid()")
+                new_req_id = (await cursor.fetchone())[0]
+                # Emit requirement_created event so scheduler triggers industry/pm
+                await db.execute(
+                    "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                    (project_id, "requirement_created", new_req_id,
+                     json.dumps({"status": status, "code": code, "title": title})),
+                )
                 await db.commit()
-                return json.dumps({"created": code, "title": title, "status": status}, ensure_ascii=False)
+                logger.info("[PM] created %s: %s (status=%s, priority=%s)", code, title, status, priority)
+                return json.dumps({"created": code, "title": title, "status": status, "priority": priority}, ensure_ascii=False)
 
             elif name == "move_requirement":
                 code = args.get("code", "")
@@ -204,45 +230,82 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
         return json.dumps({"error": str(e)})
 
 
-async def _get_kanban_context(project_id: int) -> str:
-    """Build system prompt context from kanban state."""
-    lines = [
-        "You are a helpful AI assistant integrated into Kanban Harness, an AI team orchestration engine. "
-        "Answer the user's questions directly and helpfully. You can discuss anything the user asks about. "
-        "When relevant, reference the project state below to provide context-aware answers.\n"
-        "You have tools available to manage the kanban board. Use them when the user asks to create cards, "
-        "check progress, move cards, or configure the project. After using a tool, summarize the result naturally.\n"
-    ]
+async def _build_pm_system_prompt(project_id: int) -> str:
+    """Build PM-role system prompt with full project context."""
+    sections = []
+    sections.append(
+        "你是产品经理（PM），Dashboard 对话的唯一入口。你的策略是快速决策、立即行动。\n"
+    )
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
         if project_id:
-            cursor = await db.execute("SELECT name, description, prefix FROM projects WHERE id=?", (project_id,))
-            proj = await cursor.fetchone()
-            if proj:
-                lines.append(f"**Project:** {proj['name']} (prefix: {proj['prefix']}) — {proj['description']}")
-
             cursor = await db.execute(
-                "SELECT v.name as vname, r.code, r.title, r.status, r.priority "
-                "FROM requirements r JOIN versions v ON r.version_id=v.id "
-                "WHERE v.project_id=? AND r.archived=0 "
-                "ORDER BY r.status, r.priority LIMIT 20",
+                "SELECT name, description, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
                 (project_id,),
             )
-            reqs = [dict(row) for row in await cursor.fetchall()]
+            proj = await cursor.fetchone()
+            if proj:
+                sections.append(f"## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description'] or ''}")
+                if proj["advisor_skill"]:
+                    sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:2000]}")
+                if proj["product_memory"]:
+                    sections.append(f"\n## 产品记忆（决策历史）\n\n{proj['product_memory'][:1500]}")
+
+            cursor = await db.execute(
+                "SELECT r.code, r.title, r.status, r.priority "
+                "FROM requirements r JOIN versions v ON r.version_id=v.id "
+                "WHERE v.project_id=? AND r.archived=0 "
+                "ORDER BY CASE r.status "
+                "  WHEN 'dev' THEN 0 WHEN 'testing' THEN 1 "
+                "  WHEN 'pending' THEN 2 WHEN 'research' THEN 3 WHEN 'done' THEN 4 END, "
+                "r.priority LIMIT 20",
+                (project_id,),
+            )
+            reqs = await cursor.fetchall()
             if reqs:
-                lines.append("\n**Active requirements:**")
+                sections.append("\n## 当前看板状态\n")
                 for r in reqs:
-                    lines.append(f"- [{r['code']}] {r['title']} ({r['status']}, {r['priority']})")
+                    sections.append(f"- [{r['code']}] {r['title']} ({r['status']}, {r['priority']})")
         else:
             cursor = await db.execute(
-                "SELECT id, name FROM projects WHERE archived=0 ORDER BY updated_at DESC LIMIT 5"
+                "SELECT id, name, prefix FROM projects WHERE archived=0 ORDER BY updated_at DESC LIMIT 5"
             )
-            projects = [dict(row) for row in await cursor.fetchall()]
-            lines.append(f"**Projects:** {', '.join(p['name'] for p in projects)}")
+            projects = await cursor.fetchall()
+            if projects:
+                sections.append("\n## 可用项目\n")
+                for p in projects:
+                    sections.append(f"- [{p['prefix']}] {p['name']} (id: {p['id']})")
 
-    return "\n".join(lines)
+    # Inject recent conversation history
+    history = await _get_recent_history(project_id)
+    if history:
+        sections.append("\n## 近期对话\n")
+        for msg in history[-10:]:
+            prefix = "用户" if msg["role"] == "user" else "PM"
+            sections.append(f"**{prefix}:** {msg['content'][:500]}")
+
+    # PM action directives
+    sections.append("""
+## 行动指令
+
+行动规则：
+- 用户描述需求/想法 → 立即拆解为卡片，调用 create_requirement 建卡（status=pending）
+- 用户的需求涉及调研（竞品、市场、技术选型） → 调用 create_research_card 建卡到 research 列，行业顾问会异步处理
+- 用户问进度/状态 → 调用 list_requirements 查看
+- 用户要移动卡片 → 调用 move_requirement
+- 用户闲聊 → 正常对话
+
+原则：
+1. 绝不追问，宁可先建卡再让用户调整
+2. 需要调研的内容不要自己做，建 research 卡交给行业顾问异步处理
+3. 每张卡片包含：title、description（功能目标+验收标准）、priority
+4. 建卡后立即告知用户创建了什么，让用户可以微调
+5. 回复简洁直接，不要长篇大论
+""")
+
+    return "\n".join(sections)
 
 
 async def _chat_with_tools(message: str, system_prompt: str, model: str, provider: str, project_id: int) -> AsyncGenerator[str, None]:
@@ -252,6 +315,9 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
     logger.info("[CHAT] user message: \"%s\" (project=%d, provider=%s, model=%s)", message[:80], project_id, provider or "default", model or "default")
 
     base_url = (OPENAI_BASE_URL or ANTHROPIC_BASE_URL).rstrip("/")
+    # Strip trailing /v1 if present — we add it ourselves in the URL
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3]
     api_key = OPENAI_API_KEY or ANTHROPIC_API_KEY
     messages = [
         {"role": "system", "content": system_prompt},
@@ -261,7 +327,8 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
     yield f"data: {json.dumps({'type': 'thinking', 'stage': 'init'})}\n\n"
 
     max_rounds = 5
-    for _ in range(max_rounds):
+    tool_calls_acc = {}
+    for round_idx in range(max_rounds):
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -335,7 +402,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
             except json.JSONDecodeError:
                 args = {}
             result = await _execute_tool(tc["name"], args, project_id)
-            logger.info("[CHAT] tool_call round=%d: %s(%s) → %s", _ + 1, tc["name"], json.dumps(args, ensure_ascii=False)[:80], result[:120])
+            logger.info("[PM] tool_call round=%d: %s(%s) → %s", round_idx + 1, tc["name"], json.dumps(args, ensure_ascii=False)[:80], result[:120])
             yield f"data: {json.dumps({'type': 'tool_done', 'name': tc['name']})}\n\n"
             messages.append({
                 "role": "tool",
@@ -343,7 +410,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                 "content": result,
             })
 
-    logger.info("[CHAT] done, %d tool rounds completed", _ + 1 if tool_calls_acc else 0)
+    logger.info("[PM] done, %d tool rounds completed", round_idx + 1 if tool_calls_acc else 0)
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
@@ -467,22 +534,28 @@ async def chat_stream(data: ChatMessage):
     # Wrap generators to capture and save assistant response
     async def _wrap_and_save(gen, agent_role=""):
         full_response = []
-        async for event in gen:
-            yield event
-            if event.startswith("data: "):
+        try:
+            async for event in gen:
+                yield event
+                if event.startswith("data: "):
+                    try:
+                        payload = json.loads(event[6:].strip())
+                        if payload.get("type") == "text":
+                            full_response.append(payload["content"])
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        finally:
+            # Save whatever was collected, even if client disconnected mid-stream
+            text = "".join(full_response)
+            if text.strip():
                 try:
-                    payload = json.loads(event[6:].strip())
-                    if payload.get("type") == "text":
-                        full_response.append(payload["content"])
-                except (json.JSONDecodeError, KeyError):
+                    await _save_message(data.project_id, "assistant", text, agent_role)
+                except Exception:
                     pass
-        # Save complete assistant response
-        text = "".join(full_response)
-        if text.strip():
-            await _save_message(data.project_id, "assistant", text, agent_role)
 
-    # Hermes is the primary backend (v0.5 architecture)
-    if provider == "hermes" or (not data.provider and not data.model):
+    # PM engine is the primary backend (v0.6 architecture)
+    # Hermes only used when explicitly requested via provider="hermes"
+    if provider == "hermes":
         from web.hermes_chat import stream_hermes, check_hermes_available
         if await check_hermes_available():
             generator = _wrap_and_save(stream_hermes(data.project_id, data.message), "pm")
@@ -492,14 +565,11 @@ async def chat_stream(data: ChatMessage):
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-    # Fallback to OpenAI-compatible API with tool loop
-    system_prompt = await _get_kanban_context(data.project_id)
+    # Default: PM engine with streaming tool loop
+    system_prompt = await _build_pm_system_prompt(data.project_id)
     model = data.model or CHAT_MODEL
 
-    if provider == "openai" or (not provider and OPENAI_BASE_URL):
-        generator = _wrap_and_save(_chat_with_tools(data.message, system_prompt, model, provider, data.project_id))
-    else:
-        generator = _wrap_and_save(_stream_simple(data.message, system_prompt, model, provider))
+    generator = _wrap_and_save(_chat_with_tools(data.message, system_prompt, model, provider, data.project_id), "pm")
 
     return StreamingResponse(
         generator,
@@ -513,8 +583,8 @@ async def chat_sync(data: ChatMessage):
     """Non-streaming chat (collects full response)."""
     provider = data.provider or CHAT_PROVIDER
 
-    # Hermes primary
-    if provider == "hermes" or (not data.provider and not data.model):
+    # Hermes only when explicitly requested
+    if provider == "hermes":
         from web.hermes_chat import stream_hermes, check_hermes_available
         if await check_hermes_available():
             gen = stream_hermes(data.project_id, data.message)
@@ -526,14 +596,11 @@ async def chat_sync(data: ChatMessage):
                         chunks.append(payload["content"])
             return {"response": "".join(chunks), "model": "hermes", "provider": "hermes"}
 
-    # Fallback
-    system_prompt = await _get_kanban_context(data.project_id)
+    # Default: PM engine
+    system_prompt = await _build_pm_system_prompt(data.project_id)
     model = data.model or CHAT_MODEL
 
-    if provider == "openai" or (not provider and OPENAI_BASE_URL):
-        gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
-    else:
-        gen = _stream_simple(data.message, system_prompt, model, provider)
+    gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
 
     chunks = []
     async for event in gen:
