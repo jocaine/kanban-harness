@@ -76,17 +76,19 @@ class SchedulerEngine:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _tick(self):
-        # Existing: find dev cards for coach_dev
         cards = await self._find_actionable_cards()
+        events = await self._peek_pending_events()
+        if cards or events:
+            logger.info("[SCHED] tick #%d: %d dev cards, %d pending events", self._tick_count, len(cards), len(events))
+
         if cards:
             for card in cards:
                 has_running = await self._has_running_session(card["id"])
                 if has_running:
                     continue
-                logger.info(f"Triggering Coach-Dev for [{card['code']}] {card['title']}")
+                logger.info("[SCHED] → trigger coach_dev for [%s] %s", card["code"], card["title"])
                 await self._trigger_coach_dev(card)
 
-        # Process pending events for comment agents
         await self._process_events()
 
     async def _find_actionable_cards(self) -> list[dict]:
@@ -134,7 +136,7 @@ class SchedulerEngine:
     async def _run_agent(self, session_id: int, card: dict, repo_path: str):
         try:
             from agents.coach_dev import CoachDev
-            agent = CoachDev(repo_path=repo_path)
+            agent = CoachDev(repo_path=repo_path, project_id=card["project_id"])
             result = await agent.execute(card)
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
 
@@ -180,6 +182,15 @@ class SchedulerEngine:
 
     # ==================== Event-driven comment agents ====================
 
+    async def _peek_pending_events(self) -> list[dict]:
+        """Quick count of pending events without marking them processed."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM agent_events WHERE processed=0 ORDER BY created_at LIMIT 10"
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
     async def _process_events(self):
         """Check for unprocessed events and trigger comment agents."""
         async with aiosqlite.connect(DB_PATH) as db:
@@ -214,6 +225,8 @@ class SchedulerEngine:
         requirement_id = event.get("requirement_id")
         if not requirement_id:
             return
+
+        logger.info("[SCHED] → trigger comment_agent '%s' for req=%d, event=%s", role_name, requirement_id, event["event_type"])
 
         # Load card data
         async with aiosqlite.connect(DB_PATH) as db:

@@ -13,16 +13,23 @@ WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")
 
 
 class CoachDev:
-    def __init__(self, repo_path: str):
+    def __init__(self, repo_path: str, project_id: int = 0):
         self.repo_path = repo_path
+        self.project_id = project_id
         self.timeout = DEFAULT_TIMEOUT
+
+    def _worktree_dir(self, code: str) -> str:
+        """Per-project isolated worktree path: /tmp/kh-worktrees/project_{id}/{code}"""
+        project_dir = os.path.join(WORKTREE_BASE, f"project_{self.project_id}")
+        os.makedirs(project_dir, exist_ok=True)
+        return os.path.join(project_dir, code.lower())
 
     async def execute(self, card: dict) -> dict:
         code = card.get("code", "unknown")
         title = card.get("title", "")
         description = card.get("description", "")
         branch_name = f"feature/{code.lower()}"
-        worktree_path = os.path.join(WORKTREE_BASE, code.lower())
+        worktree_path = self._worktree_dir(code)
 
         logger.info(f"Coach-Dev starting: [{code}] {title}")
 
