@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 
 import aiosqlite
@@ -116,16 +117,27 @@ class SchedulerEngine:
             return await cursor.fetchone() is not None
 
     async def _repo_is_ready(self, project_id: int, git_remote_url: str) -> bool:
-        """Check if the project repo has real code (not just an empty init commit)."""
+        """Check if the project repo is ready for dev work.
+
+        Ready means either:
+        - Repo has real code (more than init commit), OR
+        - Repo has architecture doc (init flow completed, scaffold can proceed)
+        """
+        # If there's a remote URL, assume the repo is ready (will be cloned)
+        if git_remote_url:
+            return True
+
         repo_path = os.path.join(
             os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces")),
             f"project_{project_id}",
         )
         if not os.path.isdir(os.path.join(repo_path, ".git")):
-            if not git_remote_url:
-                logger.info("[SCHED] skip project_%d: no repo and no remote URL (needs init flow)", project_id)
-                return False
-            return True
+            # Check if architecture exists — if so, allow scaffold generation
+            has_arch = await self._has_architecture(project_id)
+            if has_arch:
+                return True
+            logger.info("[SCHED] skip project_%d: no repo and no architecture (needs init flow)", project_id)
+            return False
 
         # Check if repo has more than just the init commit
         proc = await asyncio.create_subprocess_exec(
@@ -136,9 +148,22 @@ class SchedulerEngine:
         stdout, _ = await proc.communicate()
         commit_count = int(stdout.decode().strip() or "0")
         if commit_count <= 1:
+            # Empty repo — but if architecture exists, allow scaffold
+            has_arch = await self._has_architecture(project_id)
+            if has_arch:
+                return True
             logger.info("[SCHED] skip project_%d: repo is empty (%d commits, needs init flow)", project_id, commit_count)
             return False
         return True
+
+    async def _has_architecture(self, project_id: int) -> bool:
+        """Check if project has an architecture document."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM project_architecture WHERE project_id=? AND content != ''",
+                (project_id,),
+            )
+            return await cursor.fetchone() is not None
 
     async def _trigger_coach_dev(self, card: dict):
         from agents.coach_dev import CoachDev

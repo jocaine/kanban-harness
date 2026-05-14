@@ -111,6 +111,20 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_architecture",
+            "description": "Set or update the project architecture document. Use when user confirms tech stack, framework choices, or project structure. Content should be markdown describing: tech stack, directory structure, key dependencies, deployment approach.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Architecture document in markdown format"},
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
 
 
@@ -225,6 +239,26 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 await db.commit()
                 return json.dumps({"updated": True, "fields": list(args.keys())}, ensure_ascii=False)
 
+            elif name == "set_architecture":
+                if not project_id:
+                    return json.dumps({"error": "no project selected"})
+                content = args.get("content", "")
+                if not content.strip():
+                    return json.dumps({"error": "content cannot be empty"})
+                await db.execute(
+                    "INSERT INTO project_architecture (project_id, content, updated_at) "
+                    "VALUES (?, ?, datetime('now','localtime')) "
+                    "ON CONFLICT(project_id) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at",
+                    (project_id, content),
+                )
+                await db.execute(
+                    "INSERT INTO agent_events (project_id, event_type, context) VALUES (?,?,?)",
+                    (project_id, "architecture_confirmed", json.dumps({"length": len(content)})),
+                )
+                await db.commit()
+                logger.info("[PM] set_architecture for project %d (%d chars)", project_id, len(content))
+                return json.dumps({"success": True, "project_id": project_id, "chars": len(content)}, ensure_ascii=False)
+
             return json.dumps({"error": f"unknown tool: {name}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -240,6 +274,8 @@ async def _build_pm_system_prompt(project_id: int) -> str:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
 
+        has_architecture = False
+
         if project_id:
             cursor = await db.execute(
                 "SELECT name, description, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
@@ -252,6 +288,16 @@ async def _build_pm_system_prompt(project_id: int) -> str:
                     sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:2000]}")
                 if proj["product_memory"]:
                     sections.append(f"\n## 产品记忆（决策历史）\n\n{proj['product_memory'][:1500]}")
+
+            # Check architecture
+            cursor = await db.execute(
+                "SELECT content FROM project_architecture WHERE project_id=?",
+                (project_id,),
+            )
+            arch_row = await cursor.fetchone()
+            if arch_row and arch_row["content"]:
+                has_architecture = True
+                sections.append(f"\n## 项目架构\n\n{arch_row['content'][:2000]}")
 
             cursor = await db.execute(
                 "SELECT r.code, r.title, r.status, r.priority "
@@ -286,8 +332,29 @@ async def _build_pm_system_prompt(project_id: int) -> str:
             prefix = "用户" if msg["role"] == "user" else "PM"
             sections.append(f"**{prefix}:** {msg['content'][:500]}")
 
-    # PM action directives
-    sections.append("""
+    # PM action directives — vary based on architecture state
+    if not has_architecture and project_id:
+        sections.append("""
+## 行动指令
+
+⚠️ 当前项目尚未确定技术架构。Dev 无法开始工作。你需要：
+1. 询问用户技术方向偏好（语言、框架、部署方式）
+2. 用户确认后，调用 set_architecture 写入架构文档（markdown格式，包含：技术栈、目录结构规划、核心依赖、部署方式）
+3. 建 research 卡让行业顾问调研技术细节（框架对比、最佳实践）
+4. 建一张"项目骨架搭建"卡到 pending 列
+
+其他行动规则：
+- 用户描述需求/想法 → 可以先建卡，但提醒用户需要先确定架构才能开发
+- 用户问进度/状态 → 调用 list_requirements 查看
+- 用户闲聊 → 正常对话
+
+原则：
+1. 主动引导用户确认技术方向，不要等用户问
+2. 架构文档不需要完美，先确定大方向，后续可以调整
+3. 回复简洁直接
+""")
+    else:
+        sections.append("""
 ## 行动指令
 
 行动规则：
@@ -295,6 +362,7 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 - 用户的需求涉及调研（竞品、市场、技术选型） → 调用 create_research_card 建卡到 research 列，行业顾问会异步处理
 - 用户问进度/状态 → 调用 list_requirements 查看
 - 用户要移动卡片 → 调用 move_requirement
+- 用户要调整架构 → 调用 set_architecture 更新架构文档
 - 用户闲聊 → 正常对话
 
 原则：

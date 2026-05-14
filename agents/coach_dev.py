@@ -35,7 +35,16 @@ class CoachDev:
 
         try:
             await self._setup_worktree(branch_name, worktree_path)
-            prompt = self._build_prompt(card)
+
+            # Detect scaffold mode: empty repo + architecture doc available
+            is_scaffold = await self._is_scaffold_mode()
+            if is_scaffold:
+                architecture = await self._get_architecture()
+                prompt = self._build_scaffold_prompt(card, architecture)
+                logger.info(f"Coach-Dev scaffold mode for [{code}] (arch: {len(architecture)} chars)")
+            else:
+                prompt = self._build_prompt(card)
+
             output = await self._run_claude(prompt, worktree_path)
             has_commits = await self._check_commits(branch_name)
 
@@ -80,6 +89,25 @@ class CoachDev:
             f"3. Commit your changes with a message starting with '{code}: '\n"
             f"4. Keep changes focused and minimal\n"
             f"5. Do not modify unrelated files\n"
+        )
+
+    def _build_scaffold_prompt(self, card: dict, architecture: str) -> str:
+        """Build prompt for project scaffold generation (empty repo + architecture doc)."""
+        code = card.get("code", "")
+        title = card.get("title", "")
+
+        return (
+            f"You are scaffolding a new project based on the architecture document below.\n\n"
+            f"## Task: [{code}] {title}\n\n"
+            f"## Architecture Document\n\n{architecture}\n\n"
+            f"## Instructions\n\n"
+            f"1. Create the project directory structure as described in the architecture\n"
+            f"2. Create dependency files (requirements.txt, package.json, etc.) with the specified dependencies\n"
+            f"3. Create a README.md with project overview and setup instructions\n"
+            f"4. Create basic configuration files (.gitignore, Dockerfile if applicable, etc.)\n"
+            f"5. Create placeholder entry points (main.py, index.ts, etc.) with minimal boilerplate\n"
+            f"6. Commit all files with message '{code}: project scaffold'\n"
+            f"7. Do NOT implement business logic — only create the skeleton structure\n"
         )
 
     async def _setup_worktree(self, branch_name: str, worktree_path: str):
@@ -168,3 +196,28 @@ class CoachDev:
         )
         stdout, _ = await proc.communicate()
         return stdout.decode().strip()
+
+    async def _is_scaffold_mode(self) -> bool:
+        """Check if repo is empty (only init commit) — triggers scaffold mode."""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", self.repo_path, "rev-list", "--count", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        count = int(stdout.decode().strip() or "0")
+        return count <= 1
+
+    async def _get_architecture(self) -> str:
+        """Read project architecture document from database."""
+        import aiosqlite
+        from core.database import DB_PATH
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT content FROM project_architecture WHERE project_id=?",
+                (self.project_id,),
+            )
+            row = await cursor.fetchone()
+            return row["content"] if row else ""
