@@ -285,11 +285,12 @@ async def ensure_hermes_config():
     config_file = config_dir / "config.yaml"
     config_dir.mkdir(parents=True, exist_ok=True)
 
+    import sys
     mcp_server_path = str(Path(__file__).resolve().parent.parent / "mcp_server" / "server.py")
     port = os.getenv("PORT", "8000")
     local_mcp = {
         "type": "stdio",
-        "command": "python",
+        "command": sys.executable,
         "args": [mcp_server_path],
         "env": {"KH_BASE_URL": f"http://localhost:{port}"},
     }
