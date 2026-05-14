@@ -1,31 +1,50 @@
 """HTTP client for Kanban Harness REST API."""
 
 import os
+import logging
+import time
 import httpx
 from typing import Any
+
+logger = logging.getLogger("kh.mcp.client")
 
 KH_BASE_URL = os.getenv("KH_BASE_URL", "http://localhost:8000")
 
 
 class KHClient:
-    def __init__(self, base_url: str = ""):
+    def __init__(self, base_url: str = "", caller_id: str = "mcp"):
         self.base_url = (base_url or KH_BASE_URL).rstrip("/")
+        self.caller_id = caller_id
+
+    def _headers(self) -> dict:
+        return {"X-Caller-ID": self.caller_id} if self.caller_id else {}
 
     async def _get(self, path: str) -> Any:
+        t0 = time.time()
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self.base_url}{path}", timeout=30)
+            resp = await client.get(f"{self.base_url}{path}", headers=self._headers(), timeout=30)
+            elapsed = (time.time() - t0) * 1000
+            logger.info("GET %s → %d (%.0fms)", path, resp.status_code, elapsed)
             resp.raise_for_status()
             return resp.json()
 
     async def _post(self, path: str, json: dict | None = None) -> Any:
+        t0 = time.time()
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{self.base_url}{path}", json=json, timeout=30)
+            resp = await client.post(f"{self.base_url}{path}", json=json, headers=self._headers(), timeout=30)
+            elapsed = (time.time() - t0) * 1000
+            logger.info("POST %s → %d (%.0fms) body=%s", path, resp.status_code, elapsed,
+                       str(json)[:100] if json else "null")
             resp.raise_for_status()
             return resp.json()
 
     async def _put(self, path: str, json: dict | None = None) -> Any:
+        t0 = time.time()
         async with httpx.AsyncClient() as client:
-            resp = await client.put(f"{self.base_url}{path}", json=json, timeout=30)
+            resp = await client.put(f"{self.base_url}{path}", json=json, headers=self._headers(), timeout=30)
+            elapsed = (time.time() - t0) * 1000
+            logger.info("PUT %s → %d (%.0fms) body=%s", path, resp.status_code, elapsed,
+                       str(json)[:100] if json else "null")
             resp.raise_for_status()
             return resp.json()
 

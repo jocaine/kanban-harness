@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -12,7 +13,7 @@ import aiosqlite
 
 from core.database import DB_PATH
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.hermes")
 
 HERMES_BIN = os.getenv("HERMES_BIN", "hermes")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "")
@@ -78,14 +79,25 @@ async def _get_chat_summary(project_id: int) -> str:
 
 
 def _detect_role(user_message: str) -> str:
-    """Detect which agent role best fits the user's message based on registry triggers."""
+    """Detect which agent role best fits the user's message based on registry triggers.
+
+    Priority: specific roles only match on strong signals; default is pm.
+    """
     msg = user_message.lower()
-    if any(kw in msg for kw in ("代码", "实现", "bug", "报错", "编译", "git", "commit", "重构", "接口", "函数")):
+
+    # coach_dev: explicit code/implementation keywords
+    if any(kw in msg for kw in ("代码", "实现", "bug", "报错", "编译", "git", "commit", "重构", "接口设计", "函数", "debug", "部署")):
         return "coach_dev"
-    if any(kw in msg for kw in ("行业", "竞品", "市场", "趋势", "调研", "竞争")):
+
+    # industry: only when explicitly asking for market/competitor research
+    if any(kw in msg for kw in ("竞品分析", "市场调研", "行业趋势", "竞争对手", "市场规模")):
         return "industry"
-    if any(kw in msg for kw in ("测试", "验收", "review", "质量", "回归")):
+
+    # coach_review: explicit QA/testing keywords
+    if any(kw in msg for kw in ("测试用例", "验收标准", "code review", "质量检查", "回归测试")):
         return "coach_review"
+
+    # Default: PM handles everything else (requirements, planning, general chat)
     return "pm"
 
 
@@ -194,13 +206,16 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
 
 async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[str, None]:
     """Run hermes -z with context-injected prompt and stream output as SSE events."""
+    t_start = time.time()
 
     # 1. Route: detect role (real architectural decision based on registry)
     role = _detect_role(user_message)
+    logger.info("[hermes] route=%s msg=%r project=%d", role, user_message[:60], project_id)
     yield f"data: {json.dumps({'type': 'route', 'role': role}, ensure_ascii=False)}\n\n"
 
     # 2. Build prompt (instant — DB queries are <50ms)
     prompt, ctx_summary = await _build_hermes_prompt(project_id, user_message)
+    logger.info("[hermes] prompt built: %d chars, context=%s", len(prompt), json.dumps(ctx_summary, ensure_ascii=False))
 
     # 3. Signal: context loaded, now waiting for AI
     yield f"data: {json.dumps({'type': 'status', 'state': 'waiting', 'context': ctx_summary}, ensure_ascii=False)}\n\n"
@@ -220,6 +235,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             flags += f" -t {HERMES_TOOLSETS}"
 
         shell_cmd = f'{HERMES_BIN} -z "$(cat {tmp.name})"{flags} --yolo'
+        logger.info("[hermes] spawning: %s", shell_cmd[:120])
 
         proc = await asyncio.create_subprocess_shell(
             shell_cmd,
@@ -227,8 +243,11 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             stderr=asyncio.subprocess.PIPE,
             env=_build_hermes_env(),
         )
+        logger.info("[hermes] process started pid=%d", proc.pid)
 
         # Parse stderr for real hermes startup signals (MCP connection, plugin loading)
+        stderr_lines = []
+
         async def _read_stderr():
             while True:
                 line = await proc.stderr.readline()
@@ -236,23 +255,36 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
                     break
                 text = line.decode("utf-8", errors="replace").strip()
                 if text:
-                    logger.debug("[hermes:stderr] %s", text)
+                    stderr_lines.append(text)
+                    # Log MCP-related and error messages at higher level
+                    if "MCP" in text or "ERROR" in text or "WARN" in text or "failed" in text.lower():
+                        logger.warning("[hermes:stderr] %s", text)
+                    else:
+                        logger.debug("[hermes:stderr] %s", text)
 
         stderr_task = asyncio.create_task(_read_stderr())
 
         byte_buf = b""
         line_buf = ""
         first_output = False
+        total_lines = 0
+        tool_calls_seen = 0
         while True:
             try:
                 chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=0.5)
             except asyncio.TimeoutError:
+                # Log if we've been waiting too long with no output
+                elapsed = time.time() - t_start
+                if not first_output and elapsed > 30 and int(elapsed) % 30 == 0:
+                    logger.warning("[hermes] no output after %.0fs, still waiting (pid=%d)", elapsed, proc.pid)
                 continue
             if not chunk:
                 break
 
             if not first_output:
                 first_output = True
+                t_first = time.time() - t_start
+                logger.info("[hermes] first output after %.1fs", t_first)
                 yield f"data: {json.dumps({'type': 'status', 'state': 'streaming'}, ensure_ascii=False)}\n\n"
 
             byte_buf += chunk
@@ -274,8 +306,12 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             line_buf += text
             while "\n" in line_buf:
                 line, line_buf = line_buf.split("\n", 1)
+                total_lines += 1
                 event = _parse_hermes_line(line)
                 if event:
+                    if event["type"] == "tool_start":
+                        tool_calls_seen += 1
+                        logger.info("[hermes] tool_call #%d: %s", tool_calls_seen, event.get("name", "?"))
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         # Flush remaining
@@ -293,13 +329,24 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             pass
 
         await proc.wait()
+        t_total = time.time() - t_start
+
+        # Log stderr summary for diagnostics
+        mcp_lines = [l for l in stderr_lines if "MCP" in l or "mcp" in l]
+        if mcp_lines:
+            logger.info("[hermes] MCP stderr summary: %s", "; ".join(mcp_lines[-3:]))
 
         if proc.returncode != 0:
             stderr_out = await proc.stderr.read()
             err_msg = stderr_out.decode("utf-8", errors="replace").strip()
+            logger.error("[hermes] exited code=%d after %.1fs: %s", proc.returncode, t_total, err_msg[:200])
             if err_msg:
-                logger.warning(f"hermes exited with code {proc.returncode}: {err_msg}")
                 yield f"data: {json.dumps({'type': 'error', 'content': f'hermes error: {err_msg}'}, ensure_ascii=False)}\n\n"
+        else:
+            logger.info(
+                "[hermes] done: %.1fs total, %d lines, %d tool_calls, exit=0",
+                t_total, total_lines, tool_calls_seen,
+            )
 
     finally:
         try:

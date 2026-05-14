@@ -1,12 +1,28 @@
 """Kanban Harness MCP Server — intent-driven interface for AI collaboration."""
 
 import os
+import sys
+import logging
+
+# Ensure project root is in sys.path so `mcp_server.kh_client` resolves
+# when hermes spawns this file directly as `python /path/to/server.py`
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
+logger = logging.getLogger("kh.mcp")
+logging.basicConfig(
+    level=logging.DEBUG if os.getenv("MCP_DEBUG") else logging.INFO,
+    format="%(asctime)s [MCP] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 from mcp_server.kh_client import KHClient
+
+logger.info("MCP server module loaded, KH_BASE_URL=%s", os.getenv("KH_BASE_URL", "http://localhost:8000"))
 
 mcp = FastMCP(
     "Kanban Harness",
@@ -14,11 +30,13 @@ mcp = FastMCP(
 )
 
 client = KHClient()
+logger.info("MCP FastMCP instance created, client targeting %s", client.base_url)
 
 
 @mcp.tool()
 async def kh_brief() -> str:
     """返回 KH 团队状态摘要：各角色状态、待审批项、进行中的卡片。"""
+    logger.info("tool:kh_brief called")
     projects = await client.list_projects()
     agents = await client.get_agents_status()
     scheduler = await client.get_scheduler_status()
@@ -71,6 +89,7 @@ async def kh_submit_idea(idea: str, project_id: int = 0, priority: str = "P2") -
         project_id: 目标项目 ID（0 则使用第一个活跃项目）
         priority: 优先级 P0/P1/P2/P3
     """
+    logger.info("tool:kh_submit_idea idea=%r project_id=%d priority=%s", idea[:60], project_id, priority)
     if not idea.strip():
         return "错误：idea 不能为空"
 
@@ -112,6 +131,7 @@ async def kh_notify_event(event_type: str, detail: str) -> str:
         event_type: 事件类型 (deploy_done, bug_report, user_feedback, ci_failed, release_ready)
         detail: 事件详情描述
     """
+    logger.info("tool:kh_notify_event type=%s detail=%r", event_type, detail[:80])
     valid_types = ("deploy_done", "bug_report", "user_feedback", "ci_failed", "release_ready")
     if event_type not in valid_types:
         return f"错误：event_type 必须是 {valid_types} 之一"
@@ -144,6 +164,7 @@ async def kh_ask_pm(question: str) -> str:
     Args:
         question: 要问 PM 的问题
     """
+    logger.info("tool:kh_ask_pm question=%r", question[:80])
     projects = await client.list_projects()
     all_reqs = []
     for proj in projects:
@@ -153,7 +174,7 @@ async def kh_ask_pm(question: str) -> str:
                 reqs = await client.list_requirements(ver["id"])
                 all_reqs.extend(reqs)
 
-    stats = {"pending": 0, "dev": 0, "testing": 0, "done": 0}
+    stats = {"research": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0}
     p0_items = []
     for req in all_reqs:
         stats[req["status"]] = stats.get(req["status"], 0) + 1
@@ -161,7 +182,7 @@ async def kh_ask_pm(question: str) -> str:
             p0_items.append(f"[{req['code']}] {req['title']}")
 
     context = (
-        f"当前看板状态：pending={stats['pending']}, dev={stats['dev']}, "
+        f"当前看板状态：research={stats['research']}, pending={stats['pending']}, dev={stats['dev']}, "
         f"testing={stats['testing']}, done={stats['done']}\n"
     )
     if p0_items:
@@ -185,6 +206,7 @@ async def kh_approve(item_id: int) -> str:
     Args:
         item_id: 需求卡片 ID
     """
+    logger.info("tool:kh_approve item_id=%d", item_id)
     try:
         result = await client.move_requirement(item_id, status="done")
         return f"已批准：[{result['code']}] {result['title']} → done"
@@ -200,6 +222,7 @@ async def kh_reject(item_id: int, reason: str) -> str:
         item_id: 需求卡片 ID
         reason: 驳回原因
     """
+    logger.info("tool:kh_reject item_id=%d reason=%r", item_id, reason[:60])
     try:
         await client.move_requirement(item_id, status="dev")
         await client.add_comment(item_id, content=f"**驳回原因：** {reason}", author="reviewer")
@@ -209,4 +232,5 @@ async def kh_reject(item_id: int, reason: str) -> str:
 
 
 if __name__ == "__main__":
+    logger.info("MCP server starting in stdio mode (pid=%d)", os.getpid())
     mcp.run()
