@@ -11,6 +11,13 @@ from web.chat import router as chat_router
 router = APIRouter()
 router.include_router(chat_router)
 
+
+def _normalize_newlines(s: str) -> str:
+    """Convert literal \\n sequences to real newlines (common when AI agents submit text)."""
+    if s and '\\n' in s:
+        return s.replace('\\n', '\n')
+    return s
+
 # ==================== Pydantic Models ====================
 
 class ProjectCreate(BaseModel):
@@ -57,6 +64,7 @@ class ReqUpdate(BaseModel):
     estimated_hours: Optional[float] = None
     actual_hours: Optional[float] = None
     notes: Optional[str] = None
+    tags: Optional[str] = None
 
 class ReqMove(BaseModel):
     status: str
@@ -185,6 +193,8 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
     code = await next_code(db, data.version_id)
     if not code:
         raise HTTPException(404, "version not found")
+    description = _normalize_newlines(data.description)
+    notes = _normalize_newlines(data.notes)
     cursor = await db.execute(
         "SELECT COALESCE(MAX(position),-1)+1 FROM requirements WHERE version_id=? AND archived=0",
         (data.version_id,)
@@ -193,8 +203,8 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
     cursor = await db.execute(
         "INSERT INTO requirements (version_id,title,description,priority,status,assignee,deadline,estimated_hours,notes,code,position) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (data.version_id, data.title, data.description, data.priority, data.status,
-         data.assignee, data.deadline, data.estimated_hours, data.notes, code, pos)
+        (data.version_id, data.title, description, data.priority, data.status,
+         data.assignee, data.deadline, data.estimated_hours, notes, code, pos)
     )
     await db.commit()
     rid = cursor.lastrowid
@@ -217,9 +227,11 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
 @router.put("/requirements/{rid}")
 async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection = Depends(get_db)):
     updates, params = [], []
-    for field in ("title", "description", "priority", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes"):
+    for field in ("title", "description", "priority", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags"):
         val = getattr(data, field)
         if val is not None:
+            if field in ("description", "notes"):
+                val = _normalize_newlines(val)
             updates.append(f"{field}=?")
             params.append(val)
     if not updates:
@@ -233,7 +245,7 @@ async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection
 
 @router.put("/requirements/{rid}/move")
 async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    valid = ("pending", "dev", "testing", "done", "blocked")
+    valid = ("research", "pending", "dev", "testing", "done", "blocked")
     if data.status not in valid:
         raise HTTPException(400, f"status must be one of {valid}")
 
@@ -258,14 +270,19 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
                 400,
                 f"Role 'coach_dev' must provide a reason when moving to '{data.status}'"
             )
+    else:
+        # 人类操作必须提供移动原因
+        if not data.reason.strip():
+            raise HTTPException(400, "移动卡片必须提供原因说明")
 
     await db.execute(
         "UPDATE requirements SET status=?, position=?, updated_at=datetime('now','localtime') WHERE id=?",
         (data.status, data.position, rid)
     )
 
-    # Audit trail
-    actor = agent_role or "human"
+    # Audit trail — identify actual caller
+    caller_id = request.headers.get("X-Caller-ID", "").strip()
+    actor = agent_role or caller_id or "human"
     await _audit_status_change(db, rid, old_status, data.status, actor, data.reason)
 
     # Emit status_changed event for async collaboration
@@ -424,7 +441,7 @@ async def list_tags(project_id: int = 0, db: aiosqlite.Connection = Depends(get_
             tags = [t.strip() for t in tags.split(",") if t.strip()]
         for t in tags:
             if t not in tag_stats:
-                tag_stats[t] = {"tag": t, "total": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0, "description": ""}
+                tag_stats[t] = {"tag": t, "total": 0, "research": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0, "description": ""}
             tag_stats[t]["total"] += 1
 
     cursor = await db.execute(
@@ -468,7 +485,7 @@ async def get_tag_requirements(tag: str, project_id: int = 0, db: aiosqlite.Conn
         if tag in tags:
             filtered.append(r)
 
-    grouped = {"pending": [], "dev": [], "testing": [], "done": []}
+    grouped = {"research": [], "pending": [], "dev": [], "testing": [], "done": []}
     for r in filtered:
         if r["status"] in grouped:
             grouped[r["status"]].append(r)
@@ -645,7 +662,7 @@ async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
         result[role_name] = {
             "display_name": role_config.display_name,
             "icon": role_config.icon,
-            "avatar": f"/static/avatars/{role_name}_256.png",
+            "avatar": f"/static/avatars/{role_name}_avatar.png",
             "color": role_config.color,
             "description": role_config.description,
             "model": f"{role_config.model.provider}/{role_config.model.name}",

@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=24">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <link rel="stylesheet" href="static/style.css?v=27">
+    <script src="static/lib/marked.min.js"></script>
+    <script src="static/lib/purify.min.js"></script>
 </head>
 <body>
     <!-- 左侧边栏 -->
@@ -147,6 +147,25 @@
         </div>
     </div>
 
+    <!-- 移动确认弹窗 -->
+    <div class="modal-overlay hidden" id="move-confirm-modal" onclick="closeModal('move-confirm-modal', event)">
+        <div class="modal modal-sm" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3>确认移动</h3>
+                <button class="modal-close" onclick="cancelMove()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="move-confirm-desc" style="margin-bottom:12px;color:#64748b;"></p>
+                <label>移动原因 / 说明 <span class="req">*</span></label>
+                <textarea id="move-confirm-reason" rows="3" placeholder="请说明为什么移动这张卡片..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="cancelMove()">取消</button>
+                <button class="btn-primary" onclick="confirmMove()">确认移动</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 版本弹窗 -->
     <div class="modal-overlay hidden" id="version-modal" onclick="closeModal('version-modal', event)">
         <div class="modal modal-sm" onclick="event.stopPropagation()">
@@ -207,6 +226,7 @@
                         <div class="form-group">
                             <label>状态</label>
                             <select id="req-status">
+                                <option value="research">调研中</option>
                                 <option value="pending">待开发</option>
                                 <option value="dev">开发中</option>
                                 <option value="testing">测试中</option>
@@ -298,7 +318,7 @@
     <!-- Chat Panel -->
     <div class="chat-panel" id="chat-panel" style="display:none">
         <div class="chat-header">
-            <img class="chat-header-avatar" src="/static/avatars/pm_256.png" id="chat-role-avatar">
+            <img class="chat-header-avatar" src="/static/avatars/pm_avatar.png" id="chat-role-avatar">
             <div class="chat-header-info">
                 <span class="chat-header-title">AI 团队</span>
                 <span class="chat-header-project" id="chat-project-label">未选择项目</span>
@@ -314,6 +334,6 @@
     </div>
     <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话">💬</button>
 
-    <script src="static/app.js?v=25"></script>
+    <script src="static/app.js?v=29"></script>
 </body>
 </html>

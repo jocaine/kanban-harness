@@ -9,6 +9,7 @@ let editingProjectId = null;
 let editingVersionId = null;
 let selectedColor = '#4f46e5';
 let pendingFiles = [];
+let pendingMove = null;
 let currentView = 'board';
 let tagData = [];
 let currentTag = null;
@@ -50,6 +51,7 @@ function parseHash() {
 }
 
 const STATUS_MAP = {
+    research: {label: '调研中', color: '#a855f7', dot: '#c084fc'},
     pending: {label: '待开发', color: '#6366f1', dot: '#818cf8'},
     dev: {label: '开发中', color: '#f59e0b', dot: '#fbbf24'},
     testing: {label: '测试中', color: '#06b6d4', dot: '#22d3ee'},
@@ -79,8 +81,9 @@ function esc(str) {
 
 function renderMd(str) {
     if (!str) return '';
+    str = str.replace(/\\n/g, '\n');
     const html = marked.parse(str, {breaks: true, gfm: true});
-    const clean = DOMPurify.sanitize(html);
+    const clean = DOMPurify.sanitize(html, {ADD_TAGS: ['input'], ADD_ATTR: ['type', 'checked', 'disabled']});
     return clean.replace(/\b([A-Z]{2,5})-(\d{3,})\b/g, '<a class="code-link" href="javascript:void(0)" onclick="event.stopPropagation();jumpToCode(\'$1-$2\')">$1-$2</a>');
 }
 
@@ -92,13 +95,13 @@ function renderRoleChat(content) {
     if (!rolePattern.test(content)) return renderMd(content);
 
     const ROLE_AVATARS = {
-        'PM': '/static/avatars/pm_256.png',
-        '产品经理': '/static/avatars/pm_256.png',
-        'Industry': '/static/avatars/industry_256.png',
-        '行业顾问': '/static/avatars/industry_256.png',
-        'Coach-Dev': '/static/avatars/coach_dev_256.png',
-        'Coach': '/static/avatars/coach_dev_256.png',
-        'Coach-Review': '/static/avatars/coach_review_256.png',
+        'PM': '/static/avatars/pm_avatar.png',
+        '产品经理': '/static/avatars/pm_avatar.png',
+        'Industry': '/static/avatars/industry_avatar.png',
+        '行业顾问': '/static/avatars/industry_avatar.png',
+        'Coach-Dev': '/static/avatars/coach_dev_avatar.png',
+        'Coach': '/static/avatars/coach_dev_avatar.png',
+        'Coach-Review': '/static/avatars/coach_review_avatar.png',
     };
     const colorMap = {};
     let colorIdx = 0;
@@ -224,6 +227,12 @@ async function selectProject(pid) {
     renderProjectOverview();
     updateStats();
     if (currentView === 'tag') loadTags();
+    // 切换项目时刷新对话面板
+    if (document.getElementById('chat-panel').style.display !== 'none') {
+        updateChatHeader();
+        document.getElementById('chat-messages').dataset.loaded = '';
+        loadChatHistory();
+    }
     updateHash();
 }
 
@@ -613,10 +622,18 @@ function setupDropZone(container, status) {
         if (!rid || !ph) return;
         const position = [...container.children].indexOf(ph);
         ph.remove();
-        await api('/api/requirements/' + rid + '/move', {method: 'PUT', body: {status, position}});
-        await loadRequirements(currentVersion.id);
-        renderRequirements();
-        await refreshVersions();
+        // 弹出确认弹窗，要求人类填写移动原因
+        pendingMove = {rid, status, position};
+        const card = requirements.find(x => x.id === rid);
+        const cardTitle = card ? card.title : `#${rid}`;
+        const desc = status === 'done'
+            ? `将 [${cardTitle}] 标记为完成，请说明完成情况（验收结果、遗留问题等）：`
+            : `将 [${cardTitle}] 移动到「${status}」，请说明原因：`;
+        document.getElementById('move-confirm-desc').textContent = desc;
+        document.getElementById('move-confirm-reason').value = '';
+        document.getElementById('move-confirm-reason').style.borderColor = '';
+        document.getElementById('move-confirm-modal').classList.remove('hidden');
+        document.getElementById('move-confirm-reason').focus();
     });
 }
 
@@ -628,6 +645,33 @@ function getDragAfter(container, y) {
         if (offset < 0 && offset > closest.offset) return {offset, element: child};
         return closest;
     }, {offset: Number.NEGATIVE_INFINITY}).element;
+}
+
+// ================ Move Confirmation ====================
+
+async function confirmMove() {
+    const reason = document.getElementById('move-confirm-reason').value.trim();
+    if (!reason) {
+        document.getElementById('move-confirm-reason').style.borderColor = '#dc2626';
+        document.getElementById('move-confirm-reason').setAttribute('placeholder', '必须填写移动原因！');
+        document.getElementById('move-confirm-reason').focus();
+        return;
+    }
+    if (!pendingMove) return;
+    const {rid, status, position} = pendingMove;
+    document.getElementById('move-confirm-modal').classList.add('hidden');
+    pendingMove = null;
+    await api('/api/requirements/' + rid + '/move', {method: 'PUT', body: {status, position, reason}});
+    await loadRequirements(currentVersion.id);
+    renderRequirements();
+    await refreshVersions();
+}
+
+function cancelMove() {
+    document.getElementById('move-confirm-modal').classList.add('hidden');
+    pendingMove = null;
+    // 恢复看板显示（卡片已从原位移除，需要重新渲染）
+    renderRequirements();
 }
 
 // ================ Requirement Modal ====================
@@ -656,6 +700,14 @@ function showReqModal(editId) {
         document.getElementById('comments-section-inline').style.display = '';
         loadComments(editId);
         loadCommits(editId);
+        // Default to preview mode when opening existing card
+        if (r.description) {
+            const preview = document.getElementById('req-desc-preview');
+            preview.innerHTML = renderMd(r.description);
+            preview.classList.remove('hidden');
+            document.getElementById('req-desc').style.display = 'none';
+            document.getElementById('btn-desc-preview').textContent = '编辑';
+        }
     } else {
         document.getElementById('req-title').value = '';
         document.getElementById('req-desc').value = '';
@@ -884,6 +936,7 @@ function renderTagList() {
                 <span class="tag-card-pct">${pct}%</span>
             </div>
             <div class="tag-card-stats">
+                ${t.research > 0 ? '<span class="tag-stat research">' + t.research + ' 调研中</span>' : ''}
                 ${t.pending > 0 ? '<span class="tag-stat pending">' + t.pending + ' 待开发</span>' : ''}
                 ${t.dev > 0 ? '<span class="tag-stat dev">' + t.dev + ' 开发中</span>' : ''}
                 ${t.testing > 0 ? '<span class="tag-stat testing">' + t.testing + ' 测试中</span>' : ''}
@@ -909,7 +962,7 @@ async function showTagDetail(tag) {
 
     updateDescCollapsible('tag', data.description || '');
 
-    const statusOrder = ['pending', 'dev', 'testing', 'done'];
+    const statusOrder = ['research', 'pending', 'dev', 'testing', 'done'];
     for (const status of statusOrder) {
         let items = data.grouped[status] || [];
         if (priFilter) items = items.filter(r => r.priority === priFilter);
@@ -1429,6 +1482,7 @@ async function initApp() {
             showToast('未找到 ' + codeParam);
         }
     }
+    restoreChatPanel();
     const params = parseHash();
     if (params.p) {
         const pid = parseInt(params.p);
@@ -1579,7 +1633,17 @@ function toggleChat() {
     const panel = document.getElementById('chat-panel');
     const isHidden = panel.style.display === 'none';
     panel.style.display = isHidden ? 'flex' : 'none';
+    localStorage.setItem('kh_chat_open', isHidden ? '1' : '0');
     if (isHidden) {
+        updateChatHeader();
+        loadChatHistory();
+    }
+}
+
+function restoreChatPanel() {
+    if (localStorage.getItem('kh_chat_open') === '1') {
+        const panel = document.getElementById('chat-panel');
+        panel.style.display = 'flex';
         updateChatHeader();
         loadChatHistory();
     }
@@ -1608,6 +1672,11 @@ async function loadChatHistory() {
                     return `<div class="chat-msg assistant">${renderMarkdown(m.content)}</div>`;
                 }
             }).join('');
+            // 如果最后一条是 user 消息（AI 可能还在后台处理），显示提示
+            const last = data.messages[data.messages.length - 1];
+            if (last.role === 'user') {
+                messages.innerHTML += `<div class="chat-msg assistant"><div class="chat-thinking-hint">AI 可能仍在后台处理中，稍后刷新可查看回复</div></div>`;
+            }
             messages.scrollTop = messages.scrollHeight;
         }
         messages.dataset.loaded = String(currentProject.id);
@@ -1642,10 +1711,10 @@ async function sendChat() {
     messages.scrollTop = messages.scrollHeight;
 
     const ROLE_AVATARS_CHAT = {
-        pm: '/static/avatars/pm_256.png',
-        coach_dev: '/static/avatars/coach_dev_256.png',
-        coach_review: '/static/avatars/coach_review_256.png',
-        industry: '/static/avatars/industry_256.png',
+        pm: '/static/avatars/pm_avatar.png',
+        coach_dev: '/static/avatars/coach_dev_avatar.png',
+        coach_review: '/static/avatars/coach_review_avatar.png',
+        industry: '/static/avatars/industry_avatar.png',
     };
     const ROLE_LABELS_CHAT = {pm: '产品经理', coach_dev: 'Coach-Dev', coach_review: 'Coach-Review', industry: '行业顾问'};
 
@@ -1740,7 +1809,19 @@ async function sendChat() {
         assistantDiv.innerHTML = `<span style="color:var(--danger)">连接失败: ${escapeHtml(e.message)}</span>`;
     } finally {
         if (thinkingTimer) clearInterval(thinkingTimer);
+        // AI 可能通过 MCP 工具修改了看板数据，自动刷新
+        refreshBoardAfterChat();
     }
+}
+
+async function refreshBoardAfterChat() {
+    try {
+        if (currentVersion) {
+            await loadRequirements(currentVersion.id);
+            renderRequirements();
+        }
+        await refreshVersions();
+    } catch(e) {}
 }
 
 function escapeHtml(s) {
@@ -1749,7 +1830,7 @@ function escapeHtml(s) {
 
 function renderMarkdown(text) {
     if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
-        return '<div class="md-preview">' + DOMPurify.sanitize(marked.parse(text)) + '</div>';
+        return '<div class="md-preview">' + DOMPurify.sanitize(marked.parse(text), {ADD_TAGS: ['input'], ADD_ATTR: ['type', 'checked', 'disabled']}) + '</div>';
     }
     return '<pre>' + escapeHtml(text) + '</pre>';
 }
@@ -1773,14 +1854,28 @@ function renderTeamWorkflow() {
     const el = document.getElementById('team-workflow');
     el.innerHTML = `
     <div class="workflow-diagram">
-        <div class="workflow-title">协作流程</div>
+        <div class="workflow-principle">
+            <span class="wf-principle-icon">⚡</span>
+            <span class="wf-principle-text">核心原则：移动必评论，评论后要移动</span>
+        </div>
+        <div class="workflow-title">调研链（需求发现）</div>
+        <div class="workflow-research">
+            <div class="wf-node wf-user">用户原话<span class="wf-sub">首条评论，描述可为空</span></div>
+            <div class="wf-arrow-comment">💬→</div>
+            <div class="wf-node wf-pm">PM 评论<span class="wf-sub">指派调研方向</span></div>
+            <div class="wf-arrow-move">📦→ research</div>
+            <div class="wf-node wf-industry">Industry 调研<span class="wf-sub">联网搜索+分析</span></div>
+            <div class="wf-arrow-comment">💬→</div>
+            <div class="wf-node wf-pm">PM 审核<span class="wf-sub">research→pending</span></div>
+        </div>
+        <div class="workflow-title">开发链（需求交付）</div>
         <div class="workflow-main">
             <div class="wf-node wf-pm">PM 分配<span class="wf-sub">pending→dev</span></div>
-            <div class="wf-arrow">→</div>
+            <div class="wf-arrow-move">📦→ dev</div>
             <div class="wf-node wf-dev">Dev 开发<span class="wf-sub">编码+commit</span></div>
-            <div class="wf-arrow">→</div>
+            <div class="wf-arrow-move">📦→ testing</div>
             <div class="wf-node wf-qa">QA 验收<span class="wf-sub">testing→done</span></div>
-            <div class="wf-arrow">→</div>
+            <div class="wf-arrow-move">📦→ done</div>
             <div class="wf-node wf-done">完成</div>
         </div>
         <div class="workflow-escalation">
@@ -1836,7 +1931,7 @@ function renderTeamGrid(agents) {
         const toolsHtml = [...uniqueTools, ...commonTools].map(t =>
             `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
         ).join('');
-        const moves = (info.permissions?.can_move || []).map(m => m.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
         const TRIGGER_LABELS = {
             'requirement_created': '新需求触发',
             'status_changed': '状态变更触发',
@@ -1866,8 +1961,8 @@ function renderTeamGrid(agents) {
             const parts = m.split('->');
             const fromStatus = parts[0];
             const toStatus = parts[1];
-            const fromLabel = fromStatus.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
-            const toLabel = toStatus.replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const fromLabel = fromStatus.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const toLabel = toStatus.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
             const explain = MOVE_EXPLAIN[m] || '';
             const fromRole = STATUS_ROLE[fromStatus] || '';
             const toRole = STATUS_ROLE[toStatus] || '';
