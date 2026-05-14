@@ -177,8 +177,21 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 )
                 ver = await cursor.fetchone()
                 if not ver:
-                    return json.dumps({"error": "no active version found"})
-                version_id = ver["id"]
+                    # Auto-create a default version if none exists
+                    cursor = await db.execute(
+                        "SELECT prefix FROM projects WHERE id=?", (project_id,),
+                    )
+                    proj_row = await cursor.fetchone()
+                    prefix = proj_row["prefix"] if proj_row else "v"
+                    await db.execute(
+                        "INSERT INTO versions (project_id, name, description, status, position, created_at, updated_at) "
+                        "VALUES (?, 'v0.1 MVP', ?, 'active', 0, datetime('now','localtime'), datetime('now','localtime'))",
+                        (project_id, f"{prefix} 最小可用版本"),
+                    )
+                    cursor = await db.execute("SELECT last_insert_rowid()")
+                    ver = await cursor.fetchone()
+                    logger.info("[PM] auto-created version v0.1 MVP for project %d", project_id)
+                version_id = ver[0] if isinstance(ver[0], int) else ver["id"]
                 from core.database import next_code
                 code = await next_code(db, version_id)
                 cursor = await db.execute(
