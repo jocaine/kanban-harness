@@ -163,6 +163,20 @@ async def init_db():
             -- Indexes
             CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
             CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_prefix ON projects(prefix) WHERE prefix != '';
+
+            -- Chat conversation history
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('user','assistant','summary')),
+                content TEXT NOT NULL,
+                agent_role TEXT DEFAULT '',
+                token_estimate INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_project
+                ON chat_messages(project_id, created_at DESC);
         """)
         await db.commit()
 

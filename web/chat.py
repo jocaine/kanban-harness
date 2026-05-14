@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("API_KEY", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-opus-4-6")
 CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "openai")  # openai / anthropic / ollama
@@ -107,6 +107,7 @@ class ChatMessage(BaseModel):
 
 async def _execute_tool(name: str, args: dict, project_id: int) -> str:
     """Execute a tool call and return the result as a string."""
+    logger.info("[CHAT] tool_exec: %s(%s) project=%d", name, json.dumps(args, ensure_ascii=False)[:120], project_id)
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -248,12 +249,16 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
     """Multi-turn chat with tool use support via OpenAI-compatible API."""
     import httpx
 
+    logger.info("[CHAT] user message: \"%s\" (project=%d, provider=%s, model=%s)", message[:80], project_id, provider or "default", model or "default")
+
     base_url = (OPENAI_BASE_URL or ANTHROPIC_BASE_URL).rstrip("/")
     api_key = OPENAI_API_KEY or ANTHROPIC_API_KEY
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
     ]
+
+    yield f"data: {json.dumps({'type': 'thinking', 'stage': 'init'})}\n\n"
 
     max_rounds = 5
     for _ in range(max_rounds):
@@ -330,6 +335,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
             except json.JSONDecodeError:
                 args = {}
             result = await _execute_tool(tc["name"], args, project_id)
+            logger.info("[CHAT] tool_call round=%d: %s(%s) → %s", _ + 1, tc["name"], json.dumps(args, ensure_ascii=False)[:80], result[:120])
             yield f"data: {json.dumps({'type': 'tool_done', 'name': tc['name']})}\n\n"
             messages.append({
                 "role": "tool",
@@ -337,6 +343,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                 "content": result,
             })
 
+    logger.info("[CHAT] done, %d tool rounds completed", _ + 1 if tool_calls_acc else 0)
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
@@ -451,15 +458,48 @@ async def _stream_ollama(message: str, system_prompt: str, model: str) -> AsyncG
 
 @router.post("/stream")
 async def chat_stream(data: ChatMessage):
-    """SSE streaming chat endpoint with tool use."""
-    system_prompt = await _get_kanban_context(data.project_id)
-    model = data.model or CHAT_MODEL
+    """SSE streaming chat endpoint — hermes primary, OpenAI fallback."""
     provider = data.provider or CHAT_PROVIDER
 
+    # Save user message to history
+    await _save_message(data.project_id, "user", data.message)
+
+    # Wrap generators to capture and save assistant response
+    async def _wrap_and_save(gen, agent_role=""):
+        full_response = []
+        async for event in gen:
+            yield event
+            if event.startswith("data: "):
+                try:
+                    payload = json.loads(event[6:].strip())
+                    if payload.get("type") == "text":
+                        full_response.append(payload["content"])
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        # Save complete assistant response
+        text = "".join(full_response)
+        if text.strip():
+            await _save_message(data.project_id, "assistant", text, agent_role)
+
+    # Hermes is the primary backend (v0.5 architecture)
+    if provider == "hermes" or (not data.provider and not data.model):
+        from web.hermes_chat import stream_hermes, check_hermes_available
+        if await check_hermes_available():
+            generator = _wrap_and_save(stream_hermes(data.project_id, data.message), "pm")
+            return StreamingResponse(
+                generator,
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+    # Fallback to OpenAI-compatible API with tool loop
+    system_prompt = await _get_kanban_context(data.project_id)
+    model = data.model or CHAT_MODEL
+
     if provider == "openai" or (not provider and OPENAI_BASE_URL):
-        generator = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
+        generator = _wrap_and_save(_chat_with_tools(data.message, system_prompt, model, provider, data.project_id))
     else:
-        generator = _stream_simple(data.message, system_prompt, model, provider)
+        generator = _wrap_and_save(_stream_simple(data.message, system_prompt, model, provider))
 
     return StreamingResponse(
         generator,
@@ -471,9 +511,24 @@ async def chat_stream(data: ChatMessage):
 @router.post("")
 async def chat_sync(data: ChatMessage):
     """Non-streaming chat (collects full response)."""
+    provider = data.provider or CHAT_PROVIDER
+
+    # Hermes primary
+    if provider == "hermes" or (not data.provider and not data.model):
+        from web.hermes_chat import stream_hermes, check_hermes_available
+        if await check_hermes_available():
+            gen = stream_hermes(data.project_id, data.message)
+            chunks = []
+            async for event in gen:
+                if event.startswith("data: "):
+                    payload = json.loads(event[6:].strip())
+                    if payload["type"] == "text":
+                        chunks.append(payload["content"])
+            return {"response": "".join(chunks), "model": "hermes", "provider": "hermes"}
+
+    # Fallback
     system_prompt = await _get_kanban_context(data.project_id)
     model = data.model or CHAT_MODEL
-    provider = data.provider or CHAT_PROVIDER
 
     if provider == "openai" or (not provider and OPENAI_BASE_URL):
         gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
@@ -488,3 +543,136 @@ async def chat_sync(data: ChatMessage):
                 chunks.append(payload["content"])
 
     return {"response": "".join(chunks), "model": model}
+
+
+# ==================== Chat History ====================
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~2 chars per token for Chinese, ~4 for English."""
+    cn_chars = sum(1 for c in text if '一' <= c <= '鿿')
+    en_chars = len(text) - cn_chars
+    return cn_chars // 2 + en_chars // 4 + 1
+
+
+async def _save_message(project_id: int, role: str, content: str, agent_role: str = ""):
+    """Save a chat message to the database."""
+    if not project_id or not content.strip():
+        return
+    token_est = _estimate_tokens(content)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO chat_messages (project_id, role, content, agent_role, token_estimate) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (project_id, role, content, agent_role, token_est),
+        )
+        await db.commit()
+
+
+async def _get_recent_history(project_id: int, limit: int = 10) -> list[dict]:
+    """Get recent messages for context injection. Returns oldest-first."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT role, content, agent_role FROM chat_messages "
+            "WHERE project_id=? AND role IN ('user','assistant') "
+            "ORDER BY created_at DESC LIMIT ?",
+            (project_id, limit * 2),
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+    rows.reverse()
+    return rows
+
+
+async def _get_conversation_summary(project_id: int) -> str:
+    """Get the most recent conversation summary if one exists."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT content FROM chat_messages "
+            "WHERE project_id=? AND role='summary' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (project_id,),
+        )
+        row = await cursor.fetchone()
+    return row["content"] if row else ""
+
+
+@router.get("/history")
+async def chat_history(project_id: int = 0, limit: int = 30):
+    """Load recent chat messages for frontend display."""
+    if not project_id:
+        return {"messages": []}
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, role, content, agent_role, created_at FROM chat_messages "
+            "WHERE project_id=? AND role IN ('user','assistant') "
+            "ORDER BY created_at DESC LIMIT ?",
+            (project_id, limit),
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+    rows.reverse()
+    return {"messages": rows}
+
+
+@router.delete("/history")
+async def clear_history(project_id: int = 0):
+    """Clear chat history for a project."""
+    if not project_id:
+        return {"cleared": 0}
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM chat_messages WHERE project_id=?", (project_id,)
+        )
+        await db.commit()
+        return {"cleared": cursor.rowcount}
+
+
+async def _maybe_compact(project_id: int):
+    """If message count exceeds threshold, summarize older messages."""
+    if not project_id:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM chat_messages WHERE project_id=? AND role IN ('user','assistant')",
+            (project_id,),
+        )
+        row = await cursor.fetchone()
+        if row["cnt"] <= 40:
+            return
+
+        # Get oldest messages to summarize (keep last 20, summarize the rest)
+        cursor = await db.execute(
+            "SELECT id, role, content FROM chat_messages "
+            "WHERE project_id=? AND role IN ('user','assistant') "
+            "ORDER BY created_at ASC",
+            (project_id,),
+        )
+        all_msgs = [dict(r) for r in await cursor.fetchall()]
+        to_summarize = all_msgs[:-20]
+        if len(to_summarize) < 10:
+            return
+
+        # Build summary text (simple extraction, no LLM call for now)
+        summary_parts = []
+        for msg in to_summarize:
+            prefix = "用户" if msg["role"] == "user" else "AI"
+            content = msg["content"][:200]
+            summary_parts.append(f"{prefix}: {content}")
+        summary_text = "对话摘要（" + str(len(to_summarize)) + "条消息）:\n" + "\n".join(summary_parts[-10:])
+        if len(summary_text) > 1500:
+            summary_text = summary_text[:1500] + "..."
+
+        # Delete old messages and insert summary
+        ids_to_delete = [m["id"] for m in to_summarize]
+        placeholders = ",".join("?" * len(ids_to_delete))
+        await db.execute(f"DELETE FROM chat_messages WHERE id IN ({placeholders})", ids_to_delete)
+        # Remove old summaries
+        await db.execute("DELETE FROM chat_messages WHERE project_id=? AND role='summary'", (project_id,))
+        await db.execute(
+            "INSERT INTO chat_messages (project_id, role, content, token_estimate) VALUES (?, 'summary', ?, ?)",
+            (project_id, summary_text, len(summary_text) // 3),
+        )
+        await db.commit()
+        logger.info("[CHAT] compacted %d messages for project %d", len(ids_to_delete), project_id)

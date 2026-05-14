@@ -1577,7 +1577,54 @@ activityInterval = setInterval(pollActivity, 5000);
 // ==================== Chat Panel ====================
 function toggleChat() {
     const panel = document.getElementById('chat-panel');
-    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+    const isHidden = panel.style.display === 'none';
+    panel.style.display = isHidden ? 'flex' : 'none';
+    if (isHidden) {
+        updateChatHeader();
+        loadChatHistory();
+    }
+}
+
+function updateChatHeader() {
+    const label = document.getElementById('chat-project-label');
+    if (currentProject) {
+        label.textContent = currentProject.name;
+    } else {
+        label.textContent = '未选择项目';
+    }
+}
+
+async function loadChatHistory() {
+    if (!currentProject) return;
+    const messages = document.getElementById('chat-messages');
+    if (messages.dataset.loaded === String(currentProject.id)) return;
+    try {
+        const data = await api('/api/chat/history?project_id=' + currentProject.id + '&limit=30');
+        if (data.messages && data.messages.length > 0) {
+            messages.innerHTML = data.messages.map(m => {
+                if (m.role === 'user') {
+                    return `<div class="chat-msg user">${escapeHtml(m.content)}</div>`;
+                } else {
+                    return `<div class="chat-msg assistant">${renderMarkdown(m.content)}</div>`;
+                }
+            }).join('');
+            messages.scrollTop = messages.scrollHeight;
+        }
+        messages.dataset.loaded = String(currentProject.id);
+    } catch(e) {}
+}
+
+async function clearChatHistory() {
+    if (!currentProject) return;
+    if (!confirm('清除当前项目的所有对话历史？')) return;
+    await api('/api/chat/history?project_id=' + currentProject.id, {method: 'DELETE'});
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('chat-messages').dataset.loaded = '';
+}
+
+function autoGrowInput(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
 async function sendChat() {
@@ -1590,9 +1637,40 @@ async function sendChat() {
     messages.innerHTML += `<div class="chat-msg user">${escapeHtml(msg)}</div>`;
     const assistantDiv = document.createElement('div');
     assistantDiv.className = 'chat-msg assistant';
-    assistantDiv.innerHTML = '<span class="typing">...</span>';
+    assistantDiv.innerHTML = '<div class="chat-thinking"><div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-label">连接中...</span></div>';
     messages.appendChild(assistantDiv);
     messages.scrollTop = messages.scrollHeight;
+
+    const ROLE_AVATARS_CHAT = {
+        pm: '/static/avatars/pm_256.png',
+        coach_dev: '/static/avatars/coach_dev_256.png',
+        coach_review: '/static/avatars/coach_review_256.png',
+        industry: '/static/avatars/industry_256.png',
+    };
+    const ROLE_LABELS_CHAT = {pm: '产品经理', coach_dev: 'Coach-Dev', coach_review: 'Coach-Review', industry: '行业顾问'};
+
+    let currentRole = 'pm';
+    let statusText = '等待回复';
+    let thinkingStart = Date.now();
+    let thinkingTimer = setInterval(() => {
+        const el = assistantDiv.querySelector('.thinking-elapsed');
+        if (el) {
+            const sec = Math.floor((Date.now() - thinkingStart) / 1000);
+            el.textContent = sec + 's';
+        }
+    }, 1000);
+
+    function renderWaiting() {
+        const avatar = ROLE_AVATARS_CHAT[currentRole] || ROLE_AVATARS_CHAT.pm;
+        const roleName = ROLE_LABELS_CHAT[currentRole] || 'PM';
+        assistantDiv.innerHTML = `<div class="chat-thinking-persona">
+            <img class="thinking-avatar" src="${avatar}" alt="${escapeHtml(roleName)}">
+            <div class="thinking-body">
+                <div class="thinking-header"><span class="thinking-role">${escapeHtml(roleName)}</span><div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-elapsed"></span></div>
+                <div class="thinking-status">${escapeHtml(statusText)}</div>
+            </div>
+        </div>`;
+    }
 
     try {
         const resp = await fetch(API + '/api/chat/stream', {
@@ -1603,7 +1681,7 @@ async function sendChat() {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
-        assistantDiv.innerHTML = '';
+        let gotText = false;
 
         while (true) {
             const {done, value} = await reader.read();
@@ -1614,16 +1692,44 @@ async function sendChat() {
                 try {
                     const data = JSON.parse(line.slice(6));
                     if (data.type === 'text') {
+                        if (!gotText) {
+                            gotText = true;
+                            clearInterval(thinkingTimer);
+                            thinkingTimer = null;
+                            assistantDiv.innerHTML = '';
+                        }
                         fullText += data.content;
                         assistantDiv.innerHTML = renderMarkdown(fullText);
                     } else if (data.type === 'route') {
-                        const roleLabel = data.role === 'pm' ? '🎯 PM' : data.role;
-                        assistantDiv.innerHTML = `<div class="chat-route-badge">${escapeHtml(roleLabel)} 接管</div>`;
+                        currentRole = data.role || 'pm';
+                        statusText = '已接管';
+                        renderWaiting();
+                    } else if (data.type === 'status') {
+                        if (data.state === 'waiting') {
+                            const ctx = data.context || {};
+                            const parts = [];
+                            if (ctx.project) parts.push(ctx.project);
+                            if (ctx.cards) parts.push(ctx.cards + '张卡片');
+                            statusText = parts.length ? '已加载 ' + parts.join(' · ') + '，等待回复' : '等待回复';
+                            renderWaiting();
+                        }
+                    } else if (data.type === 'thinking') {
+                        statusText = '等待回复';
+                        renderWaiting();
                     } else if (data.type === 'tool_start') {
-                        assistantDiv.innerHTML = renderMarkdown(fullText) + `<div style="font-size:11px;color:var(--primary);padding:4px 0">⚙ 执行 ${escapeHtml(data.name)}...</div>`;
+                        if (!gotText) {
+                            statusText = '⚙ ' + data.name;
+                            renderWaiting();
+                        } else {
+                            assistantDiv.innerHTML = renderMarkdown(fullText) + `<div class="chat-tool-indicator">⚙ 执行 ${escapeHtml(data.name)}...</div>`;
+                        }
                     } else if (data.type === 'tool_done') {
-                        // tool finished, next stream chunk will have AI summary
+                        if (gotText) {
+                            assistantDiv.innerHTML = renderMarkdown(fullText);
+                        }
                     } else if (data.type === 'error') {
+                        clearInterval(thinkingTimer);
+                        thinkingTimer = null;
                         assistantDiv.innerHTML = `<span style="color:var(--danger)">${escapeHtml(data.content)}</span>`;
                     }
                 } catch(e) {}
@@ -1632,6 +1738,8 @@ async function sendChat() {
         }
     } catch(e) {
         assistantDiv.innerHTML = `<span style="color:var(--danger)">连接失败: ${escapeHtml(e.message)}</span>`;
+    } finally {
+        if (thinkingTimer) clearInterval(thinkingTimer);
     }
 }
 
@@ -1654,10 +1762,42 @@ async function loadTeamView() {
     try {
         const data = await api('/api/agents/status');
         teamDataCache = data.agents;
+        renderTeamWorkflow();
         renderTeamGrid(data.agents);
     } catch(e) {
         document.getElementById('team-grid').innerHTML = '<div class="arch-empty">无法加载团队状态</div>';
     }
+}
+
+function renderTeamWorkflow() {
+    const el = document.getElementById('team-workflow');
+    el.innerHTML = `
+    <div class="workflow-diagram">
+        <div class="workflow-title">协作流程</div>
+        <div class="workflow-main">
+            <div class="wf-node wf-pm">PM 分配<span class="wf-sub">pending→dev</span></div>
+            <div class="wf-arrow">→</div>
+            <div class="wf-node wf-dev">Dev 开发<span class="wf-sub">编码+commit</span></div>
+            <div class="wf-arrow">→</div>
+            <div class="wf-node wf-qa">QA 验收<span class="wf-sub">testing→done</span></div>
+            <div class="wf-arrow">→</div>
+            <div class="wf-node wf-done">完成</div>
+        </div>
+        <div class="workflow-escalation">
+            <div class="wf-esc-title">升级裁决链</div>
+            <div class="wf-esc-flow">
+                <span class="wf-esc-step">Dev 发现问题</span>
+                <span class="wf-esc-arrow">→</span>
+                <span class="wf-esc-step">退回 PM<span class="wf-esc-sub">dev→pending</span></span>
+                <span class="wf-esc-arrow">→</span>
+                <span class="wf-esc-step">PM 修改重推<span class="wf-esc-sub">pending→dev</span></span>
+                <span class="wf-esc-arrow">→</span>
+                <span class="wf-esc-step wf-esc-blocked">仍有分歧→阻塞<span class="wf-esc-sub">dev→blocked</span></span>
+                <span class="wf-esc-arrow">→</span>
+                <span class="wf-esc-step wf-esc-ceo">CEO 裁决</span>
+            </div>
+        </div>
+    </div>`;
 }
 
 function renderTeamGrid(agents) {

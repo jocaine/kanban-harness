@@ -106,6 +106,7 @@
             </div>
             <div class="arch-content md-content" id="arch-content"></div>
             <div class="team-view" id="team-view" style="display:none">
+                <div class="team-workflow" id="team-workflow"></div>
                 <div class="team-grid" id="team-grid"></div>
             </div>
             <div class="arch-actions" id="arch-actions">
@@ -297,13 +298,18 @@
     <!-- Chat Panel -->
     <div class="chat-panel" id="chat-panel" style="display:none">
         <div class="chat-header">
-            <span>AI 助手</span>
+            <img class="chat-header-avatar" src="/static/avatars/pm_256.png" id="chat-role-avatar">
+            <div class="chat-header-info">
+                <span class="chat-header-title">AI 团队</span>
+                <span class="chat-header-project" id="chat-project-label">未选择项目</span>
+            </div>
+            <button class="btn-icon" onclick="clearChatHistory()" title="清除历史">🗑</button>
             <button class="btn-icon" onclick="toggleChat()">✕</button>
         </div>
         <div class="chat-messages" id="chat-messages"></div>
         <div class="chat-input-area">
-            <textarea id="chat-input" rows="2" placeholder="输入消息..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
-            <button class="btn-primary btn-sm" onclick="sendChat()">发送</button>
+            <textarea id="chat-input" rows="1" placeholder="输入消息... (Shift+Enter 换行)" oninput="autoGrowInput(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+            <button class="btn-primary btn-sm" id="chat-send-btn" onclick="sendChat()">发送</button>
         </div>
     </div>
     <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话">💬</button>

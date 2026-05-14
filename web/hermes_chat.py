@@ -44,11 +44,59 @@ ACTION_DIRECTIVES = """## 行动指令
 """
 
 
-async def build_hermes_prompt(project_id: int, user_message: str) -> str:
-    """Build the full prompt with context injection for hermes."""
-    sections = []
+async def _get_chat_history(project_id: int, limit: int = 10) -> list[dict]:
+    """Get recent chat messages for context injection into hermes prompt."""
+    if not project_id:
+        return []
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT role, content FROM chat_messages "
+            "WHERE project_id=? AND role IN ('user','assistant') "
+            "ORDER BY created_at DESC LIMIT ?",
+            (project_id, limit * 2),
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+    rows.reverse()
+    return rows
 
+
+async def _get_chat_summary(project_id: int) -> str:
+    """Get conversation summary if one exists."""
+    if not project_id:
+        return ""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT content FROM chat_messages "
+            "WHERE project_id=? AND role='summary' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (project_id,),
+        )
+        row = await cursor.fetchone()
+    return row["content"] if row else ""
+
+
+def _detect_role(user_message: str) -> str:
+    """Detect which agent role best fits the user's message based on registry triggers."""
+    msg = user_message.lower()
+    if any(kw in msg for kw in ("代码", "实现", "bug", "报错", "编译", "git", "commit", "重构", "接口", "函数")):
+        return "coach_dev"
+    if any(kw in msg for kw in ("行业", "竞品", "市场", "趋势", "调研", "竞争")):
+        return "industry"
+    if any(kw in msg for kw in ("测试", "验收", "review", "质量", "回归")):
+        return "coach_review"
+    return "pm"
+
+
+async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str, dict]:
+    """Build prompt with context. Returns (prompt_str, context_summary).
+
+    context_summary contains factual info about what was loaded, for the route event.
+    """
+    sections = []
     sections.append("你是 Kanban Harness 的 AI 团队协调员（PM 角色）。你负责理解用户意图并主动执行。")
+    summary = {}
 
     has_context = False
 
@@ -56,7 +104,6 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
         db.row_factory = aiosqlite.Row
 
         if project_id:
-            # Project info
             cursor = await db.execute(
                 "SELECT name, description, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
                 (project_id,),
@@ -64,20 +111,18 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
             proj = await cursor.fetchone()
             if proj:
                 sections.append(f"\n## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description']}")
+                summary["project"] = proj["name"]
 
-                # Advisor skill excerpt (truncate to ~2000 chars)
                 if proj["advisor_skill"]:
                     skill = proj["advisor_skill"][:2000]
                     sections.append(f"\n## 产品顾问知识\n\n{skill}")
                     has_context = True
 
-                # Product memory
                 if proj["product_memory"]:
                     memory = proj["product_memory"][:1500]
                     sections.append(f"\n## 产品记忆（决策历史）\n\n{memory}")
                     has_context = True
 
-            # Active version + requirements summary
             cursor = await db.execute(
                 "SELECT v.id, v.name, v.status FROM versions v "
                 "WHERE v.project_id=? AND v.status IN ('active','planning') "
@@ -88,7 +133,6 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
             if active_ver:
                 sections.append(f"\n## 活跃版本\n\n{active_ver['name']} (status: {active_ver['status']}, id: {active_ver['id']})")
 
-            # Kanban state summary
             cursor = await db.execute(
                 "SELECT r.code, r.title, r.status, r.priority "
                 "FROM requirements r JOIN versions v ON r.version_id=v.id "
@@ -105,8 +149,8 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
                 for r in reqs:
                     lines.append(f"- [{r['code']}] {r['title']} ({r['status']}, {r['priority']})")
                 sections.append("\n".join(lines))
+                summary["cards"] = len(reqs)
         else:
-            # No project selected — list available projects
             cursor = await db.execute(
                 "SELECT id, name, prefix FROM projects WHERE archived=0 ORDER BY updated_at DESC LIMIT 5"
             )
@@ -117,7 +161,6 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
                     lines.append(f"- [{p['prefix']}] {p['name']} (id: {p['id']})")
                 sections.append("\n".join(lines))
 
-    # If no rich context available, tell hermes to use kanban MCP tools
     if not has_context:
         sections.append(
             "\n## 上下文提示\n\n"
@@ -129,26 +172,45 @@ async def build_hermes_prompt(project_id: int, user_message: str) -> str:
             "如果用户要创建需求，先用 kanban_list_versions 找到活跃版本再创建。"
         )
 
-    # Action directives
     sections.append(ACTION_DIRECTIVES)
 
-    # User message
+    # Inject conversation history (last 10 exchanges, truncated)
+    history = await _get_chat_history(project_id)
+    if history:
+        sections.append("\n## 近期对话\n")
+        for msg in history:
+            prefix = "用户" if msg["role"] == "user" else "AI"
+            content = msg["content"][:500]
+            sections.append(f"**{prefix}:** {content}")
+
+    conv_summary = await _get_chat_summary(project_id)
+    if conv_summary:
+        sections.append(f"\n## 对话摘要（更早的讨论）\n\n{conv_summary}")
+
     sections.append(f"\n## 用户消息\n\n{user_message}")
 
-    return "\n".join(sections)
+    return "\n".join(sections), summary
 
 
 async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[str, None]:
     """Run hermes -z with context-injected prompt and stream output as SSE events."""
-    prompt = await build_hermes_prompt(project_id, user_message)
 
-    # Write prompt to temp file to avoid shell argument length limits
+    # 1. Route: detect role (real architectural decision based on registry)
+    role = _detect_role(user_message)
+    yield f"data: {json.dumps({'type': 'route', 'role': role}, ensure_ascii=False)}\n\n"
+
+    # 2. Build prompt (instant — DB queries are <50ms)
+    prompt, ctx_summary = await _build_hermes_prompt(project_id, user_message)
+
+    # 3. Signal: context loaded, now waiting for AI
+    yield f"data: {json.dumps({'type': 'status', 'state': 'waiting', 'context': ctx_summary}, ensure_ascii=False)}\n\n"
+
+    # 4. Spawn hermes and stream real output
     tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="kh_prompt_")
     try:
         tmp.write(prompt)
         tmp.close()
 
-        # Build shell command that reads prompt from file
         flags = ""
         if HERMES_MODEL:
             flags += f" -m {HERMES_MODEL}"
@@ -159,8 +221,6 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
 
         shell_cmd = f'{HERMES_BIN} -z "$(cat {tmp.name})"{flags} --yolo'
 
-        yield f"data: {json.dumps({'type': 'route', 'role': 'pm'}, ensure_ascii=False)}\n\n"
-
         proc = await asyncio.create_subprocess_shell(
             shell_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -168,20 +228,39 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             env=_build_hermes_env(),
         )
 
+        # Parse stderr for real hermes startup signals (MCP connection, plugin loading)
+        async def _read_stderr():
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").strip()
+                if text:
+                    logger.debug("[hermes:stderr] %s", text)
+
+        stderr_task = asyncio.create_task(_read_stderr())
+
         byte_buf = b""
         line_buf = ""
+        first_output = False
         while True:
-            chunk = await proc.stdout.read(4096)
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
             if not chunk:
                 break
+
+            if not first_output:
+                first_output = True
+                yield f"data: {json.dumps({'type': 'status', 'state': 'streaming'}, ensure_ascii=False)}\n\n"
+
             byte_buf += chunk
 
-            # Decode only complete UTF-8 sequences
             try:
                 text = byte_buf.decode("utf-8")
                 byte_buf = b""
             except UnicodeDecodeError:
-                # Incomplete multi-byte char at the end — trim until valid
                 for i in range(1, 4):
                     try:
                         text = byte_buf[:-i].decode("utf-8")
@@ -206,6 +285,12 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             event = _parse_hermes_line(line_buf)
             if event:
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        stderr_task.cancel()
+        try:
+            await stderr_task
+        except asyncio.CancelledError:
+            pass
 
         await proc.wait()
 
