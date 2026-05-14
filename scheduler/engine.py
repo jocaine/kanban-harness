@@ -300,7 +300,10 @@ class SchedulerEngine:
         asyncio.create_task(self._run_comment_agent(session_id, role_name, card, event["project_id"]))
 
     async def _run_comment_agent(self, session_id: int, role_name: str, card: dict, project_id: int = 0):
-        """Execute a comment agent and post its output."""
+        """Execute a comment agent and post its output.
+
+        Workflow principle: 评论后必移动，移动后 emit event 触发下一个角色。
+        """
         try:
             from agents.comment_agent import CommentAgent
 
@@ -324,10 +327,41 @@ class SchedulerEngine:
                         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
                         (card["id"], author, result["comment"]),
                     )
+
+                    # 移动必评论，评论后移动：determine next status based on role
+                    old_status = card.get("status", "")
+                    new_status = self._next_status_for_role(role_name, old_status)
+                    if new_status and new_status != old_status:
+                        await db.execute(
+                            "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
+                            (new_status, card["id"]),
+                        )
+                        # Emit status_changed event to trigger next role in chain
+                        await db.execute(
+                            "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                            (project_id, "status_changed", card["id"],
+                             json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": role_name})),
+                        )
+                        logger.info("[SCHED] %s commented + moved [%s] %s → %s",
+                                    author, card.get("code", ""), old_status, new_status)
+
                     await db.commit()
 
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
         except Exception as e:
             logger.error(f"Comment agent {role_name} failed: {e}")
             await self.session_manager.fail_session(session_id, str(e))
+
+    def _next_status_for_role(self, role_name: str, current_status: str) -> str:
+        """Determine what status a role should move the card to after commenting.
+
+        Chain: PM creates → research → Industry comments + moves to pending → PM reviews
+        """
+        if role_name == "pm" and current_status == "pending":
+            return ""  # PM reviewing pending cards doesn't move them
+        if role_name == "pm" and current_status in ("", "research"):
+            return "research"  # PM sends new cards to research for investigation
+        if role_name == "industry" and current_status == "research":
+            return "pending"  # Industry done researching, hand back to PM
+        return ""
 

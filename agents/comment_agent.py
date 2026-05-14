@@ -10,10 +10,10 @@ from agents.registry import registry, AgentRole
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("API_KEY", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
 
 
 class CommentAgent:

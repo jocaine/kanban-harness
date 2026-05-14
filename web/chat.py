@@ -52,6 +52,7 @@ TOOLS = [
                     "title": {"type": "string", "description": "Requirement title"},
                     "description": {"type": "string", "description": "Markdown description with goals and acceptance criteria"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
+                    "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
                 },
                 "required": ["title"],
             },
@@ -68,9 +69,10 @@ TOOLS = [
                     "title": {"type": "string", "description": "Research topic title"},
                     "description": {"type": "string", "description": "What to investigate, key questions to answer"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
+                    "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
                 },
                 "required": ["title"],
-  },
+            },
         },
     },
     {
@@ -187,6 +189,7 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 title = args.get("title", "")
                 desc = args.get("description", "")
                 priority = args.get("priority", "P2")
+                initial_comment = args.get("initial_comment", "")
                 status = "research" if name == "create_research_card" else "pending"
                 await db.execute(
                     "INSERT INTO requirements (version_id,title,description,priority,status,code,position) VALUES (?,?,?,?,?,?,?)",
@@ -195,6 +198,12 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 # Get the new requirement ID for event emit
                 cursor = await db.execute("SELECT last_insert_rowid()")
                 new_req_id = (await cursor.fetchone())[0]
+                # User's original message as first comment
+                if initial_comment:
+                    await db.execute(
+                        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                        (new_req_id, "CEO", initial_comment),
+                    )
                 # Emit requirement_created event so scheduler triggers industry/pm
                 await db.execute(
                     "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",

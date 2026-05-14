@@ -1,6 +1,6 @@
 role: pm
 display_name: "产品经理"
-description: "需求拆解，优先级排序，验收标准定义"
+description: "需求拆解，优先级排序，退回争议仲裁"
 icon: "📋"
 color: "#8b5cf6"
 
@@ -58,9 +58,8 @@ permissions:
     - comments
     - product_memory
   can_move:
+    - "research->pending"
     - "pending->dev"
-    - "testing->done"
-    - "testing->dev"
     - "blocked->pending"
   can_create:
     - requirements
@@ -69,8 +68,6 @@ permissions:
 triggers:
   - event: requirement_created
     condition: ""
-  - event: status_changed
-    condition: "new_status == 'testing'"
   - event: status_changed
     condition: "new_status == 'pending'"
   - event: status_changed
