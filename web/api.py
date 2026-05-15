@@ -682,3 +682,139 @@ async def agents_status(db: aiosqlite.Connection = Depends(get_db)):
         if k not in ordered:
             ordered[k] = result[k]
     return {"agents": ordered}
+
+
+# ==================== CEO Decision Endpoints ====================
+
+DECISION_MARKERS = ("[调研充分]", "[READY]", "[需要补充]", "[NEED_MORE]",
+                    "推进开发", "进入开发", "移回调研", "退回调研", "补充调研", "继续调研")
+
+
+@router.get("/decisions/pending")
+async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
+    """List cards waiting for CEO/human decision — PM commented but no clear signal."""
+    import json
+
+    query = """
+        SELECT r.id, r.code, r.title, r.priority, r.status, r.description,
+               r.updated_at, v.project_id, p.name as project_name, p.prefix
+        FROM requirements r
+        JOIN versions v ON r.version_id = v.id
+        JOIN projects p ON v.project_id = p.id
+        WHERE r.status = 'pending' AND r.archived = 0
+    """
+    params = []
+    if project_id:
+        query += " AND v.project_id = ?"
+        params.append(project_id)
+
+    cursor = await db.execute(query, params)
+    cards = [dict(row) for row in await cursor.fetchall()]
+
+    results = []
+    for card in cards:
+        # Get latest PM comment
+        cursor2 = await db.execute(
+            "SELECT content, author, created_at FROM comments "
+            "WHERE requirement_id=? AND author IN ('产品经理', 'PM') "
+            "ORDER BY created_at DESC LIMIT 1",
+            (card["id"],),
+        )
+        pm_comment = await cursor2.fetchone()
+        if not pm_comment:
+            continue
+
+        # Check if PM comment has a clear decision signal
+        pm_text = pm_comment["content"] or ""
+        has_signal = any(m in pm_text for m in DECISION_MARKERS)
+        if has_signal:
+            continue
+
+        # Check if there are industry comments (research was done)
+        cursor3 = await db.execute(
+            "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='行业顾问'",
+            (card["id"],),
+        )
+        research_count = (await cursor3.fetchone())[0]
+        if research_count == 0:
+            continue
+
+        # This card needs CEO decision
+        # Determine which role is "asking"
+        asking_role = "pm"
+        results.append({
+            "id": card["id"],
+            "code": card["code"],
+            "title": card["title"],
+            "priority": card["priority"],
+            "project_id": card["project_id"],
+            "project_name": card["project_name"],
+            "asking_role": asking_role,
+            "pm_summary": pm_text[:500],
+            "research_rounds": research_count,
+            "waiting_since": pm_comment["created_at"],
+        })
+
+    return {"decisions": results}
+
+
+class CEODecisionInput(BaseModel):
+    decision: str  # "approve_dev" | "request_more_research" | "custom"
+    comment: str = ""
+
+
+@router.post("/decisions/{rid}/submit")
+async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Connection = Depends(get_db)):
+    """CEO submits a decision on a pending card."""
+    import json
+
+    cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (rid,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "requirement not found")
+    if row["status"] != "pending":
+        raise HTTPException(400, "card must be in pending status")
+
+    # Determine target status
+    if data.decision == "approve_dev":
+        new_status = "dev"
+    elif data.decision == "request_more_research":
+        new_status = "research"
+    else:
+        new_status = ""
+
+    # Record CEO comment
+    comment_text = data.comment.strip() if data.comment else ""
+    if not comment_text:
+        if data.decision == "approve_dev":
+            comment_text = "批准进入开发阶段。"
+        elif data.decision == "request_more_research":
+            comment_text = "需要补充更多调研材料。"
+
+    await db.execute(
+        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+        (rid, "CEO", comment_text),
+    )
+
+    # Move card if decision implies a status change
+    if new_status:
+        old_status = "pending"
+        await db.execute(
+            "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
+            (new_status, rid),
+        )
+        # Emit event
+        vcursor = await db.execute(
+            "SELECT v.project_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
+            (rid,),
+        )
+        vrow = await vcursor.fetchone()
+        if vrow:
+            await db.execute(
+                "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                (vrow[0], "status_changed", rid,
+                 json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": "CEO"})),
+            )
+
+    await db.commit()
+    return {"ok": True, "new_status": new_status or "pending"}

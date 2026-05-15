@@ -183,11 +183,18 @@ class SchedulerEngine:
             input_context=input_context,
         )
 
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "UPDATE requirements SET assignee='Coach-Dev' WHERE id=?",
+                (card["id"],),
+            )
+            await db.commit()
+
         asyncio.create_task(self._run_agent(session_id, card, repo_path))
 
     async def _run_agent(self, session_id: int, card: dict, repo_path: str):
         try:
-            from agents.coach_dev import CoachDev
+            from agents.coach_dev import CoachDev, ToolchainMissingError
             agent = CoachDev(repo_path=repo_path, project_id=card["project_id"])
             result = await agent.execute(card)
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
@@ -228,6 +235,25 @@ class SchedulerEngine:
                     )
                     await db.commit()
                 logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
+        except ToolchainMissingError as e:
+            logger.error(f"Toolchain missing for [{card['code']}]: {e.missing}")
+            await self.session_manager.fail_session(session_id, str(e))
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "UPDATE requirements SET status='blocked', "
+                    "updated_at=datetime('now','localtime') WHERE id=?",
+                    (card["id"],),
+                )
+                comment = (
+                    f"**Coach-Dev** 环境检查失败，缺少工具链：\n\n"
+                    f"- {chr(10).join('`' + t + '`' for t in e.missing)}\n\n"
+                    f"请在 Dockerfile 中补充安装，或确认运行环境已配置。"
+                )
+                await db.execute(
+                    "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
+                    (card["id"], "Coach-Dev", comment),
+                )
+                await db.commit()
         except Exception as e:
             logger.error(f"Agent execution failed for [{card['code']}]: {e}")
             await self.session_manager.fail_session(session_id, str(e))
@@ -255,7 +281,10 @@ class SchedulerEngine:
         for event in events:
             try:
                 context = json.loads(event.get("context", "{}"))
+                logger.info("[SCHED] processing event #%d: type=%s, req=%s, context=%s",
+                            event["id"], event["event_type"], event.get("requirement_id"), context)
                 roles = registry.roles_for_trigger(event["event_type"], context)
+                logger.info("[SCHED] matched roles for event #%d: %s", event["id"], roles or "(none)")
 
                 for role_name in roles:
                     if role_name == "coach_dev":
@@ -303,6 +332,7 @@ class SchedulerEngine:
         """Execute a comment agent and post its output.
 
         Workflow principle: 评论后必移动，移动后 emit event 触发下一个角色。
+        Research loop: industry→pending→PM evaluates→back to research or forward to dev (max 10 rounds).
         """
         try:
             from agents.comment_agent import CommentAgent
@@ -316,21 +346,41 @@ class SchedulerEngine:
                 )
                 comments = [dict(row) for row in await cursor.fetchall()]
 
+            # Count research rounds (how many times industry has commented)
+            research_rounds = sum(
+                1 for c in comments if c.get("author") == "行业顾问"
+            )
+
             agent = CommentAgent(role_name, project_id=project_id)
+            logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s, research_rounds=%d)",
+                        role_name, card.get("code", ""), card.get("status", ""), research_rounds)
             result = await agent.execute(card, comments)
+            logger.info("[SCHED] comment_agent '%s' result: success=%s, has_comment=%s",
+                        role_name, result.get("success"), bool(result.get("comment")))
 
             if result["success"] and result["comment"]:
                 role_config = registry.get(role_name)
                 author = role_config.display_name if role_config else role_name
+                comment_text = result["comment"]
+
+                # Determine move: PM evaluating pending research card parses decision
+                old_status = card.get("status", "")
+                if role_name == "pm" and old_status == "pending":
+                    new_status = self._parse_pm_research_decision(
+                        comment_text, research_rounds
+                    )
+                else:
+                    new_status = self._next_status_for_role(role_name, old_status)
+
+                logger.info("[SCHED] %s posting comment for [%s], move: %s → %s",
+                            author, card.get("code", ""), old_status, new_status or "(stay)")
+
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute(
                         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
-                        (card["id"], author, result["comment"]),
+                        (card["id"], author, comment_text),
                     )
 
-                    # 移动必评论，评论后移动：determine next status based on role
-                    old_status = card.get("status", "")
-                    new_status = self._next_status_for_role(role_name, old_status)
                     if new_status and new_status != old_status:
                         await db.execute(
                             "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
@@ -352,16 +402,49 @@ class SchedulerEngine:
             logger.error(f"Comment agent {role_name} failed: {e}")
             await self.session_manager.fail_session(session_id, str(e))
 
-    def _next_status_for_role(self, role_name: str, current_status: str) -> str:
+    def _parse_pm_research_decision(self, comment: str, research_rounds: int) -> str:
+        """Parse PM's evaluation of research completeness.
+
+        Returns target status: 'research' (need more), 'dev' (ready), or '' (no move).
+        Forces 'dev' after 10 research rounds to prevent infinite loops.
+        """
+        MAX_RESEARCH_ROUNDS = 10
+
+        if research_rounds >= MAX_RESEARCH_ROUNDS:
+            logger.warning("[SCHED] research loop hit max %d rounds, forcing to dev", MAX_RESEARCH_ROUNDS)
+            return "dev"
+
+        # Parse PM's decision signal from comment
+        if "[需要补充]" in comment or "[NEED_MORE]" in comment:
+            return "research"
+        if "[调研充分]" in comment or "[READY]" in comment:
+            return "dev"
+
+        # Fallback heuristic: look for Chinese keywords
+        if any(kw in comment for kw in ("移回调研", "退回调研", "补充调研", "继续调研", "需要进一步")):
+            return "research"
+        if any(kw in comment for kw in ("推进开发", "进入开发", "可以开发", "调研完成", "材料充分")):
+            return "dev"
+
+        # No clear signal — stay in pending, wait for human
+        logger.info("[SCHED] PM comment has no clear decision signal, staying in pending")
+        return ""
+
+    def _next_status_for_role(self, role_name: str, current_status: str, card: dict | None = None) -> str:
         """Determine what status a role should move the card to after commenting.
 
-        Chain: PM creates → research → Industry comments + moves to pending → PM reviews
+        Chain: PM creates → research → Industry comments + moves to pending
+               → PM evaluates: sufficient → dev, insufficient → back to research
+               → Industry re-triggered, max 10 rounds
         """
         if role_name == "pm" and current_status == "pending":
-            return ""  # PM reviewing pending cards doesn't move them
+            # PM decides: move to dev (ready) or back to research (need more)
+            # Actual decision is made by the agent via its comment content
+            # parsed in _run_comment_agent; here we return "" and let the agent decide
+            return ""
         if role_name == "pm" and current_status in ("", "research"):
-            return "research"  # PM sends new cards to research for investigation
+            return "research"
         if role_name == "industry" and current_status == "research":
-            return "pending"  # Industry done researching, hand back to PM
+            return "pending"
         return ""
 

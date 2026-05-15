@@ -58,6 +58,8 @@ permissions:
     - requirements
 
 triggers:
+  - event: requirement_created
+    condition: "status == 'research'"
   - event: status_changed
     condition: "new_status == 'research'"
   - event: scheduled

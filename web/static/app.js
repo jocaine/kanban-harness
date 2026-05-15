@@ -52,7 +52,7 @@ function parseHash() {
 
 const STATUS_MAP = {
     research: {label: '调研中', color: '#a855f7', dot: '#c084fc'},
-    pending: {label: '待开发', color: '#6366f1', dot: '#818cf8'},
+    pending: {label: '需求整理', color: '#6366f1', dot: '#818cf8'},
     dev: {label: '开发中', color: '#f59e0b', dot: '#fbbf24'},
     testing: {label: '测试中', color: '#06b6d4', dot: '#22d3ee'},
     done: {label: '已完成', color: '#22c55e', dot: '#4ade80'}
@@ -89,20 +89,20 @@ function renderMd(str) {
 
 const ROLE_COLORS = ['#6366f1','#06b6d4','#f59e0b','#22c55e','#ec4899','#8b5cf6'];
 
+const ROLE_AVATARS = {
+    'PM': '/static/avatars/pm_avatar.png',
+    '产品经理': '/static/avatars/pm_avatar.png',
+    'Industry': '/static/avatars/industry_avatar.png',
+    '行业顾问': '/static/avatars/industry_avatar.png',
+    'Coach-Dev': '/static/avatars/coach_dev_avatar.png',
+    'Coach': '/static/avatars/coach_dev_avatar.png',
+    'Coach-Review': '/static/avatars/coach_review_avatar.png',
+};
+
 function renderRoleChat(content) {
     if (!content) return '';
     const rolePattern = /\*\*\[?([^\]*:→]+?)\]?\s*(?:→\s*([^\]*:]+?))?\s*[：:]\s*\*\*/;
     if (!rolePattern.test(content)) return renderMd(content);
-
-    const ROLE_AVATARS = {
-        'PM': '/static/avatars/pm_avatar.png',
-        '产品经理': '/static/avatars/pm_avatar.png',
-        'Industry': '/static/avatars/industry_avatar.png',
-        '行业顾问': '/static/avatars/industry_avatar.png',
-        'Coach-Dev': '/static/avatars/coach_dev_avatar.png',
-        'Coach': '/static/avatars/coach_dev_avatar.png',
-        'Coach-Review': '/static/avatars/coach_review_avatar.png',
-    };
     const colorMap = {};
     let colorIdx = 0;
     function getColor(role) {
@@ -227,10 +227,11 @@ async function selectProject(pid) {
     renderProjectOverview();
     updateStats();
     if (currentView === 'tag') loadTags();
-    // 切换项目时刷新对话面板
+    // 切换项目时立即清空对话，确保隔离
+    document.getElementById('chat-messages').innerHTML = '';
+    document.getElementById('chat-messages').dataset.loaded = '';
     if (document.getElementById('chat-panel').style.display !== 'none') {
         updateChatHeader();
-        document.getElementById('chat-messages').dataset.loaded = '';
         loadChatHistory();
     }
     updateHash();
@@ -507,6 +508,13 @@ async function loadRequirements(vid) {
     requirements = await api('/api/versions/' + vid + '/requirements');
 }
 
+const COL_ROLE_MAP = {
+    research: {role: 'Industry', avatar: '/static/avatars/industry_avatar.png'},
+    pending: {role: 'PM', avatar: '/static/avatars/pm_avatar.png'},
+    dev: {role: 'Coach-Dev', avatar: '/static/avatars/coach_dev_avatar.png'},
+    testing: {role: 'Coach-Review', avatar: '/static/avatars/coach_review_avatar.png'},
+};
+
 function renderRequirements() {
     const search = document.getElementById('search-input').value.toLowerCase();
     const priFilter = document.getElementById('filter-priority').value;
@@ -518,7 +526,23 @@ function renderRequirements() {
 
     container.innerHTML = '';
     Object.entries(STATUS_MAP).forEach(([status, info]) => {
+        if (status === 'done') return;
         const cards = filtered.filter(r => r.status === status);
+        const roleInfo = COL_ROLE_MAP[status];
+
+        // Wrap column with avatar in a col-wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'col-wrapper';
+
+        if (roleInfo) {
+            const avatar = document.createElement('img');
+            avatar.className = 'col-avatar';
+            avatar.src = roleInfo.avatar;
+            avatar.alt = roleInfo.role;
+            avatar.title = roleInfo.role;
+            wrapper.appendChild(avatar);
+        }
+
         const col = document.createElement('div');
         col.className = 'board-col';
         col.dataset.status = status;
@@ -532,13 +556,77 @@ function renderRequirements() {
         `;
         const cardsEl = col.querySelector('.col-cards');
         setupDropZone(cardsEl, status);
-        if (cards.length === 0) {
-            cardsEl.innerHTML = '<div class="empty-col">拖拽需求到这里</div>';
+
+        const activeCards = roleInfo ? cards.filter(r => r.assignee === roleInfo.role) : [];
+        const waitingCards = roleInfo ? cards.filter(r => r.assignee !== roleInfo.role) : cards;
+
+        if (activeCards.length > 0) {
+            activeCards.forEach(r => cardsEl.appendChild(createCardEl(r)));
         } else {
-            cards.forEach(r => cardsEl.appendChild(createCardEl(r)));
+            const emptyActive = document.createElement('div');
+            emptyActive.className = 'empty-section';
+            emptyActive.textContent = '当前无进行中任务';
+            cardsEl.appendChild(emptyActive);
         }
-        container.appendChild(col);
+
+        const divider = document.createElement('div');
+        divider.className = 'col-divider';
+        divider.innerHTML = '<span>排队中</span>';
+        cardsEl.appendChild(divider);
+
+        if (waitingCards.length > 0) {
+            waitingCards.forEach(r => cardsEl.appendChild(createCardEl(r)));
+        } else {
+            const emptyWaiting = document.createElement('div');
+            emptyWaiting.className = 'empty-section';
+            emptyWaiting.textContent = '队列为空';
+            cardsEl.appendChild(emptyWaiting);
+        }
+        wrapper.appendChild(col);
+        container.appendChild(wrapper);
     });
+
+    // Done panel — fixed right-side drawer
+    const doneCards = filtered.filter(r => r.status === 'done');
+    const doneInfo = STATUS_MAP.done;
+
+    let doneDrawer = document.getElementById('done-drawer');
+    let doneTab = document.getElementById('done-tab');
+    if (!doneDrawer) {
+        doneTab = document.createElement('div');
+        doneTab.id = 'done-tab';
+        doneTab.addEventListener('click', () => {
+            doneDrawer.classList.toggle('open');
+            doneTab.classList.toggle('active');
+        });
+        document.body.appendChild(doneTab);
+
+        doneDrawer = document.createElement('div');
+        doneDrawer.id = 'done-drawer';
+        document.body.appendChild(doneDrawer);
+    }
+    doneTab.innerHTML = `<span class="done-tab-dot" style="background:${doneInfo.dot}"></span>已完成<span class="done-tab-count">${doneCards.length}</span>`;
+
+    doneDrawer.innerHTML = `
+        <div class="done-drawer-header">
+            <div class="col-dot" style="background:${doneInfo.dot}"></div>
+            <span>已完成</span>
+            <span class="col-count">${doneCards.length}</span>
+            <button class="done-drawer-close" title="关闭">&times;</button>
+        </div>
+        <div class="done-drawer-cards" data-status="done"></div>
+    `;
+    doneDrawer.querySelector('.done-drawer-close').addEventListener('click', () => {
+        doneDrawer.classList.remove('open');
+        doneTab.classList.remove('active');
+    });
+    const doneCardsEl = doneDrawer.querySelector('.done-drawer-cards');
+    setupDropZone(doneCardsEl, 'done');
+    if (doneCards.length === 0) {
+        doneCardsEl.innerHTML = '<div class="empty-col">拖拽需求到这里</div>';
+    } else {
+        doneCards.forEach(r => doneCardsEl.appendChild(createCardEl(r)));
+    }
 }
 
 function createCardEl(r) {
@@ -553,7 +641,7 @@ function createCardEl(r) {
 
     const tagsHtml = tags.map(t => '<span class="card-tag">' + esc(t) + '</span>').join('');
     const deadlineHtml = r.deadline ? '<span title="截止日期">' + esc(r.deadline) + '</span>' : '';
-    const assigneeHtml = r.assignee ? '<sn title="负责人">' + esc(r.assignee) + '</span>' : '';
+    const assigneeHtml = r.assignee ? '<span title="负责人">' + esc(r.assignee) + '</span>' : '';
     const hoursHtml = r.estimated_hours > 0 ? '<span title="工时">' + r.actual_hours + '/' + r.estimated_hours + 'h</span>' : '';
     const attHtml = (r.attachments && r.attachments.length > 0) ? '<span title="附件">' + r.attachments.length + '个附件</span>' : '';
 
@@ -1678,6 +1766,8 @@ async function loadChatHistory() {
                 messages.innerHTML += `<div class="chat-msg assistant"><div class="chat-thinking-hint">AI 可能仍在后台处理中，稍后刷新可查看回复</div></div>`;
             }
             messages.scrollTop = messages.scrollHeight;
+        } else {
+            messages.innerHTML = '';
         }
         messages.dataset.loaded = String(currentProject.id);
     } catch(e) {}
@@ -2003,3 +2093,318 @@ function truncate(str, len) {
     if (!str) return '';
     return str.length > len ? str.substring(0, len) + '...' : str;
 }
+
+// ==================== Reigns-style CEO Decision System ====================
+
+let _pendingDecisions = [];
+let _currentDecision = null;
+
+async function pollDecisions() {
+    try {
+        const resp = await fetch('/api/decisions/pending');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _pendingDecisions = data.decisions || [];
+        updateDecisionBadges();
+    } catch (e) { /* silent */ }
+}
+
+function updateDecisionBadges() {
+    // Remove existing badges
+    document.querySelectorAll('.decision-badge').forEach(b => b.remove());
+
+    // Map asking_role to the kanban column status where their avatar lives
+    const roleToStatus = { pm: 'pending', industry: 'research', coach_dev: 'dev', coach_review: 'testing' };
+
+    // Group decisions by asking_role
+    const byRole = {};
+    for (const d of _pendingDecisions) {
+        const role = d.asking_role || 'pm';
+        if (!byRole[role]) byRole[role] = [];
+        byRole[role].push(d);
+    }
+
+    // Add badges to column avatars in the board view
+    for (const [role, decisions] of Object.entries(byRole)) {
+        const status = roleToStatus[role];
+        if (!status) continue;
+
+        // Find the col-wrapper for this status column, then its .col-avatar
+        const wrappers = document.querySelectorAll('.col-wrapper');
+        for (const wrapper of wrappers) {
+            const col = wrapper.querySelector(`.board-col[data-status="${status}"]`);
+            const avatar = wrapper.querySelector('.col-avatar');
+            if (col && avatar) {
+                wrapper.style.position = 'relative';
+                const badge = document.createElement('span');
+                badge.className = 'decision-badge';
+                badge.textContent = '?';
+                badge.title = `${decisions.length} 项待决策`;
+                badge.onclick = (e) => { e.stopPropagation(); openDecision(decisions[0]); };
+                wrapper.appendChild(badge);
+                break;
+            }
+        }
+    }
+
+    // Also show in activity bar if there are pending decisions
+    const fab = document.getElementById('chat-fab');
+    if (_pendingDecisions.length > 0 && fab) {
+        fab.setAttribute('data-decisions', _pendingDecisions.length);
+    } else if (fab) {
+        fab.removeAttribute('data-decisions');
+    }
+}
+
+async function openDecision(decision) {
+    _currentDecision = decision;
+    const overlay = document.getElementById('decision-overlay');
+
+    // Set avatar and role info
+    const avatarMap = {
+        pm: '/static/avatars/pm_avatar.png',
+        industry: '/static/avatars/industry_avatar.png',
+        coach_dev: '/static/avatars/coach_dev_avatar.png',
+        coach_review: '/static/avatars/coach_review_avatar.png',
+    };
+    const roleNames = { pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
+    const roleTitles = { pm: '需求拆解 · 优先级排序', industry: '行业分析 · 竞品调研', coach_dev: '代码实现 · 技术方案', coach_review: '质量保障 · 测试验证' };
+
+    const role = decision.asking_role || 'pm';
+    document.getElementById('decision-avatar').src = avatarMap[role] || avatarMap.pm;
+    document.getElementById('decision-role-name').textContent = roleNames[role] || role;
+    document.getElementById('decision-role-title').textContent = roleTitles[role] || '';
+
+    // Build plain-language speech from PM summary
+    const speech = buildSpeech(decision);
+    document.getElementById('decision-speech').innerHTML = speech;
+
+    // Build action buttons
+    const actions = document.getElementById('decision-actions');
+    actions.innerHTML = buildActionButtons(decision);
+
+    // Load card detail on the right
+    await loadDecisionCard(decision);
+
+    // Clear input
+    document.getElementById('decision-input').value = '';
+
+    // Show overlay
+    overlay.classList.add('active');
+}
+
+function buildSpeech(decision) {
+    let summary = decision.pm_summary || '';
+    summary = summary.replace(/^\*\*\[产品经理\]:\*\*\s*/m, '');
+    summary = summary.replace(/^\[产品经理\]\s*/m, '');
+
+    // Don't do regex replacement on the original text.
+    // Instead, use LLM-style rewriting: extract the core message and present it like someone talking.
+    // Since we can't call LLM here, we do structural extraction.
+
+    // Extract key facts (bullet points starting with -)
+    const bulletLines = summary.split('\n').filter(l => /^\s*-\s/.test(l)).map(l => l.replace(/^\s*-\s*/, '').replace(/\*\*/g, '').trim());
+
+    // Extract the "risk" or "decision needed" part
+    const riskMatch = summary.match(/(?:遗留风险|需.*?决策|需要.*?确认)[^]*?(?=\n\*\*|\n\d+\.|$)/s);
+    const riskText = riskMatch ? riskMatch[0].replace(/\*\*/g, '').replace(/[（(]已知[^)）]*[)）]/g, '').trim() : '';
+
+    // Extract options (路线/方向)
+    const optLines = summary.split('\n').filter(l => /^\s*\d+\.\s*(路线|方向|方案)/.test(l)).map(l => l.replace(/\*\*/g, '').trim());
+
+    // Build conversational output
+    let chat = '';
+
+    if (bulletLines.length > 0) {
+        chat += '调研做完了，几个关键发现：\n\n';
+        bulletLines.slice(0, 4).forEach(b => { chat += `• ${b}\n`; });
+        chat += '\n';
+    }
+
+    if (riskText) {
+        chat += '有个事得你来定——' + riskText.split('\n')[0].replace(/[：:：]$/, '') + '。';
+        if (riskText.split('\n').length > 1) {
+            chat += riskText.split('\n').slice(1).join('\n');
+        }
+        chat += '\n\n';
+    }
+
+    if (optLines.length > 0) {
+        chat += '我这边整理了几个方向，你看走哪个：\n\n';
+        optLines.forEach(l => { chat += l + '\n'; });
+    }
+
+    // Fallback: if extraction got nothing useful, just clean up the original
+    if (!chat.trim()) {
+        chat = summary
+            .replace(/\*\*[^*]+\*\*/g, (m) => m.replace(/\*\*/g, ''))
+            .replace(/#{1,3}\s*/g, '');
+    }
+
+    if (typeof marked !== 'undefined') {
+        return DOMPurify.sanitize(marked.parse(chat));
+    }
+    return escapeHtml(chat).replace(/\n/g, '<br>');
+}
+
+function buildActionButtons(decision) {
+    // Parse options from PM's summary — look for numbered routes/options
+    const summary = decision.pm_summary || '';
+    const optionPattern = /(\d+)\.\s*\*?\*?路线([A-Z])[^：:]*[：:]\*?\*?\s*(.+?)(?=\n\d+\.|\n\*\*|$)/gs;
+    const options = [];
+    let m;
+    while ((m = optionPattern.exec(summary)) !== null) {
+        options.push({ key: m[2], text: m[3].trim().replace(/\*\*/g, '') });
+    }
+
+    // If no route pattern, try generic numbered options
+    if (options.length === 0) {
+        const genericPattern = /(\d+)\.\s*(.+?)(?=\n\d+\.|\n\*\*|$)/gs;
+        let gm;
+        while ((gm = genericPattern.exec(summary)) !== null) {
+            const text = gm[2].trim().replace(/\*\*/g, '');
+            if (text.length > 10 && text.length < 200) {
+                options.push({ key: gm[1], text });
+            }
+        }
+    }
+
+    let html = '';
+
+    if (options.length > 0) {
+        // Render PM's proposed options as buttons
+        const icons = ['⚡', '📱', '🛡️', '🔄', '💡'];
+        options.forEach((opt, i) => {
+            const cls = i === 0 ? 'primary' : '';
+            html += `<button class="decision-btn ${cls}" onclick="submitDecision('approve_dev', '选择方案${opt.key || (i+1)}：${escapeHtml(opt.text)}')">
+                <span class="decision-btn-icon">${icons[i] || '▸'}</span>
+                <div class="decision-btn-text">${escapeHtml(opt.text)}</div>
+            </button>`;
+        });
+    }
+
+    // Always add "continue research" as fallback
+    html += `<button class="decision-btn warning" onclick="submitDecision('request_more_research')">
+        <span class="decision-btn-icon">🔍</span>
+        <div class="decision-btn-text">都不满意，继续调研<div class="decision-btn-hint">退回行业顾问补充材料</div></div>
+    </button>`;
+    return html;
+}
+
+async function loadDecisionCard(decision) {
+    const cardEl = document.getElementById('decision-card');
+    cardEl.innerHTML = '<div style="color:var(--text3);padding:20px">加载中...</div>';
+
+    try {
+        const resp = await fetch(`/api/requirements/by-code/${decision.code}`);
+        if (!resp.ok) throw new Error('load failed');
+        const req = await resp.json();
+
+        const cResp = await fetch(`/api/requirements/${decision.id}/comments`);
+        const comments = cResp.ok ? await cResp.json() : [];
+
+        const priorityColors = { P0: 'var(--danger)', P1: 'var(--warning)', P2: 'var(--info)', P3: 'var(--text3)' };
+        const priorityBg = { P0: 'var(--danger-bg)', P1: 'var(--warning-bg)', P2: 'var(--info-bg)', P3: 'var(--bg4)' };
+
+        const descHtml = renderMd(req.description || '');
+
+        const recentComments = comments.slice(-8);
+        let commentsHtml = recentComments.map(c => `
+            <div class="comment-item">
+                <div class="comment-header">
+                    <span class="comment-author">${esc(c.author || '系统')}</span>
+                    <span>${esc(c.created_at)}</span>
+                </div>
+                <div class="comment-body md-content">${renderRoleChat(c.content)}</div>
+            </div>
+        `).join('');
+
+        cardEl.innerHTML = `
+            <div class="decision-card-header">
+                <span class="decision-card-code">${escapeHtml(decision.code)}</span>
+                <span class="decision-card-priority" style="background:${priorityBg[req.priority]};color:${priorityColors[req.priority]}">${req.priority}</span>
+                <span style="font-size:11px;color:var(--text3)">调研 ${decision.research_rounds} 轮</span>
+            </div>
+            <div class="decision-card-title">${escapeHtml(req.title)}</div>
+            <div class="decision-card-tabs">
+                <button class="dc-tab active" onclick="switchDecisionTab('desc', this)">需求描述</button>
+                <button class="dc-tab" onclick="switchDecisionTab('comments', this)">讨论记录 (${comments.length})</button>
+            </div>
+            <div class="decision-card-panel active" id="dc-panel-desc">
+                <div class="md-content">${descHtml}</div>
+            </div>
+            <div class="decision-card-panel" id="dc-panel-comments">
+                <div class="comment-list">${commentsHtml}</div>
+            </div>
+        `;
+    } catch (e) {
+        cardEl.innerHTML = `<div style="color:var(--danger);padding:20px">加载失败: ${e.message}</div>`;
+    }
+}
+
+function switchDecisionTab(tab, btn) {
+    document.querySelectorAll('.dc-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.decision-card-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('dc-panel-' + tab).classList.add('active');
+}
+
+async function submitDecision(decision, optionComment) {
+    if (!_currentDecision) return;
+    const inputComment = document.getElementById('decision-input').value.trim();
+    const comment = optionComment || inputComment;
+
+    try {
+        const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, comment }),
+        });
+        if (!resp.ok) throw new Error('submit failed');
+
+        closeDecision();
+        // Refresh board
+        if (typeof loadRequirements === 'function') loadRequirements();
+        // Re-poll decisions
+        setTimeout(pollDecisions, 1000);
+    } catch (e) {
+        alert('决策提交失败: ' + e.message);
+    }
+}
+
+async function submitCustomDecision() {
+    if (!_currentDecision) return;
+    const comment = document.getElementById('decision-input').value.trim();
+    if (!comment) return;
+
+    try {
+        const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'custom', comment }),
+        });
+        if (!resp.ok) throw new Error('submit failed');
+
+        closeDecision();
+        if (typeof loadRequirements === 'function') loadRequirements();
+        setTimeout(pollDecisions, 1000);
+    } catch (e) {
+        alert('提交失败: ' + e.message);
+    }
+}
+
+function closeDecision() {
+    document.getElementById('decision-overlay').classList.remove('active');
+    _currentDecision = null;
+}
+
+// ESC to close decision overlay
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && _currentDecision) {
+        closeDecision();
+    }
+});
+
+// Poll decisions every 10 seconds
+setInterval(pollDecisions, 10000);
+setTimeout(pollDecisions, 2000);

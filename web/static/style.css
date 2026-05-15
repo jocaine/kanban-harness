@@ -90,7 +90,10 @@ details.desc-collapsible[open] .desc-toggle::before{transform:rotate(90deg)}
 
 /* Board columns */
 .board-columns{flex-shrink:0;display:flex;gap:16px;padding:20px 24px;overflow-x:auto;align-items:flex-start}
-.board-col{background:var(--bg2);border-radius:var(--radius-lg);min-width:280px;max-width:280px;display:flex;flex-direction:column;max-height:calc(100vh - 140px);border:1px solid var(--border)}
+.col-wrapper{display:flex;flex-direction:row;align-items:flex-start;gap:12px}
+.col-avatar{width:72px;height:72px;border-radius:50%;object-fit:cover;cursor:pointer;border:3px solid var(--border);transition:var(--transition);box-shadow:0 2px 8px rgba(0,0,0,.12);flex-shrink:0;margin-top:40px}
+.col-avatar:hover{border-color:var(--primary);transform:scale(1.05)}
+.board-col{background:var(--bg2);border-radius:var(--radius-lg);min-width:280px;max-width:280px;display:flex;flex-direction:column;max-height:calc(100vh - 200px);border:1px solid var(--border)}
 .board-col.drag-over{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .col-header{padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}
 .col-header .col-dot{width:10px;height:10px;border-radius:50%}
@@ -128,6 +131,24 @@ details.desc-collapsible[open] .desc-toggle::before{transform:rotate(90deg)}
 .card-actions button{border:none;background:none;color:var(--text3);cursor:pointer;padding:3px 5px;border-radius:4px;font-size:12px}
 .card-actions button:hover{color:var(--text);background:var(--bg4)}
 .card-actions button.danger:hover{color:var(--danger);background:var(--danger-bg)}
+
+.col-header-avatar{width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;display:none}
+.col-divider{display:flex;align-items:center;gap:8px;margin:8px 0;color:var(--text3);font-size:11px}
+.col-divider::before,.col-divider::after{content:'';flex:1;border-top:1px dashed var(--border)}
+.empty-section{text-align:center;color:var(--text3);font-size:11px;padding:12px 8px}
+
+#done-tab{position:fixed;right:0;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;background:var(--bg2);border:1px solid var(--border);border-right:none;border-radius:var(--radius) 0 0 var(--radius);padding:12px 8px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text2);display:flex;align-items:center;gap:6px;z-index:900;transition:var(--transition)}
+#done-tab:hover{background:var(--bg3);color:var(--text)}
+#done-tab.active{background:var(--primary-bg);border-color:var(--primary);color:var(--primary)}
+.done-tab-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.done-tab-count{font-size:11px;color:var(--text3)}
+
+#done-drawer{position:fixed;top:0;right:-320px;width:320px;height:100vh;background:var(--bg2);border-left:1px solid var(--border);z-index:950;display:flex;flex-direction:column;transition:right .25s ease;box-shadow:-4px 0 20px rgba(0,0,0,.15)}
+#done-drawer.open{right:0}
+.done-drawer-header{padding:14px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px}
+.done-drawer-close{margin-left:auto;border:none;background:none;color:var(--text3);cursor:pointer;font-size:18px;padding:2px 6px;border-radius:4px}
+.done-drawer-close:hover{color:var(--text);background:var(--bg4)}
+.done-drawer-cards{flex:1;overflow-y:auto;padding:8px}
 
 .drop-placeholder{border:2px dashed var(--primary);border-radius:var(--radius);min-height:40px;margin-bottom:8px;background:var(--primary-bg);opacity:.4}
 
@@ -536,3 +557,67 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 .chat-thinking-hint{font-size:12px;color:var(--text3);padding:6px 10px;background:var(--bg2);border-radius:6px;border-left:3px solid var(--warning)}
+
+/* ==================== Reigns-style CEO Decision Overlay ==================== */
+.decision-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.85);backdrop-filter:blur(8px);z-index:2000;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.3s ease;pointer-events:none}
+.decision-overlay.active{opacity:1;pointer-events:all}
+
+.decision-container{display:flex;gap:32px;max-width:95vw;width:95vw;max-height:90vh;align-items:stretch}
+
+/* Left: Avatar + Chat bubble layout */
+.decision-speaker{flex:0 0 40%;display:flex;flex-direction:column;gap:16px;padding:24px 0}
+
+/* Chat row: avatar left, bubble right */
+.decision-chat-row{display:flex;align-items:flex-start;gap:20px}
+.decision-avatar-wrap{flex-shrink:0}
+.decision-avatar{width:160px;height:160px;border-radius:50%;object-fit:cover;border:4px solid var(--primary);box-shadow:0 0 40px rgba(99,102,241,0.3),0 0 80px rgba(99,102,241,0.1);animation:avatar-glow 3s ease-in-out infinite}
+@keyframes avatar-glow{0%,100%{box-shadow:0 0 40px rgba(99,102,241,0.3),0 0 80px rgba(99,102,241,0.1)}50%{box-shadow:0 0 55px rgba(99,102,241,0.5),0 0 100px rgba(99,102,241,0.2)}}
+.decision-role-name{font-size:15px;font-weight:700;color:var(--text);text-align:center;margin-top:8px}
+.decision-role-title{font-size:12px;color:var(--text3);text-align:center}
+
+/* Speech bubble — SMS style with left arrow pointing to avatar */
+.decision-speech-wrap{flex:1;min-width:0}
+.decision-speech{background:var(--bg3);border:1px solid var(--border2);border-radius:4px 18px 18px 18px;padding:22px 28px;position:relative;font-size:15px;line-height:1.8;color:var(--text);max-height:50vh;overflow-y:auto}
+.decision-speech::before{content:'';position:absolute;top:24px;left:-10px;border-top:10px solid transparent;border-bottom:10px solid transparent;border-right:10px solid var(--border2)}
+.decision-speech::after{content:'';position:absolute;top:25px;left:-8px;border-top:9px solid transparent;border-bottom:9px solid transparent;border-right:9px solid var(--bg3)}
+
+/* Action area below chat */
+.decision-actions{margin-top:8px;margin-left:180px;display:flex;flex-direction:column;gap:10px}
+.decision-btn{padding:12px 20px;border-radius:10px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:14px;font-weight:500;cursor:pointer;transition:all 0.2s;text-align:left;display:flex;align-items:center;gap:10px}
+.decision-btn:hover{background:var(--bg4);border-color:var(--primary);transform:translateX(4px)}
+.decision-btn.primary{border-color:var(--primary);background:var(--primary-bg)}
+.decision-btn.primary:hover{background:rgba(99,102,241,0.25)}
+.decision-btn.warning{border-color:var(--warning);background:var(--warning-bg)}
+.decision-btn.warning:hover{background:rgba(245,158,11,0.25)}
+.decision-btn-icon{font-size:18px;flex-shrink:0}
+.decision-btn-text{flex:1}
+.decision-btn-hint{font-size:11px;color:var(--text3);margin-top:2px}
+
+/* Custom input */
+.decision-custom{margin-top:8px;margin-left:180px;display:flex;gap:8px}
+.decision-custom textarea{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;resize:none;min-height:60px}
+.decision-custom textarea:focus{border-color:var(--primary);outline:none}
+.decision-custom button{align-self:flex-end;padding:8px 16px;border-radius:8px;background:var(--primary);color:#fff;border:none;font-size:13px;cursor:pointer}
+.decision-custom button:hover{background:var(--primary-hover)}
+
+/* Right: Task card with tabs */
+.decision-card{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;height:85vh;overflow:hidden;display:flex;flex-direction:column}
+.decision-card-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.decision-card-code{font-size:12px;font-family:monospace;padding:2px 8px;background:var(--primary-bg);color:var(--primary);border-radius:4px}
+.decision-card-priority{font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px}
+.decision-card-title{font-size:16px;font-weight:600;color:var(--text);margin-bottom:12px;flex-shrink:0}
+.decision-card-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:0;flex-shrink:0}
+.dc-tab{padding:8px 16px;font-size:13px;font-weight:500;color:var(--text3);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all 0.15s}
+.dc-tab:hover{color:var(--text)}
+.dc-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.decision-card-panel{display:none;overflow-y:auto;padding:16px 0}
+.decision-card-panel.active{display:block;overflow-y:auto;height:calc(85vh - 140px)}
+.decision-card-panel .comment-list{max-height:none}
+
+/* Badge on column avatars in board view */
+.decision-badge{position:absolute;top:36px;left:52px;width:24px;height:24px;background:var(--warning);color:#000;font-size:14px;font-weight:700;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg2);animation:badge-pulse 2s ease-in-out infinite;cursor:pointer;z-index:10}
+@keyframes badge-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+
+/* Close button */
+.decision-close{position:absolute;top:20px;right:24px;width:36px;height:36px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.2s}
+.decision-close:hover{background:var(--bg4);color:var(--text)}

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=27">
+    <link rel="stylesheet" href="static/style.css?v=37">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -334,6 +334,31 @@
     </div>
     <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话">💬</button>
 
-    <script src="static/app.js?v=29"></script>
+    <!-- Reigns-style CEO Decision Overlay -->
+    <div class="decision-overlay" id="decision-overlay">
+        <button class="decision-close" onclick="closeDecision()">&times;</button>
+        <div class="decision-container">
+            <div class="decision-speaker">
+                <div class="decision-chat-row">
+                    <div class="decision-avatar-wrap">
+                        <img class="decision-avatar" id="decision-avatar" src="/static/avatars/pm_avatar.png" />
+                        <div class="decision-role-name" id="decision-role-name">产品经理</div>
+                        <div class="decision-role-title" id="decision-role-title">需求拆解</div>
+                    </div>
+                    <div class="decision-speech-wrap">
+                        <div class="decision-speech" id="decision-speech"></div>
+                    </div>
+                </div>
+                <div class="decision-actions" id="decision-actions"></div>
+                <div class="decision-custom">
+                    <textarea id="decision-input" placeholder="或者直接说你的想法..."></textarea>
+                    <button onclick="submitCustomDecision()">发送</button>
+                </div>
+            </div>
+            <div class="decision-card" id="decision-card"></div>
+        </div>
+    </div>
+
+    <script src="static/app.js?v=34"></script>
 </body>
 </html>

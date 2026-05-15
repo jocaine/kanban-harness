@@ -69,13 +69,32 @@ class CommentAgent:
             for c in comments[-5:]:
                 card_context += f"**{c.get('author', 'unknown')}:** {c.get('content', '')}\n\n"
 
-        card_context += (
-            "\n---\n\n"
+        # Context-specific instruction suffix
+        suffix = self._build_suffix(card, comments)
+        card_context += f"\n---\n\n{suffix}"
+
+        return f"{system}\n\n{context_section}\n\n{card_context}"
+
+    def _build_suffix(self, card: dict, comments: list[dict]) -> str:
+        """Build role-specific instruction suffix based on card state."""
+        role = self.role_config.role
+        status = card.get("status", "")
+
+        # PM evaluating a pending card that came from research (has industry comments)
+        if role == "pm" and status == "pending":
+            has_industry = any(c.get("author") == "行业顾问" for c in comments)
+            if has_industry:
+                return (
+                    "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策：\n\n"
+                    "- 如果材料充分（有具体数据、竞品对比、可落地方案）→ 评论开头写 [调研充分]，然后整理最终验收标准\n"
+                    "- 如果材料不足（缺少关键数据、方案不具体、风险未量化）→ 评论开头写 [需要补充]，然后明确列出需要补充的具体内容和重点方向\n\n"
+                    "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
+                )
+
+        return (
             "请从你的角色视角对这个需求进行评审，给出具体、可操作的建议。"
             "如果没有补充意见，写一句简短确认即可。"
         )
-
-        return f"{system}\n\n{context_section}\n\n{card_context}"
 
     async def _get_project_context(self) -> str:
         """Read project context from database for prompt injection."""
