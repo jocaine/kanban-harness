@@ -1,14 +1,16 @@
 services:
   web:
     build: .
-    ports:
-      - "8000:8000"
+    network_mode: host
     volumes:
+      - .:/app
       - ./data:/app/data
+      - kh-worktrees:/tmp/kh-worktrees
     env_file:
       - .env
     environment:
       - DB_PATH=data/kanban.db
+      - HOME=/root
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/projects')"]
@@ -17,17 +19,5 @@ services:
       retries: 3
       start_period: 10s
 
-  mcp:
-    build: .
-    command: ["python3", "-m", "mcp_server.server"]
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - DB_PATH=data/kanban.db
-      - KH_BASE_URL=http://web:8000
-    depends_on:
-      web:
-        condition: service_healthy
-    restart: unless-stopped
+volumes:
+  kh-worktrees:
