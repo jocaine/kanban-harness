@@ -38,6 +38,10 @@ RUN mkdir -p /root/.hermes /root/.claude /tmp/kh-worktrees
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL=1
 ENV DISABLE_AUTOUPDATER=1
 
+# Fix: UnicodeEncodeError when sending non-ASCII chars (Chinese, emoji, etc.)
+ENV LANG=C.UTF-8
+ENV PYTHONIOENCODING=utf-8
+
 # --- Application ---
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
