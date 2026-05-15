@@ -10,7 +10,7 @@ from core.database import get_db, DB_PATH
 
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 1
+MAX_RETRIES = 2
 DEFAULT_TIMEOUT = 600  # 10 minutes
 
 
