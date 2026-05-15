@@ -2748,11 +2748,21 @@ async function submitDecision(decision, optionComment) {
             body: JSON.stringify({ decision, comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
+        const result = await resp.json();
 
         closeDecision();
-        // Refresh board
-        if (typeof loadRequirements === 'function') loadRequirements();
-        // Re-poll decisions
+
+        // Navigate to the card's version so user can see it
+        if (result.version_id && (!currentVersion || currentVersion.id !== result.version_id)) {
+            await selectVersion(result.version_id);
+        } else {
+            if (typeof loadRequirements === 'function' && currentVersion) await loadRequirements(currentVersion.id);
+            renderRequirements();
+        }
+
+        const statusLabel = STATUS_MAP[result.new_status]?.label || result.new_status;
+        showToast(`卡片已移至「${statusLabel}」`);
+
         setTimeout(pollDecisions, 1000);
     } catch (e) {
         alert('决策提交失败: ' + e.message);
@@ -2771,9 +2781,18 @@ async function submitCustomDecision() {
             body: JSON.stringify({ decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
+        const result = await resp.json();
 
         closeDecision();
-        if (typeof loadRequirements === 'function') loadRequirements();
+
+        if (result.version_id && (!currentVersion || currentVersion.id !== result.version_id)) {
+            await selectVersion(result.version_id);
+        } else {
+            if (typeof loadRequirements === 'function' && currentVersion) await loadRequirements(currentVersion.id);
+            renderRequirements();
+        }
+
+        showToast('决策已提交');
         setTimeout(pollDecisions, 1000);
     } catch (e) {
         alert('提交失败: ' + e.message);

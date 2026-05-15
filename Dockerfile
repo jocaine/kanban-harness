@@ -24,6 +24,11 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 # Hermes Agent (Python-based AI agent with tool use)
 RUN pip install --no-cache-dir hermes-agent
 
+# Fix: hermes-agent pip package ships web search plugins without plugin.yaml manifests,
+# causing plugin discovery to skip them. Create the manifest so SearXNG auto-loads.
+RUN echo 'name: searxng\nkind: backend\ndescription: SearXNG metasearch (self-hosted, free)' \
+    > $(python3 -c "import site; print(site.getsitepackages()[0])")/plugins/web/searxng/plugin.yaml
+
 # Claude Code (Node.js-based AI coding assistant)
 RUN npm install -g @anthropic-ai/claude-code
 

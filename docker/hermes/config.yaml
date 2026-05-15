@@ -1,0 +1,41 @@
+_config_version: 23
+agent:
+  max_turns: 90
+  reasoning_effort: medium
+  tool_use_enforcement: auto
+  verbose: false
+approvals:
+  mode: yolo
+compression:
+  enabled: true
+  threshold: 0.5
+display:
+  personality: ''
+  streaming: true
+logging:
+  level: INFO
+mcp_servers:
+  kanban:
+    args:
+    - /app/mcp_server/server.py
+    command: /usr/local/bin/python3
+    env:
+      KH_BASE_URL: http://localhost:8000
+    type: stdio
+memory:
+  memory_enabled: false
+model:
+  base_url: http://192.168.3.15:8317/v1
+  default: claude-opus-4-6
+platform_toolsets:
+  cli:
+  - browser
+  - web
+  - mcp-kanban
+  - file
+  - terminal
+  - skills
+toolsets:
+- hermes-cli
+web:
+  search_backend: searxng

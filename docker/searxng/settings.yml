@@ -1,0 +1,71 @@
+use_default_settings: true
+
+general:
+  instance_name: "KH Search"
+  debug: false
+  privacypolicy_url: false
+  donation_url: false
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "zh-CN"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "kh-searxng-local-only"
+  bind_address: "0.0.0.0"
+  port: 8888
+  limiter: false
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+
+engines:
+  - name: baidu
+    engine: baidu
+    shortcut: bd
+    disabled: false
+
+  - name: sogou
+    engine: sogou
+    shortcut: sg
+    disabled: false
+
+  - name: 360search
+    engine: 360search
+    shortcut: 360
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    disabled: true
+
+  - name: google
+    engine: google
+    shortcut: go
+    disabled: true
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: true
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+
+  - name: github
+    engine: github
+    shortcut: gh
+    disabled: false
+
+outgoing:
+  request_timeout: 10
+  max_request_timeout: 15

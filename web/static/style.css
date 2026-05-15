@@ -576,7 +576,7 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 .decision-container{display:flex;gap:32px;max-width:95vw;width:95vw;max-height:90vh;align-items:stretch}
 
 /* Left: Avatar + Chat bubble layout */
-.decision-speaker{flex:0 0 40%;display:flex;flex-direction:column;gap:16px;padding:24px 0}
+.decision-speaker{flex:0 0 40%;display:flex;flex-direction:column;gap:16px;padding:24px 0;overflow-y:auto;max-height:90vh}
 
 /* Chat row: avatar left, bubble right */
 .decision-chat-row{display:flex;align-items:flex-start;gap:20px}

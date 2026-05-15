@@ -4,12 +4,19 @@ from fastapi.responses import FileResponse
 import logging
 from contextlib import asynccontextmanager
 import os
+import logging
 import uvicorn
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 load_dotenv(override=True)
+
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 from core.database import init_db
 from scheduler import SchedulerEngine
@@ -24,6 +31,8 @@ async def lifespan(app: FastAPI):
     sync_claude_settings()
 
     await init_db()
+    from web.hermes_chat import ensure_hermes_config
+    await ensure_hermes_config()
     await scheduler.start()
     yield
     await scheduler.stop()
@@ -31,12 +40,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Kanban Harness",
     description="AI Team Orchestration Engine — Dashboard API",
-    version="0.4.0",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
-from web.middleware import PermissionGateway
+from web.middleware import PermissionGateway, RequestLogger
 app.add_middleware(PermissionGateway)
+app.add_middleware(RequestLogger)
 
 from web.api import router as api_router
 app.include_router(api_router, prefix="/api")
@@ -56,4 +66,4 @@ async def index():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "0.0.0.0")
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("main:app", host=host, port=port, reload=True, access_log=False)

@@ -231,6 +231,84 @@ async def kh_reject(item_id: int, reason: str) -> str:
         return f"驳回失败：{e}"
 
 
+@mcp.tool()
+async def kh_web_search(query: str, limit: int = 5) -> str:
+    """搜索互联网信息，返回标题、URL、摘要。用于行业调研、竞品分析、数据验证。
+
+    Args:
+        query: 搜索关键词，尽量具体（包含年份、品牌名、指标等）
+        limit: 返回结果数量，默认5条
+    """
+    import httpx
+    import json
+
+    logger.info("tool:kh_web_search query=%r limit=%d", query[:60], limit)
+    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8888").rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{searxng_url}/search",
+                params={"q": query, "format": "json", "pageno": 1, "language": "zh-CN"},
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return f"搜索失败：SearXNG 返回 HTTP {e.response.status_code}"
+    except httpx.RequestError as e:
+        return f"搜索失败：无法连接 SearXNG ({searxng_url}): {e}"
+
+    data = resp.json()
+    raw_results = data.get("results", [])
+    sorted_results = sorted(raw_results, key=lambda r: float(r.get("score", 0)), reverse=True)[:limit]
+
+    results = []
+    for i, r in enumerate(sorted_results, 1):
+        results.append({
+            "position": i,
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "description": r.get("content", ""),
+            "engine": r.get("engine", ""),
+        })
+
+    return json.dumps({"success": True, "query": query, "results": results}, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def kh_web_extract(url: str) -> str:
+    """提取指定网页的正文内容（用于深入阅读搜索结果）。
+
+    Args:
+        url: 要提取内容的网页 URL（必须是 kh_web_search 返回的真实 URL）
+    """
+    import httpx
+
+    logger.info("tool:kh_web_extract url=%r", url[:80])
+
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as http:
+            resp = await http.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KHBot/1.0)"})
+            resp.raise_for_status()
+            html = resp.text
+    except httpx.RequestError as e:
+        return f"提取失败：无法访问 {url}: {e}"
+    except httpx.HTTPStatusError as e:
+        return f"提取失败：HTTP {e.response.status_code}"
+
+    # Simple HTML to text extraction
+    import re
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    if len(text) > 5000:
+        text = text[:5000] + f"\n...(截断，共 {len(text)} 字符)"
+
+    return text if text else "提取失败：页面内容为空"
+
+
 if __name__ == "__main__":
     logger.info("MCP server starting in stdio mode (pid=%d)", os.getpid())
     mcp.run()
