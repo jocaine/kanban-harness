@@ -191,7 +191,10 @@ class CommentAgent:
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
-        return msg.content[0].text if msg.content else ""
+        for block in msg.content:
+            if hasattr(block, "text"):
+                return block.text
+        return ""
 
     async def _call_openai(self, prompt: str, cfg) -> str:
         base = (cfg.base_url or OPENAI_BASE_URL or "https://api.openai.com").rstrip("/")
