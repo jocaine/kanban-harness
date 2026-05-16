@@ -433,9 +433,14 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                     },
                     timeout=120,
                 )
-                resp.raise_for_status()
+                if resp.status_code != 200:
+                    error_body = await resp.aread()
+                    error_detail = error_body.decode("utf-8", errors="replace")[:500]
+                    logger.error("[PM] API 400 response body: %s", error_detail)
+                    resp.raise_for_status()
 
                 content_text = ""
+                reasoning_text = ""
                 tool_calls_acc = {}
 
                 async for line in resp.aiter_lines():
@@ -448,6 +453,9 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                         data = json.loads(data_str)
                         choice = data.get("choices", [{}])[0]
                         delta = choice.get("delta", {})
+
+                        if rc := delta.get("reasoning_content", ""):
+                            reasoning_text += rc
 
                         if content := delta.get("content", ""):
                             content_text += content
@@ -475,6 +483,8 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
             break
 
         assistant_msg = {"role": "assistant", "content": content_text or None, "tool_calls": []}
+        if reasoning_text:
+            assistant_msg["reasoning_content"] = reasoning_text
         for idx in sorted(tool_calls_acc.keys()):
             tc = tool_calls_acc[idx]
             assistant_msg["tool_calls"].append({

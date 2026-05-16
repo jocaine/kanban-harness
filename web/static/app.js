@@ -769,6 +769,9 @@ function showReqModal(editId) {
     pendingFiles = [];
     document.getElementById('req-modal-title').textContent = editId ? '编辑需求' : '新建需求';
 
+    // Reset to first tab
+    switchReqTab('desc');
+
     if (editId) {
         const r = requirements.find(x => x.id === editId);
         document.getElementById('req-title').value = r.title;
@@ -785,7 +788,6 @@ function showReqModal(editId) {
         document.getElementById('req-tags').value = tags.join(', ');
         document.getElementById('req-notes').value = r.notes || '';
         renderAttachments(r.attachments || []);
-        document.getElementById('comments-section-inline').style.display = '';
         loadComments(editId);
         loadCommits(editId);
         // Default to preview mode when opening existing card
@@ -808,15 +810,10 @@ function showReqModal(editId) {
         document.getElementById('req-tags').value = '';
         document.getElementById('req-notes').value = '';
         document.getElementById('attachment-list').innerHTML = '';
-        document.getElementById('comments-section-inline').style.display = 'none';
         document.getElementById('commits-section').style.display = 'none';
     }
     document.getElementById('req-modal').classList.remove('hidden');
-    if (editId && document.getElementById('req-desc').value) {
-        toggleDescPreview();
-    } else {
-        document.getElementById('req-title').focus();
-    }
+    document.getElementById('req-title').focus();
     updateHash();
 }
 
@@ -941,6 +938,13 @@ function updateDescCollapsible(mode, content) {
         body.innerHTML = renderMd(content);
         el.style.display = '';
     }
+}
+
+// ==================== Tab Switching ====================
+
+function switchReqTab(tab) {
+    document.querySelectorAll('.req-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('.req-tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tab));
 }
 
 function switchView(view) {
@@ -1096,7 +1100,7 @@ async function showReqModalFromTag(rid, tag) {
 // ==================== Document View (Architecture / Advisor Skill / Product Memory) ====================
 
 let docContent = '';
-let currentDocTab = 'arch';
+let currentDocTab = 'team';
 
 const DOC_CONFIG = {
     arch: {label: '架构文档', apiPath: '/architecture', emptyMsg: '暂无架构文档，点击「编辑」添加项目架构与技术栈说明'},
@@ -1148,7 +1152,7 @@ function renderDoc() {
 }
 
 function showDocView(tab) {
-    currentDocTab = tab || 'arch';
+    currentDocTab = tab || 'team';
     document.getElementById('welcome-view').style.display = 'none';
     document.getElementById('board-view').style.display = 'none';
     document.getElementById('arch-view').style.display = 'block';
@@ -1167,7 +1171,7 @@ function showDocView(tab) {
     }
 }
 
-function showArchView() { showDocView('arch'); }
+function showArchView() { showDocView('team'); }
 
 function switchDocTab(tab) {
     currentDocTab = tab;
@@ -1295,7 +1299,6 @@ async function loadComments(rid) {
 
 function renderComments(comments) {
     const list = document.getElementById('comment-list');
-    const inlineList = document.getElementById('comment-list-inline');
     const html = (!comments || comments.length === 0)
         ? '<div class="comment-empty">暂无评论</div>'
         : comments.map(c => `
@@ -1309,7 +1312,6 @@ function renderComments(comments) {
         </div>
     `).join('');
     list.innerHTML = html;
-    if (inlineList) inlineList.innerHTML = html;
 }
 
 async function addComment() {
@@ -1369,88 +1371,21 @@ function hideModal(id) {
         document.getElementById('btn-desc-preview').textContent = '预览';
         const modal = document.querySelector('#req-modal .modal');
         if (modal.classList.contains('fullscreen')) {
-            exitFullscreen();
+            modal.classList.remove('fullscreen');
+            document.getElementById('btn-fullscreen').innerHTML = '&#x26F6;';
         }
-        modal.classList.remove('fullscreen');
-        document.getElementById('btn-fullscreen').innerHTML = '&#x26F6;';
         editingReqId = null;
         updateHash();
     }
 }
 
+// Fullscreen toggle — expands modal to full viewport with same tab layout
 function toggleFullscreen() {
     const modal = document.querySelector('#req-modal .modal');
     const btn = document.getElementById('btn-fullscreen');
-    const isFullscreen = modal.classList.contains('fullscreen');
-    if (isFullscreen) {
-        exitFullscreen();
-    } else {
-        enterFullscreen();
-    }
-}
-
-function enterFullscreen() {
-    const modal = document.querySelector('#req-modal .modal');
-    modal.classList.add('fullscreen');
-    document.getElementById('btn-fullscreen').innerHTML = '&#x21A9;';
-    const panel = document.getElementById('comments-panel');
-    panel.style.display = 'flex';
-    const inlineSection = document.getElementById('comments-section-inline');
-    inlineSection.style.display = 'none';
-    if (editingReqId) loadComments(editingReqId);
-    initResizeHandle();
-}
-
-function exitFullscreen() {
-    const modal = document.querySelector('#req-modal .modal');
-    modal.classList.remove('fullscreen');
-    document.getElementById('btn-fullscreen').innerHTML = '&#x26F6;';
-    const panel = document.getElementById('comments-panel');
-    panel.style.display = '';
-    panel.style.width = '';
-    const handle = document.querySelector('.resize-handle');
-    if (handle) handle.remove();
-    if (editingReqId) {
-        const inlineSection = document.getElementById('comments-section-inline');
-        inlineSection.style.display = '';
-        const inlineList = document.getElementById('comment-list-inline');
-        inlineList.innerHTML = document.getElementById('comment-list').innerHTML;
-    }
-}
-
-function initResizeHandle() {
-    const body = document.querySelector('#req-modal .modal-body');
-    let handle = body.querySelector('.resize-handle');
-    if (handle) return;
-    handle = document.createElement('div');
-    handle.className = 'resize-handle';
-    const panel = document.getElementById('comments-panel');
-    body.insertBefore(handle, panel);
-
-    let startX, startWidth;
-    function onMouseDown(e) {
-        e.preventDefault();
-        startX = e.clientX;
-        startWidth = panel.offsetWidth;
-        handle.classList.add('dragging');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-    }
-    function onMouseMove(e) {
-        const diff = startX - e.clientX;
-        const newWidth = Math.max(200, Math.min(startWidth + diff, window.innerWidth - 300));
-        panel.style.width = newWidth + 'px';
-    }
-    function onMouseUp() {
-        handle.classList.remove('dragging');
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-    }
-    handle.addEventListener('mousedown', onMouseDown);
+    modal.classList.toggle('fullscreen');
+    const isFs = modal.classList.contains('fullscreen');
+    btn.innerHTML = isFs ? '&#x21A9;' : '&#x26F6;';
 }
 
 function toggleDescPreview() {

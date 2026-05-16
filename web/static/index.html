@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=37">
+    <link rel="stylesheet" href="static/style.css?v=40">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -66,7 +66,7 @@
                     <div class="view-toggle">
                         <button class="toggle-btn active" id="btn-board-mode" onclick="switchView('board')">看板</button>
                         <button class="toggle-btn" id="btn-tag-mode" onclick="switchView('tag')" style="display:none">标签</button>
-                        <button class="toggle-btn" id="btn-arch-mode" onclick="switchView('arch')">架构</button>
+                        <button class="toggle-btn" id="btn-arch-mode" onclick="switchView('arch')">智能团队</button>
                     </div>
                     <input type="text" id="search-input" placeholder="搜索需求 / 输入编号跳转..." class="search-input" oninput="onSearchInput()" onkeydown="if(event.key==='Enter')onSearchEnter()"/>
                     <select id="filter-priority" class="filter-select" onchange="onFilterChange()">
@@ -100,15 +100,15 @@
                 <button class="btn-cancel" onclick="hideArchView()">返回</button>
             </div>
             <div class="doc-tabs" id="doc-tabs">
-                <button class="doc-tab active" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
-                <button class="doc-tab" data-tab="team" onclick="switchDocTab('team')">AI 团队</button>
+                <button class="doc-tab active" data-tab="team" onclick="switchDocTab('team')">AI 团队</button>
                 <button class="doc-tab" data-tab="memory" onclick="switchDocTab('memory')">产品记忆</button>
+                <button class="doc-tab" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
             </div>
-            <div class="arch-content md-content" id="arch-content"></div>
-            <div class="team-view" id="team-view" style="display:none">
+            <div class="team-view" id="team-view">
                 <div class="team-workflow" id="team-workflow"></div>
                 <div class="team-grid" id="team-grid"></div>
             </div>
+            <div class="arch-content md-content" id="arch-content" style="display:none"></div>
             <div class="arch-actions" id="arch-actions">
             </div>
         </div>
@@ -186,7 +186,7 @@
         </div>
     </div>
 
-    <!-- 需求弹窗 -->
+    <!-- 需求弹窗（Tab 布局） -->
     <div class="modal-overlay hidden" id="req-modal" onclick="closeModal('req-modal', event)">
         <div class="modal modal-lg" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -197,22 +197,43 @@
                 </div>
             </div>
             <div class="modal-body">
-                <div class="modal-body-left">
-                    <div class="form-row">
-                        <div class="form-group flex-1">
-                            <label>标题 <span class="req">*</span></label>
-                            <input type="text" id="req-title" placeholder="需求标题" />
-                        </div>
+                <!-- 标题行（始终可见） -->
+                <input type="text" id="req-title" placeholder="需求标题" />
+
+                <!-- Tab 导航 -->
+                <div class="req-tabs">
+                    <button class="req-tab active" data-tab="desc" onclick="switchReqTab('desc')">描述</button>
+                    <button class="req-tab" data-tab="comments" onclick="switchReqTab('comments')">评论</button>
+                    <button class="req-tab" data-tab="notes" onclick="switchReqTab('notes')">备注</button>
+                    <button class="req-tab" data-tab="meta" onclick="switchReqTab('meta')">优先级与附件</button>
+                </div>
+
+                <!-- Tab: 描述 -->
+                <div class="req-tab-content active" id="tab-desc">
+                    <label>描述 <span class="hint">支持 Markdown</span>
+                        <button type="button" class="btn-preview" id="btn-desc-preview" onclick="toggleDescPreview()">预览</button>
+                    </label>
+                    <textarea id="req-desc" rows="8" placeholder="支持 Markdown：# 标题、**粗体**、- 列表、`代码`、| 表格 |" oninput="updateDescPreview()"></textarea>
+                    <div id="req-desc-preview" class="md-preview hidden"></div>
+                </div>
+
+                <!-- Tab: 评论 -->
+                <div class="req-tab-content" id="tab-comments">
+                    <div id="comment-list" class="comment-list"></div>
+                    <div class="comment-input-area">
+                        <textarea id="comment-input" rows="3" placeholder="添加评论，支持 Markdown..."></textarea>
+                        <button class="btn-primary btn-sm" onclick="addComment()">发送</button>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group flex-1">
-                            <label>描述 <span class="hint">支持 Markdown</span>
-                                <button type="button" class="btn-preview" id="btn-desc-preview" onclick="toggleDescPreview()">预览</button>
-                            </label>
-                            <textarea id="req-desc" rows="6" placeholder="支持 Markdown：# 标题、**粗体**、- 列表、`代码`、| 表格 |" oninput="updateDescPreview()"></textarea>
-                            <div id="req-desc-preview" class="md-preview hidden"></div>
-                        </div>
-                    </div>
+                </div>
+
+                <!-- Tab: 备注 -->
+                <div class="req-tab-content" id="tab-notes">
+                    <label>备注</label>
+                    <textarea id="req-notes" rows="8" placeholder="完成说明、技术方案、已知限制"></textarea>
+                </div>
+
+                <!-- Tab: 优先级与附件 -->
+                <div class="req-tab-content" id="tab-meta">
                     <div class="form-row">
                         <div class="form-group">
                             <label>优先级</label>
@@ -234,77 +255,48 @@
                             </select>
                         </div>
                     </div>
-                    <div class="form-row" id="commits-section" style="display:none">
-                        <div class="form-group flex-1">
-                            <div id="commits-list"></div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>负责人</label>
+                            <input type="text" id="req-assignee" placeholder="负责人" />
+                        </div>
+                        <div class="form-group">
+                            <label>截止日期</label>
+                            <input type="date" id="req-deadline" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>预估工时(h)</label>
+                            <input type="number" id="req-hours" min="0" step="0.5" value="0" />
+                        </div>
+                        <div class="form-group">
+                            <label>实际工时(h)</label>
+                            <input type="number" id="req-actual" min="0" step="0.5" value="0" />
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group flex-1">
-                            <label>备注</label>
-                            <textarea id="req-notes" rows="3" placeholder="完成说明、技术方案、已知限制"></textarea>
+                            <label>标签 <span class="hint">逗号分隔</span></label>
+                            <input type="text" id="req-tags" placeholder="例如：feature, UI, 后端" />
                         </div>
                     </div>
-                    <div class="form-row" id="comments-section-inline" style="display:none">
+                    <div class="form-row">
                         <div class="form-group flex-1">
-                            <label>评论</label>
-                            <div id="comment-list-inline" class="comment-list"></div>
-                            <div class="comment-input-area">
-                                <textarea id="comment-input-inline" rows="2" placeholder="添加评论，支持 Markdown..."></textarea>
-                                <button class="btn-primary btn-sm" onclick="addComment()">发送</button>
+                            <label>附件</label>
+                            <div class="attachment-area">
+                                <div id="attachment-list" class="attachment-list"></div>
+                                <label class="upload-btn">
+                                    <input type="file" id="file-upload" multiple style="display:none" onchange="handleFileSelect(this)" />
+                                    + 上传文件
+                                </label>
                             </div>
                         </div>
                     </div>
-                    <details style="margin-top:8px">
-                        <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none">更多字段（负责人、工时、截止日期、标签、附件）</summary>
-                        <div style="margin-top:8px">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label>负责人</label>
-                                    <input type="text" id="req-assignee" placeholder="负责人" />
-                                </div>
-                                <div class="form-group">
-                                    <label>截止日期</label>
-                                    <input type="date" id="req-deadline" />
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label>预估工时(h)</label>
-                                    <input type="number" id="req-hours" min="0" step="0.5" value="0" />
-                                </div>
-                                <div class="form-group">
-                                    <label>实际工时(h)</label>
-                                    <input type="number" id="req-actual" min="0" step="0.5" value="0" />
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group flex-1">
-                                    <label>标签 <span class="hint">逗号分隔</span></label>
-                                    <input type="text" id="req-tags" placeholder="例如：feature, UI, 后端" />
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group flex-1">
-                                    <label>附件</label>
-                                    <div class="attachment-area">
-                                        <div id="attachment-list" class="attachment-list"></div>
-                                        <label class="upload-btn">
-                                            <input type="file" id="file-upload" multiple style="display:none" onchange="handleFileSelect(this)" />
-                                            + 上传文件
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
+                    <div class="form-row" id="commits-section" style="display:none">
+                        <div class="form-group flex-1">
+                            <div id="commits-list"></div>
                         </div>
-                    </details>
-                </div>
-                <div class="modal-body-right" id="comments-panel">
-                    <label>评论</label>
-                    <div id="comment-list" class="comment-list"></div>
-                    <div class="comment-input-area">
-                        <textarea id="comment-input" rows="2" placeholder="添加评论，支持 Markdown..."></textarea>
-                        <button class="btn-primary btn-sm" onclick="addComment()">发送</button>
                     </div>
                 </div>
             </div>
@@ -359,6 +351,6 @@
         </div>
     </div>
 
-    <script src="static/app.js?v=34"></script>
+    <script src="static/app.js?v=36"></script>
 </body>
 </html>

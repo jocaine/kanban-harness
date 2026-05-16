@@ -1,12 +1,15 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+import logging
 from contextlib import asynccontextmanager
 import os
 import uvicorn
 from dotenv import load_dotenv
 
-load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+
+load_dotenv(override=True)
 
 from core.database import init_db
 from scheduler import SchedulerEngine

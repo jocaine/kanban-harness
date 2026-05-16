@@ -426,6 +426,13 @@ class SchedulerEngine:
         if any(kw in comment for kw in ("推进开发", "进入开发", "可以开发", "调研完成", "材料充分")):
             return "dev"
 
+        # No clear signal — if no research has been done, default to research
+        # so the card doesn't get stuck in pending and the "comment must move"
+        # principle is satisfied. Industry will pick it up.
+        if research_rounds == 0:
+            logger.info("[SCHED] PM created card with no decision signal, defaulting to research")
+            return "research"
+
         # No clear signal — stay in pending, wait for human
         logger.info("[SCHED] PM comment has no clear decision signal, staying in pending")
         return ""

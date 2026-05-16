@@ -621,3 +621,37 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 /* Close button */
 .decision-close{position:absolute;top:20px;right:24px;width:36px;height:36px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);color:var(--text3);font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.2s}
 .decision-close:hover{background:var(--bg4);color:var(--text)}
+
+/* ==================== Requirement Modal Tabs ==================== */
+#req-modal .modal.modal-lg{width:640px;max-height:95vh}
+#req-modal .modal-body{padding:16px 20px;display:flex;flex-direction:column;gap:0}
+#req-modal .modal-body > #req-title{display:block;width:100%;margin-bottom:12px}
+#req-modal .modal-body > label{margin-top:0}
+#req-modal .modal-body .form-row{margin-bottom:10px}
+#req-modal .modal-body .form-row:last-child{margin-bottom:0}
+
+/* Tab navigation bar */
+.req-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:12px;flex-shrink:0}
+.req-tab{padding:8px 16px;font-size:13px;font-weight:500;color:var(--text3);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.req-tab:hover{color:var(--text);background:var(--bg3)}
+.req-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+/* Tab content panes */
+.req-tab-content{display:none;overflow-y:auto;flex:1;min-height:400px}
+.req-tab-content.active{display:block}
+.req-tab-content .comment-list{max-height:360px}
+.req-tab-content textarea{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical;transition:var(--transition)}
+.req-tab-content textarea:focus{outline:none;border-color:var(--primary)}
+.req-tab-content #req-desc{min-height:450px}
+.req-tab-content #req-notes{min-height:450px}
+.req-tab-content .md-preview{max-height:400px}
+.req-tab-content .comment-input-area{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+
+/* Fullscreen: expand the same tab layout to full viewport */
+#req-modal .modal.fullscreen{width:100vw;height:100vh;max-width:100vw;max-height:100vh;border-radius:0}
+#req-modal .modal.fullscreen .modal-body{padding:20px 28px}
+#req-modal .modal.fullscreen .req-tab-content{min-height:calc(100vh - 280px)}
+#req-modal .modal.fullscreen .req-tab-content .md-preview{max-height:none}
+#req-modal .modal.fullscreen .req-tab-content .comment-list{max-height:none}
+#req-modal .modal.fullscreen #req-desc{min-height:calc(100vh - 360px)}
+#req-modal .modal.fullscreen #req-notes{min-height:calc(100vh - 360px)}
