@@ -1201,8 +1201,12 @@ function updateDocTabs() {
 
 function hideArchView() {
     document.getElementById('arch-view').style.display = 'none';
+    currentView = 'board';
+    document.getElementById('btn-board-mode').classList.add('active');
+    document.getElementById('btn-arch-mode').classList.remove('active');
     if (currentVersion) {
-        document.getElementById('board-view').style.display = 'flex';
+        document.getElementById('board-view').style.display = '';
+        document.getElementById('board-columns').style.display = 'flex';
     } else {
         document.getElementById('welcome-view').style.display = 'flex';
     }
