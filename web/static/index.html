@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=40">
+    <link rel="stylesheet" href="static/style.css?v=41">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -61,6 +61,7 @@
                 <div class="board-title">
                     <h2 id="board-title-text"></h2>
                     <span class="version-badge" id="board-version-badge"></span>
+                    <span class="prod-target-badge" id="prod-target-badge" style="display:none"></span>
                 </div>
                 <div class="board-actions">
                     <div class="view-toggle">
@@ -106,6 +107,12 @@
             </div>
             <div class="team-view" id="team-view">
                 <div class="team-workflow" id="team-workflow"></div>
+                <div class="team-memory-section">
+                    <div class="section-title" style="padding:16px 0 8px;font-size:13px;font-weight:600;color:var(--text2)">
+                        📋 产品记忆摘要
+                    </div>
+                    <div id="product-memory-summary" class="memory-summary"></div>
+                </div>
                 <div class="team-grid" id="team-grid"></div>
             </div>
             <div class="arch-content md-content" id="arch-content" style="display:none"></div>
@@ -257,6 +264,16 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group">
+                            <label>类型</label>
+                            <select id="req-type">
+                                <option value="dev">开发需求</option>
+                                <option value="research">调研需求</option>
+                            </select>
+                        </div>
+                        <div class="form-group"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
                             <label>负责人</label>
                             <input type="text" id="req-assignee" placeholder="负责人" />
                         </div>
@@ -334,6 +351,7 @@
                 <div class="decision-chat-row">
                     <div class="decision-avatar-wrap">
                         <img class="decision-avatar" id="decision-avatar" src="/static/avatars/pm_avatar.png" />
+                        <span class="decision-avatar-q" id="decision-avatar-q">?</span>
                         <div class="decision-role-name" id="decision-role-name">产品经理</div>
                         <div class="decision-role-title" id="decision-role-title">需求拆解</div>
                     </div>
@@ -351,6 +369,6 @@
         </div>
     </div>
 
-    <script src="static/app.js?v=37"></script>
+    <script src="static/app.js?v=39"></script>
 </body>
 </html>

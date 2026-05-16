@@ -85,11 +85,29 @@ class CommentAgent:
             has_industry = any(c.get("author") == "行业顾问" for c in comments)
             if has_industry:
                 return (
-                    "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策：\n\n"
-                    "- 如果材料充分（有具体数据、竞品对比、可落地方案）→ 评论开头写 [调研充分]，然后整理最终验收标准\n"
+                    "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑决策：\n\n"
+                    "- 如果材料充分（有具体数据、竞品对比、可落地方案）→ 评论开头写 [调研充分]\n"
+                    "  - 开发需求（type=dev）：整理最终验收标准\n"
+                    "  - 调研需求（type=research）：提炼结论要点，后续系统会自动归档\n"
                     "- 如果材料不足（缺少关键数据、方案不具体、风险未量化）→ 评论开头写 [需要补充]，然后明确列出需要补充的具体内容和重点方向\n\n"
                     "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
                 )
+
+        # Industry absolute boundary reinforcement
+        if role == "industry" and status == "research":
+            return (
+                "你现在在 research 列。你是行业顾问，只负责调研工作。\n\n"
+                "🚫 你绝对不能说的话（逐字禁止）：\n"
+                "- 不能说「请 PM」任何内容\n"
+                "- 不能说「等 PM」或「等待 PM」\n"
+                "- 不能说「请 CEO 决策」（改用 [需要补充] 标记）\n"
+                "- 不能教其他角色怎么做\n\n"
+                "✅ 你只能说以下三种之一：\n"
+                "1. 直接输出调研结果（数据、分析、对比表）\n"
+                "2. 评论开头写 [需要补充] + 简短说明缺什么\n"
+                "3. 评论开头写 [转给PM] + 调研结论\n\n"
+                "记住：你不需要 PM 告诉你做什么，你是行业专家。如果信息不足，用 [需要补充] 找 CEO。"
+            )
 
         return (
             "请从你的角色视角对这个需求进行评审，给出具体、可操作的建议。"
@@ -174,7 +192,11 @@ class CommentAgent:
             logger.warning(f"hermes exited {proc.returncode}: {err[:200]}")
             if not output:
                 raise RuntimeError(f"hermes failed: {err[:300]}")
-        return output
+        # Strip Hermes tool call XML tags (both <HermesTool: name>...</HermesTool: name> and <HermesTool: name>...</HermesTool>)
+        import re
+        output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
+        output = re.sub(r'<HermesTool:[^>]*/>', '', output)
+        return output.strip()
 
     async def _call_anthropic(self, prompt: str, cfg) -> str:
         import anthropic

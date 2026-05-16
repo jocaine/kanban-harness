@@ -1,6 +1,9 @@
+import logging
 import aiosqlite
 import os
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 
@@ -35,6 +38,7 @@ async def _migrate_db(db: aiosqlite.Connection):
                 title TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
                 status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
@@ -99,6 +103,7 @@ async def init_db():
                 title TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
                 status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
@@ -220,7 +225,48 @@ async def init_db():
         """)
         await db.commit()
 
-        await _migrate_db(db)
+    # Migration 2: Add 'type' column to requirements
+    async with aiosqlite.connect(DB_PATH) as db2:
+        await db2.execute("PRAGMA foreign_keys=ON")
+        cursor = await db2.execute("PRAGMA table_info(requirements)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "type" not in columns:
+            logger.info("Migrating requirements table: adding type column")
+            await db2.executescript("""
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE requirements_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+                    type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
+                    status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
+                    assignee TEXT DEFAULT '',
+                    deadline TEXT DEFAULT '',
+                    estimated_hours REAL DEFAULT 0,
+                    actual_hours REAL DEFAULT 0,
+                    tags TEXT DEFAULT '[]',
+                    notes TEXT DEFAULT '',
+                    code TEXT DEFAULT '',
+                    position INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT (datetime('now','localtime')),
+                    updated_at DATETIME DEFAULT (datetime('now','localtime')),
+                    FOREIGN KEY (version_id) REFERENCES versions(id) ON DELETE CASCADE
+                );
+                INSERT INTO requirements_new (id, version_id, title, description, priority, status, assignee, deadline, estimated_hours, actual_hours, tags, notes, code, position, archived, created_at, updated_at) SELECT id, version_id, title, description, priority, status, assignee, deadline, estimated_hours, actual_hours, tags, notes, code, position, archived, created_at, updated_at FROM requirements;
+                DROP TABLE requirements;
+                ALTER TABLE requirements_new RENAME TO requirements;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
+                PRAGMA foreign_keys=ON;
+            """)
+        await db2.commit()
+
+    async with aiosqlite.connect(DB_PATH) as db2:
+        await db2.execute("PRAGMA foreign_keys=ON")
+        await _migrate_db(db2)
+        await db2.commit()
 
 
 def generate_prefix(name: str) -> str:

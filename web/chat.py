@@ -203,10 +203,12 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 desc = args.get("description", "")
                 priority = args.get("priority", "P2")
                 initial_comment = args.get("initial_comment", "")
-                status = "research" if name == "create_research_card" else "pending"
+                is_research = name == "create_research_card"
+                req_type = "research" if is_research else "dev"
+                status = "research" if is_research else "pending"
                 await db.execute(
-                    "INSERT INTO requirements (version_id,title,description,priority,status,code,position) VALUES (?,?,?,?,?,?,?)",
-                    (version_id, title, desc, priority, status, code, pos),
+                    "INSERT INTO requirements (version_id,title,description,priority,type,status,code,position) VALUES (?,?,?,?,?,?,?,?)",
+                    (version_id, title, desc, priority, req_type, status, code, pos),
                 )
                 # Get the new requirement ID for event emit
                 cursor = await db.execute("SELECT last_insert_rowid()")
@@ -380,8 +382,9 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 ## 行动指令
 
 行动规则：
-- 用户描述需求/想法 → 立即拆解为卡片，调用 create_requirement 建卡（status=pending）
-- 用户的需求涉及调研（竞品、市场、技术选型） → 调用 create_research_card 建卡到 research 列，行业顾问会异步处理
+- 用户描述需求/想法 → 立即拆解为卡片，调用 create_requirement 建卡（status=pending, type=dev）
+- 用户的需求涉及调研（竞品、市场、技术选型） → 调用 create_research_card 建卡（type=research, status=research），行业顾问会异步处理
+- 调研型卡片（type=research）审计通过后直接到 done，不走开发流程
 - 用户问进度/状态 → 调用 list_requirements 查看
 - 用户要移动卡片 → 调用 move_requirement
 - 用户要调整架构 → 调用 set_architecture 更新架构文档

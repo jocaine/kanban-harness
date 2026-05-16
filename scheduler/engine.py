@@ -101,7 +101,7 @@ class SchedulerEngine:
                 "SELECT r.*, v.project_id, p.git_remote_url FROM requirements r "
                 "JOIN versions v ON r.version_id = v.id "
                 "JOIN projects p ON v.project_id = p.id "
-                "WHERE r.status = 'dev' AND r.archived = 0 "
+                "WHERE r.status = 'dev' AND r.type = 'dev' AND r.archived = 0 "
                 "ORDER BY r.priority, r.position"
             )
             return [dict(row) for row in await cursor.fetchall()]
@@ -365,10 +365,14 @@ class SchedulerEngine:
 
                 # Determine move: PM evaluating pending research card parses decision
                 old_status = card.get("status", "")
+                req_type = card.get("type", "dev")
                 if role_name == "pm" and old_status == "pending":
                     new_status = self._parse_pm_research_decision(
-                        comment_text, research_rounds
+                        comment_text, research_rounds, req_type
                     )
+                elif role_name == "industry" and old_status == "research":
+                    # Industry markers determine next step
+                    new_status = self._parse_industry_decision(comment_text)
                 else:
                     new_status = self._next_status_for_role(role_name, old_status)
 
@@ -386,14 +390,29 @@ class SchedulerEngine:
                             "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
                             (new_status, card["id"]),
                         )
-                        # Emit status_changed event to trigger next role in chain
-                        await db.execute(
-                            "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                            (project_id, "status_changed", card["id"],
-                             json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": role_name})),
-                        )
-                        logger.info("[SCHED] %s commented + moved [%s] %s → %s",
-                                    author, card.get("code", ""), old_status, new_status)
+
+                        if new_status == "pending":
+                            # 默认静默等 CEO。但 [转给PM] 标记触发 PM
+                            if role_name == "industry" and "[转给PM]" in comment_text:
+                                await db.execute(
+                                    "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                                    (project_id, "status_changed", card["id"],
+                                     json.dumps({"old_status": old_status, "new_status": "pending", "moved_by": "industry"})),
+                                )
+                                logger.info("[SCHED] %s commented + moved [%s] %s → pending (trigger PM via [转给PM])",
+                                            author, card.get("code", ""), old_status)
+                            else:
+                                logger.info("[SCHED] %s commented + moved [%s] %s → pending (awaiting CEO)",
+                                            author, card.get("code", ""), old_status)
+                        else:
+                            # Emit status_changed event to trigger next role in chain
+                            await db.execute(
+                                "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                                (project_id, "status_changed", card["id"],
+                                 json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": role_name})),
+                            )
+                            logger.info("[SCHED] %s commented + moved [%s] %s → %s",
+                                        author, card.get("code", ""), old_status, new_status)
 
                     await db.commit()
 
@@ -402,56 +421,75 @@ class SchedulerEngine:
             logger.error(f"Comment agent {role_name} failed: {e}")
             await self.session_manager.fail_session(session_id, str(e))
 
-    def _parse_pm_research_decision(self, comment: str, research_rounds: int) -> str:
+    def _parse_pm_research_decision(self, comment: str, research_rounds: int, req_type: str = "dev") -> str:
         """Parse PM's evaluation of research completeness.
 
-        Returns target status: 'research' (need more), 'dev' (ready), or '' (no move).
-        Forces 'dev' after 10 research rounds to prevent infinite loops.
+        For research-type cards, routes to 'done' (skip dev/testing).
+        For dev-type cards, routes to 'dev' (normal flow).
+        Returns: 'research' (need more), 'done'/'dev' (ready), or '' (no move).
         """
         MAX_RESEARCH_ROUNDS = 10
 
+        ready_target = "done" if req_type == "research" else "dev"
+
         if research_rounds >= MAX_RESEARCH_ROUNDS:
-            logger.warning("[SCHED] research loop hit max %d rounds, forcing to dev", MAX_RESEARCH_ROUNDS)
-            return "dev"
+            logger.warning("[SCHED] research loop hit max %d rounds, forcing to %s", MAX_RESEARCH_ROUNDS, ready_target)
+            return ready_target
 
         # Parse PM's decision signal from comment
         if "[需要补充]" in comment or "[NEED_MORE]" in comment:
             return "research"
         if "[调研充分]" in comment or "[READY]" in comment:
-            return "dev"
+            return ready_target
 
-        # Fallback heuristic: look for Chinese keywords
+        # Fallback heuristic
         if any(kw in comment for kw in ("移回调研", "退回调研", "补充调研", "继续调研", "需要进一步")):
             return "research"
         if any(kw in comment for kw in ("推进开发", "进入开发", "可以开发", "调研完成", "材料充分")):
-            return "dev"
+            return ready_target
 
-        # No clear signal — if no research has been done, default to research
-        # so the card doesn't get stuck in pending and the "comment must move"
-        # principle is satisfied. Industry will pick it up.
+        # No clear signal — default to research
         if research_rounds == 0:
             logger.info("[SCHED] PM created card with no decision signal, defaulting to research")
             return "research"
 
-        # No clear signal — stay in pending, wait for human
+        # No clear signal — stay in pending
         logger.info("[SCHED] PM comment has no clear decision signal, staying in pending")
         return ""
+
+    def _parse_industry_decision(self, comment: str) -> str:
+        """Parse Industry's decision after reading CEO reply or completing research.
+
+        Returns:
+        - 'pending' if [转给PM] (forward to PM for evaluation)
+        - 'research' if [需要补充] (stay in research, CEO decides via Reigns panel)
+        - 'research' if no marker (continue working in research)
+        """
+        if "[转给PM]" in comment:
+            return "pending"
+        if "[需要补充]" in comment:
+            return "research"  # stay in research column, CEO decides via Reigns
+        return "research"  # stay in research, continue working
 
     def _next_status_for_role(self, role_name: str, current_status: str, card: dict | None = None) -> str:
         """Determine what status a role should move the card to after commenting.
 
-        Chain: PM creates → research → Industry comments + moves to pending
-               → PM evaluates: sufficient → dev, insufficient → back to research
-               → Industry re-triggered, max 10 rounds
+        评论后必移动原则：角色在主动列完成工作后移入 pending 排队中等 CEO 决策。
+        - Industry (research) → pending
+        - Coach-Dev (dev) → pending（不走自动 testing）
+        - Coach-QA (testing) → pending（不走自动 done）
+        - PM 在 pending 时不移动（由 CEO 通过王权面板决策）
+        - PM 创建调研卡 → research
         """
         if role_name == "pm" and current_status == "pending":
-            # PM decides: move to dev (ready) or back to research (need more)
-            # Actual decision is made by the agent via its comment content
-            # parsed in _run_comment_agent; here we return "" and let the agent decide
             return ""
         if role_name == "pm" and current_status in ("", "research"):
             return "research"
         if role_name == "industry" and current_status == "research":
+            return "pending"
+        if role_name == "coach_dev" and current_status == "dev":
+            return "pending"
+        if role_name == "coach_review" and current_status == "testing":
             return "pending"
         return ""
 

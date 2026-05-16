@@ -165,10 +165,13 @@ function renderRoleChat(content) {
                 const initial = getInitial(b.role);
                 const targetHtml = b.target ? `<span class="chat-target">→ ${esc(b.target)}</span>` : '';
                 const avatarUrl = ROLE_AVATARS[b.role];
-                html += `<div class="chat-bubble">
-                    ${avatarUrl
-                        ? `<img class="chat-avatar" src="${avatarUrl}" alt="${esc(b.role)}">`
-                        : `<div class="chat-avatar" style="background:${color}">${esc(initial)}</div>`}
+                const asksQ = b.text.includes('[需要补充]') || b.text.includes('[需补充]');
+                html += `<div class="chat-bubble${asksQ ? ' asks' : ''}">
+                    <div class="chat-avatar-wrap">
+                        ${avatarUrl
+                            ? `<img class="chat-avatar" src="${avatarUrl}" alt="${esc(b.role)}">`
+                            : `<div class="chat-avatar" style="background:${color}">${esc(initial)}</div>`}
+                    </div>
                     <div class="chat-content">
                         <div class="chat-meta"><span class="chat-role">${esc(b.role)}</span>${targetHtml}</div>
                         <div class="md-content">${renderMd(b.text.trim())}</div>
@@ -454,6 +457,24 @@ async function selectVersion(vid) {
     updateDescCollapsible('version');
     renderRequirements();
     updateHash();
+    loadProductizationTarget();
+}
+
+async function loadProductizationTarget() {
+    if (!currentProject) return;
+    const badge = document.getElementById('prod-target-badge');
+    try {
+        const data = await api('/api/projects/' + currentProject.id + '/product-memory');
+        const match = (data.content || '').match(/productization_target:\s*(L\d)/);
+        if (match) {
+            badge.textContent = '🎯 ' + match[1];
+            badge.style.display = 'inline';
+        } else {
+            badge.style.display = 'none';
+        }
+    } catch(e) {
+        badge.style.display = 'none';
+    }
 }
 
 function showVersionModal(editId) {
@@ -646,11 +667,13 @@ function createCardEl(r) {
     const attHtml = (r.attachments && r.attachments.length > 0) ? '<span title="附件">' + r.attachments.length + '个附件</span>' : '';
 
     const reviewBadge = r.reviewed === false ? '<span class="review-badge unreviewed">未审议</span>' : '';
+    const typeBadge = r.type === 'research' ? '<span class="type-badge research">调研</span>' : '';
 
     el.innerHTML = `
         <div class="card-top">
             <span class="priority-badge ${r.priority}">${r.priority}</span>
             ${r.code ? '<span class="card-code copyable" onclick="event.stopPropagation();copyCode(\'' + esc(r.code) + '\')" title="点击复制">' + esc(r.code) + '</span>' : ''}
+            ${typeBadge}
             ${reviewBadge}
             ${tagsHtml}
         </div>
@@ -777,6 +800,7 @@ function showReqModal(editId) {
         document.getElementById('req-title').value = r.title;
         document.getElementById('req-desc').value = r.description || '';
         document.getElementById('req-priority').value = r.priority;
+        document.getElementById('req-type').value = r.type || 'dev';
         document.getElementById('req-status').value = r.status;
         document.getElementById('req-assignee').value = r.assignee || '';
         document.getElementById('req-deadline').value = r.deadline || '';
@@ -802,6 +826,7 @@ function showReqModal(editId) {
         document.getElementById('req-title').value = '';
         document.getElementById('req-desc').value = '';
         document.getElementById('req-priority').value = 'P2';
+        document.getElementById('req-type').value = 'dev';
         document.getElementById('req-status').value = 'pending';
         document.getElementById('req-assignee').value = '';
         document.getElementById('req-deadline').value = '';
@@ -852,6 +877,7 @@ async function saveRequirement() {
         title,
         description: document.getElementById('req-desc').value.trim(),
         priority: document.getElementById('req-priority').value,
+        type: document.getElementById('req-type').value,
         status: document.getElementById('req-status').value,
         assignee: document.getElementById('req-assignee').value.trim(),
         deadline: document.getElementById('req-deadline').value,
@@ -1874,8 +1900,39 @@ async function loadTeamView() {
         teamDataCache = data.agents;
         renderTeamWorkflow();
         renderTeamGrid(data.agents);
+        loadProductMemorySummary();
     } catch(e) {
         document.getElementById('team-grid').innerHTML = '<div class="arch-empty">无法加载团队状态</div>';
+    }
+}
+
+async function loadProductMemorySummary() {
+    const el = document.getElementById('product-memory-summary');
+    if (!el || !currentProject) return;
+    try {
+        const data = await api('/api/projects/' + currentProject.id + '/product-memory');
+        const content = data.content || '';
+        if (!content) {
+            el.innerHTML = '<div class="arch-empty">暂无产品记忆</div>';
+            return;
+        }
+        // Extract key sections
+        const sections = [];
+        const miMatch = content.match(/## 一、市场分析.*?(?=## |\Z)/s);
+        if (miMatch) {
+            const lines = miMatch[0].split('\n').filter(l => l.trim()).slice(0, 8);
+            sections.push('<details class="arch-collapse"><summary>📊 市场分析</summary><div class="memory-preview">' +
+                renderMd(lines.join('\n')) + '</div></details>');
+        }
+        const dcMatch = content.match(/## 二、方向把控.*?(?=## |\Z)/s);
+        if (dcMatch) {
+            const lines = dcMatch[0].split('\n').filter(l => l.trim()).slice(0, 12);
+            sections.push('<details class="arch-collapse"><summary>🎯 方向把控</summary><div class="memory-preview">' +
+                renderMd(lines.join('\n')) + '</div></details>');
+        }
+        el.innerHTML = sections.join('') || '<div class="arch-empty">产品记忆为空</div>';
+    } catch(e) {
+        el.innerHTML = '<div class="arch-empty">加载失败</div>';
     }
 }
 
@@ -2052,23 +2109,26 @@ function updateDecisionBadges() {
     // Remove existing badges
     document.querySelectorAll('.decision-badge').forEach(b => b.remove());
 
-    // Map asking_role to the kanban column status where their avatar lives
-    const roleToStatus = { pm: 'pending', industry: 'research', coach_dev: 'dev', coach_review: 'testing' };
-
-    // Group decisions by asking_role
-    const byRole = {};
-    for (const d of _pendingDecisions) {
-        const role = d.asking_role || 'pm';
-        if (!byRole[role]) byRole[role] = [];
-        byRole[role].push(d);
+    const total = _pendingDecisions.length;
+    if (total === 0) {
+        const fab = document.getElementById('chat-fab');
+        if (fab) fab.removeAttribute('data-decisions');
+        return;
     }
 
-    // Add badges to column avatars in the board view
-    for (const [role, decisions] of Object.entries(byRole)) {
-        const status = roleToStatus[role];
-        if (!status) continue;
+    // Map asking_role to the kanban column status
+    const roleToStatus = { pm: 'pending', industry: 'research', coach_dev: 'dev', coach_review: 'testing' };
+    const roleLabels = { pm: 'PM', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
 
-        // Find the col-wrapper for this status column, then its .col-avatar
+    // Group by card's actual status so badge appears on the right column
+    const byStatus = {};
+    for (const d of _pendingDecisions) {
+        const s = d.status || 'pending';
+        if (!byStatus[s]) byStatus[s] = [];
+        byStatus[s].push(d);
+    }
+
+    for (const [status, decisions] of Object.entries(byStatus)) {
         const wrappers = document.querySelectorAll('.col-wrapper');
         for (const wrapper of wrappers) {
             const col = wrapper.querySelector(`.board-col[data-status="${status}"]`);
@@ -2077,8 +2137,10 @@ function updateDecisionBadges() {
                 wrapper.style.position = 'relative';
                 const badge = document.createElement('span');
                 badge.className = 'decision-badge';
+                // Show role labels for all roles with decisions in this column
+                const roles = [...new Set(decisions.map(d => roleLabels[d.asking_role] || d.asking_role || 'PM'))];
                 badge.textContent = '?';
-                badge.title = `${decisions.length} 项待决策`;
+                badge.title = `${roles.join('/')}: ${decisions.length} 项待CEO决策`;
                 badge.onclick = (e) => { e.stopPropagation(); openDecision(decisions[0]); };
                 wrapper.appendChild(badge);
                 break;
@@ -2086,12 +2148,10 @@ function updateDecisionBadges() {
         }
     }
 
-    // Also show in activity bar if there are pending decisions
+    // Also show count on chat FAB
     const fab = document.getElementById('chat-fab');
-    if (_pendingDecisions.length > 0 && fab) {
-        fab.setAttribute('data-decisions', _pendingDecisions.length);
-    } else if (fab) {
-        fab.removeAttribute('data-decisions');
+    if (fab) {
+        fab.setAttribute('data-decisions', total);
     }
 }
 
@@ -2113,6 +2173,7 @@ async function openDecision(decision) {
     document.getElementById('decision-avatar').src = avatarMap[role] || avatarMap.pm;
     document.getElementById('decision-role-name').textContent = roleNames[role] || role;
     document.getElementById('decision-role-title').textContent = roleTitles[role] || '';
+    document.getElementById('decision-avatar-q').classList.add('visible');
 
     // Build plain-language speech from PM summary
     const speech = buildSpeech(decision);
@@ -2134,18 +2195,20 @@ async function openDecision(decision) {
 
 function buildSpeech(decision) {
     let summary = decision.pm_summary || '';
-    summary = summary.replace(/^\*\*\[产品经理\]:\*\*\s*/m, '');
-    summary = summary.replace(/^\[产品经理\]\s*/m, '');
+    // Strip any role prefix
+    summary = summary.replace(/^\*\*\[?[^\]]*\]?\s*[：:]\s*\*\*/m, '');
+    summary = summary.replace(/^\[?[^\]]*\]?\s*[：:]\s*/m, '');
+    // Strip decision markers
+    summary = summary.replace(/^\[需要补充\]\s*/m, '').replace(/^\[调研充分\]\s*/m, '');
 
-    // Don't do regex replacement on the original text.
-    // Instead, use LLM-style rewriting: extract the core message and present it like someone talking.
-    // Since we can't call LLM here, we do structural extraction.
+    const role = decision.asking_role || 'pm';
+    const isPM = role === 'pm';
 
     // Extract key facts (bullet points starting with -)
     const bulletLines = summary.split('\n').filter(l => /^\s*-\s/.test(l)).map(l => l.replace(/^\s*-\s*/, '').replace(/\*\*/g, '').trim());
 
     // Extract the "risk" or "decision needed" part
-    const riskMatch = summary.match(/(?:遗留风险|需.*?决策|需要.*?确认)[^]*?(?=\n\*\*|\n\d+\.|$)/s);
+    const riskMatch = summary.match(/(?:遗留风险|需.*?决策|需要.*?确认|需要补充|信号冲突)[^]*?(?=\n\*\*|\n\d+\.|$)/s);
     const riskText = riskMatch ? riskMatch[0].replace(/\*\*/g, '').replace(/[（(]已知[^)）]*[)）]/g, '').trim() : '';
 
     // Extract options (路线/方向)
@@ -2155,7 +2218,7 @@ function buildSpeech(decision) {
     let chat = '';
 
     if (bulletLines.length > 0) {
-        chat += '调研做完了，几个关键发现：\n\n';
+        chat += '几个关键发现：\n\n';
         bulletLines.slice(0, 4).forEach(b => { chat += `• ${b}\n`; });
         chat += '\n';
     }
@@ -2187,46 +2250,33 @@ function buildSpeech(decision) {
 }
 
 function buildActionButtons(decision) {
-    // Parse options from PM's summary — look for numbered routes/options
-    const summary = decision.pm_summary || '';
-    const optionPattern = /(\d+)\.\s*\*?\*?路线([A-Z])[^：:]*[：:]\*?\*?\s*(.+?)(?=\n\d+\.|\n\*\*|$)/gs;
-    const options = [];
-    let m;
-    while ((m = optionPattern.exec(summary)) !== null) {
-        options.push({ key: m[2], text: m[3].trim().replace(/\*\*/g, '') });
-    }
-
-    // If no route pattern, try generic numbered options
-    if (options.length === 0) {
-        const genericPattern = /(\d+)\.\s*(.+?)(?=\n\d+\.|\n\*\*|$)/gs;
-        let gm;
-        while ((gm = genericPattern.exec(summary)) !== null) {
-            const text = gm[2].trim().replace(/\*\*/g, '');
-            if (text.length > 10 && text.length < 200) {
-                options.push({ key: gm[1], text });
-            }
-        }
-    }
+    const role = decision.asking_role || 'pm';
+    const roleNames = { pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
+    const roleName = roleNames[role] || role;
 
     let html = '';
 
-    if (options.length > 0) {
-        // Render PM's proposed options as buttons
-        const icons = ['⚡', '📱', '🛡️', '🔄', '💡'];
-        options.forEach((opt, i) => {
-            const cls = i === 0 ? 'primary' : '';
-            html += `<button class="decision-btn ${cls}" onclick="submitDecision('approve_dev', '选择方案${opt.key || (i+1)}：${escapeHtml(opt.text)}')">
-                <span class="decision-btn-icon">${icons[i] || '▸'}</span>
-                <div class="decision-btn-text">${escapeHtml(opt.text)}</div>
-            </button>`;
-        });
+    // "Reply and return" — send card back to this role's working column
+    html += `<button class="decision-btn primary" onclick="submitDecision('reply_to_role')">
+        <span class="decision-btn-icon">💬</span>
+        <div class="decision-btn-text">回复${roleName}<div class="decision-btn-hint">卡片退回该角色继续处理</div></div>
+    </button>`;
+
+    // "Approve" — advance or complete
+    const approveLabel = decision.type === 'research' ? '调研完成，归档' : '批准开发';
+    html += `<button class="decision-btn" onclick="submitDecision('approve_dev')">
+        <span class="decision-btn-icon">✅</span>
+        <div class="decision-btn-text">${approveLabel}<div class="decision-btn-hint">${decision.type === 'research' ? '直接完成（跳过开发）' : '进入开发流程'}</div></div>
+    </button>`;
+
+    // "Need more research"
+    if (role === 'industry') {
+        html += `<button class="decision-btn warning" onclick="submitDecision('request_more_research')">
+            <span class="decision-btn-icon">🔍</span>
+            <div class="decision-btn-text">需要补充调研<div class="decision-btn-hint">退回行业顾问补充材料</div></div>
+        </button>`;
     }
 
-    // Always add "continue research" as fallback
-    html += `<button class="decision-btn warning" onclick="submitDecision('request_more_research')">
-        <span class="decision-btn-icon">🔍</span>
-        <div class="decision-btn-text">都不满意，继续调研<div class="decision-btn-hint">退回行业顾问补充材料</div></div>
-    </button>`;
     return html;
 }
 
@@ -2297,7 +2347,7 @@ async function submitDecision(decision, optionComment) {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision, comment }),
+            body: JSON.stringify({ decision, comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
 
@@ -2320,7 +2370,7 @@ async function submitCustomDecision() {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision: 'custom', comment }),
+            body: JSON.stringify({ decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
 
@@ -2334,6 +2384,7 @@ async function submitCustomDecision() {
 
 function closeDecision() {
     document.getElementById('decision-overlay').classList.remove('active');
+    document.getElementById('decision-avatar-q').classList.remove('visible');
     _currentDecision = null;
 }
 

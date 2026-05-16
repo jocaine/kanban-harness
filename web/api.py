@@ -1,8 +1,11 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 import os
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 from core.database import get_db, next_code, generate_prefix
 from agents.registry import registry
@@ -48,6 +51,7 @@ class ReqCreate(BaseModel):
     title: str
     description: str = ""
     priority: str = "P2"
+    type: str = "dev"
     status: str = "pending"
     assignee: str = ""
     deadline: str = ""
@@ -58,6 +62,7 @@ class ReqUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     priority: Optional[str] = None
+    type: Optional[str] = None
     status: Optional[str] = None
     assignee: Optional[str] = None
     deadline: Optional[str] = None
@@ -200,10 +205,12 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
         (data.version_id,)
     )
     pos = (await cursor.fetchone())[0]
+    # 调研类型卡片创建时自动设为 research 状态
+    init_status = "research" if data.type == "research" else (data.status or "pending")
     cursor = await db.execute(
-        "INSERT INTO requirements (version_id,title,description,priority,status,assignee,deadline,estimated_hours,notes,code,position) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (data.version_id, data.title, description, data.priority, data.status,
+        "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,code,position) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (data.version_id, data.title, description, data.priority, data.type, init_status,
          data.assignee, data.deadline, data.estimated_hours, notes, code, pos)
     )
     await db.commit()
@@ -217,7 +224,7 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
         await db.execute(
             "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
             (vrow[0], "requirement_created", rid,
-             json.dumps({"status": data.status, "priority": data.priority})),
+             json.dumps({"status": init_status, "priority": data.priority})),
         )
         await db.commit()
 
@@ -227,7 +234,7 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
 @router.put("/requirements/{rid}")
 async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection = Depends(get_db)):
     updates, params = [], []
-    for field in ("title", "description", "priority", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags"):
+    for field in ("title", "description", "priority", "type", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags"):
         val = getattr(data, field)
         if val is not None:
             if field in ("description", "notes"):
@@ -251,11 +258,18 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
 
     # Permission check for agent roles
     agent_role = getattr(request.state, "agent_role", None) if hasattr(request, "state") else None
-    cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (rid,))
+    cursor = await db.execute("SELECT status, type FROM requirements WHERE id=?", (rid,))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, f"requirement {rid} not found")
-    old_status = row[0]
+    old_status = row["status"]
+    req_type = row["type"]
+
+    # Type-based state machine rules
+    if req_type == "dev" and old_status == "pending" and data.status == "done":
+        raise HTTPException(400, "开发需求不能直接从 pending 移到 done，须经过 dev→testing→done 流程")
+    if req_type == "research" and data.status in ("dev", "testing"):
+        raise HTTPException(400, "调研需求不能移到 dev/testing 列，审计通过后直接到 done")
 
     if agent_role:
         if not registry.check_move(agent_role, old_status, data.status):
@@ -549,6 +563,180 @@ async def put_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db
     return {"ok": True}
 
 
+@router.put("/projects/{pid}/product-memory/section")
+async def put_product_memory_section(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    """Update a specific section of the product memory document.
+
+    Body:
+      section: "market_intelligence" | "direction_control"
+      content: markdown content to insert/update in that section
+      sub_section: optional, for market_intelligence: "open_source" | "commercial" | "signal_conflict"
+    """
+    section = body.get("section", "")
+    content = body.get("content", "")
+    sub_section = body.get("sub_section", "")
+
+    if section not in ("market_intelligence", "direction_control"):
+        raise HTTPException(400, "section must be 'market_intelligence' or 'direction_control'")
+
+    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    current = row[0] if row else ""
+
+    updated = _update_memory_section(current, section, content, sub_section)
+    await db.execute(
+        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (updated, pid),
+    )
+    await db.commit()
+
+    # Audit log: insert a system comment in the project's product memory changes
+    agent = body.get("agent", "system")
+    logger.info("Product memory updated: project=%d section=%s sub_section=%s agent=%s", pid, section, sub_section, agent)
+
+    return {"ok": True, "section": section, "sub_section": sub_section}
+
+
+@router.post("/projects/{pid}/product-memory/decision")
+async def append_decision(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    """Append a decision history entry to the direction_control section.
+
+    Body:
+      date: date string (defaults to today)
+      decision: the decision made
+      reason: why it was made
+    """
+    from datetime import date
+    entry_date = body.get("date", date.today().isoformat())
+    decision = body.get("decision", "")
+    reason = body.get("reason", "")
+
+    if not decision:
+        raise HTTPException(400, "decision is required")
+
+    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    current = row[0] if row else ""
+
+    entry = f"- {entry_date}：{decision}"
+    if reason:
+        entry += f"（{reason}）"
+
+    updated = _append_to_section(current, "架构决策历史", entry)
+    await db.execute(
+        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (updated, pid),
+    )
+    await db.commit()
+    return {"ok": True}
+
+
+@router.put("/projects/{pid}/product-memory/target")
+async def set_productization_target(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
+    """Set the productization target level.
+
+    Body:
+      level: "L0" | "L1" | "L2" | "L3" | "L4"
+    """
+    level = body.get("level", "")
+    if level not in ("L0", "L1", "L2", "L3", "L4"):
+        raise HTTPException(400, "level must be L0-L4")
+
+    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    current = row[0] if row else ""
+
+    import re
+    if re.search(r'productization_target:\s*L\d', current):
+        updated = re.sub(r'productization_target:\s*L\d', f'productization_target: {level}', current)
+    else:
+        updated = current + f"\nproductization_target: {level}\n"
+
+    await db.execute(
+        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (updated, pid),
+    )
+    await db.commit()
+    return {"ok": True, "level": level}
+
+
+def _update_memory_section(current: str, section: str, content: str, sub_section: str = "") -> str:
+    """Update a specific section of the product memory markdown document."""
+    import re
+
+    if section == "market_intelligence":
+        section_header = "## 一、市场分析（Market Intelligence）"
+        alt_header = "## 一、市场分析"
+    else:
+        section_header = "## 二、方向把控（Direction Control）"
+        alt_header = "## 二、方向把控"
+
+    # Find the target section boundaries
+    section_pattern = re.compile(
+        rf"({re.escape(section_header)}|{re.escape(alt_header)})"
+        r"(.*?)(?=\n## |\Z)",
+        re.DOTALL,
+    )
+    match = section_pattern.search(current)
+
+    if not match:
+        # Section doesn't exist, append it
+        if not current.endswith("\n"):
+            current += "\n"
+        current += f"\n{section_header}\n\n{content}\n"
+        return current
+
+    # Section exists, check for sub-section
+    if sub_section:
+        sub_map = {
+            "open_source": "### 开源视角",
+            "commercial": "### 商业视角",
+            "signal_conflict": "### 信号冲突记录",
+        }
+        sub_header = sub_map.get(sub_section, "")
+        if sub_header:
+            sub_pattern = re.compile(
+                rf"({re.escape(sub_header)})"
+                r"(.*?)(?=\n### |\n## |\Z)",
+                re.DOTALL,
+            )
+            sub_match = sub_pattern.search(match.group(0))
+            if sub_match:
+                # Replace sub-section content
+                old = sub_match.group(0)
+                new = f"{sub_header}\n\n{content}"
+                full = match.group(0).replace(old, new)
+            else:
+                # Append sub-section
+                full = match.group(0).rstrip() + f"\n\n{sub_header}\n\n{content}\n"
+            current = current[:match.start()] + match.expand(rf"\1{full.split(match.group(1),1)[1]}") + current[match.end():]
+            return current
+
+    # No sub-section, replace entire section content
+    # Keep the header, replace everything after it until the next section or end
+    header = match.group(1)
+    rest = match.group(2)
+    new_section = f"{header}\n\n{content}\n"
+    return current[:match.start()] + new_section + current[match.end():]
+
+
+def _append_to_section(current: str, sub_header: str, entry: str) -> str:
+    """Append an entry to a subsection within the product memory."""
+    import re
+    pattern = re.compile(
+        rf"(### {re.escape(sub_header)}.*?)(?=\n### |\n## |\Z)",
+        re.DOTALL,
+    )
+    match = pattern.search(current)
+    if match:
+        section_text = match.group(1)
+        updated_section = section_text.rstrip() + f"\n{entry}\n"
+        return current[:match.start()] + updated_section + current[match.end():]
+    else:
+        # No such subsection, append
+        return current.rstrip() + f"\n\n### {sub_header}\n\n{entry}\n"
+
+
 @router.get("/skill-template")
 async def get_skill_template():
     template_path = os.path.join(os.path.dirname(__file__), "skill_template.md")
@@ -692,75 +880,96 @@ DECISION_MARKERS = ("[调研充分]", "[READY]", "[需要补充]", "[NEED_MORE]"
 
 @router.get("/decisions/pending")
 async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
-    """List cards waiting for CEO/human decision — PM commented but no clear signal."""
+    """List cards waiting for CEO/human decision.
+
+    Includes:
+    - Cards in pending queue (from any role, e.g. [转给PM])
+    - Research cards where Industry marked [需要补充] (stay in research, CEO decides)
+    """
     import json
 
     query = """
         SELECT r.id, r.code, r.title, r.priority, r.status, r.description,
-               r.updated_at, v.project_id, p.name as project_name, p.prefix
+               r.updated_at, r.type, v.project_id, p.name as project_name, p.prefix
         FROM requirements r
         JOIN versions v ON r.version_id = v.id
         JOIN projects p ON v.project_id = p.id
-        WHERE r.status = 'pending' AND r.archived = 0
+        WHERE r.archived = 0
+        AND (
+            r.status = 'pending'
+            OR (r.status = 'research' AND r.id IN (
+                SELECT c.requirement_id FROM comments c
+                WHERE c.author IN ('行业顾问', 'Industry')
+                AND c.content LIKE '%[需要补充]%'
+                AND c.id = (
+                    SELECT MAX(c2.id) FROM comments c2
+                    WHERE c2.requirement_id = c.requirement_id
+                )
+            ))
+        )
     """
     params = []
     if project_id:
         query += " AND v.project_id = ?"
         params.append(project_id)
+    query += " ORDER BY r.updated_at DESC"
 
     cursor = await db.execute(query, params)
     cards = [dict(row) for row in await cursor.fetchall()]
 
     results = []
     for card in cards:
-        # Get latest PM comment
+        # Get the last agent comment — whichever role put it in pending
         cursor2 = await db.execute(
             "SELECT content, author, created_at FROM comments "
-            "WHERE requirement_id=? AND author IN ('产品经理', 'PM') "
+            "WHERE requirement_id=? AND author IN ('产品经理', 'PM', '行业顾问', 'Industry', 'Coach-Dev', 'Coach-QA') "
             "ORDER BY created_at DESC LIMIT 1",
             (card["id"],),
         )
-        pm_comment = await cursor2.fetchone()
-        if not pm_comment:
+        last_comment = await cursor2.fetchone()
+        if not last_comment:
             continue
 
-        # Check if PM comment has a clear decision signal
-        pm_text = pm_comment["content"] or ""
-        has_signal = any(m in pm_text for m in DECISION_MARKERS)
-        if has_signal:
-            continue
+        comment_text = last_comment["content"] or ""
 
-        # Check if there are industry comments (research was done)
+        # Map author to asking_role
+        author = last_comment["author"]
+        ROLE_MAP = {
+            "产品经理": "pm", "PM": "pm",
+            "行业顾问": "industry", "Industry": "industry",
+            "Coach-Dev": "coach_dev", "Coach-QA": "coach_review",
+        }
+        asking_role = ROLE_MAP.get(author, "pm")
+
+        # Count research rounds
         cursor3 = await db.execute(
             "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='行业顾问'",
             (card["id"],),
         )
         research_count = (await cursor3.fetchone())[0]
-        if research_count == 0:
-            continue
 
-        # This card needs CEO decision
-        # Determine which role is "asking"
-        asking_role = "pm"
         results.append({
             "id": card["id"],
             "code": card["code"],
             "title": card["title"],
             "priority": card["priority"],
+            "status": card["status"],
+            "type": card["type"],
             "project_id": card["project_id"],
             "project_name": card["project_name"],
             "asking_role": asking_role,
-            "pm_summary": pm_text[:500],
+            "pm_summary": comment_text[:500],
             "research_rounds": research_count,
-            "waiting_since": pm_comment["created_at"],
+            "waiting_since": last_comment["created_at"],
         })
 
     return {"decisions": results}
 
 
 class CEODecisionInput(BaseModel):
-    decision: str  # "approve_dev" | "request_more_research" | "custom"
+    decision: str  # "approve_dev" | "request_more_research" | "reply_to_role" | "custom"
     comment: str = ""
+    asking_role: str = ""
 
 
 @router.post("/decisions/{rid}/submit")
@@ -768,18 +977,28 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     """CEO submits a decision on a pending card."""
     import json
 
-    cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (rid,))
+    cursor = await db.execute("SELECT status, type FROM requirements WHERE id=?", (rid,))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "requirement not found")
-    if row["status"] != "pending":
-        raise HTTPException(400, "card must be in pending status")
+    if row["status"] not in ("pending", "research"):
+        raise HTTPException(400, "card must be in pending or research status")
+    req_type = row["type"]
 
     # Determine target status
+    ROLE_WORK_STATUS = {
+        "industry": "research",
+        "pm": "pending",
+        "coach_dev": "dev",
+        "coach_review": "testing",
+    }
     if data.decision == "approve_dev":
-        new_status = "dev"
+        new_status = "done" if req_type == "research" else "dev"
     elif data.decision == "request_more_research":
         new_status = "research"
+    elif data.decision == "reply_to_role":
+        # Return card to the asking role's working column
+        new_status = ROLE_WORK_STATUS.get(data.asking_role, "pending")
     else:
         new_status = ""
 
@@ -787,33 +1006,42 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     comment_text = data.comment.strip() if data.comment else ""
     if not comment_text:
         if data.decision == "approve_dev":
-            comment_text = "批准进入开发阶段。"
+            comment_text = "调研结果已确认，完成。" if req_type == "research" else "批准进入开发阶段。"
         elif data.decision == "request_more_research":
             comment_text = "需要补充更多调研材料。"
+        elif data.decision == "reply_to_role":
+            comment_text = "已回复，请按反馈继续。"
 
     await db.execute(
         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
         (rid, "CEO", comment_text),
     )
 
+    old_status = row["status"]
+
     # Move card if decision implies a status change
     if new_status:
-        old_status = "pending"
         await db.execute(
             "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
             (new_status, rid),
         )
-        # Emit event
+
+    # Emit event: always for reply_to_role (agent needs to see CEO's reply),
+    # or when status actually changed
+    if new_status != old_status or data.decision == "reply_to_role":
         vcursor = await db.execute(
             "SELECT v.project_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
             (rid,),
         )
         vrow = await vcursor.fetchone()
         if vrow:
+            context = {"old_status": old_status, "new_status": new_status or old_status, "moved_by": "CEO"}
+            if data.decision == "reply_to_role":
+                context["decision"] = "reply_to_role"
             await db.execute(
                 "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                (vrow[0], "status_changed", rid,
-                 json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": "CEO"})),
+                (vrow[0], "status_changed" if data.decision != "reply_to_role" else "ceo_replied", rid,
+                 json.dumps(context)),
             )
 
     await db.commit()
