@@ -289,9 +289,17 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
         if not data.reason.strip():
             raise HTTPException(400, "移动卡片必须提供原因说明")
 
+    # 进入对应列时自动设 assignee，前端据此判断活跃/排队中
+    STATUS_ASSIGNEE_MAP = {
+        "research": "Industry",
+        "pending": "PM",
+        "dev": "Coach-Dev",
+        "testing": "Coach-Review",
+    }
+    new_assignee = STATUS_ASSIGNEE_MAP.get(data.status, "")
     await db.execute(
-        "UPDATE requirements SET status=?, position=?, updated_at=datetime('now','localtime') WHERE id=?",
-        (data.status, data.position, rid)
+        "UPDATE requirements SET status=?, assignee=?, position=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (data.status, new_assignee, data.position, rid)
     )
 
     # Audit trail — identify actual caller
@@ -919,27 +927,40 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
 
     results = []
     for card in cards:
-        # Get the last agent comment — whichever role put it in pending
-        cursor2 = await db.execute(
-            "SELECT content, author, created_at FROM comments "
-            "WHERE requirement_id=? AND author IN ('产品经理', 'PM', '行业顾问', 'Industry', 'Coach-Dev', 'Coach-QA') "
-            "ORDER BY created_at DESC LIMIT 1",
-            (card["id"],),
-        )
+        # Determine asking_role based on card status, not last commenter
+        # research status → always industry (only industry works in research)
+        if card["status"] == "research":
+            asking_role = "industry"
+            # Get the latest industry comment for the preview
+            cursor2 = await db.execute(
+                "SELECT content, author, created_at FROM comments "
+                "WHERE requirement_id=? AND author IN ('行业顾问', 'Industry') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (card["id"],),
+            )
+        else:
+            # pending status → determine from last agent comment
+            cursor2 = await db.execute(
+                "SELECT content, author, created_at FROM comments "
+                "WHERE requirement_id=? AND author IN ('产品经理', 'PM', '行业顾问', 'Industry', 'Coach-Dev', 'Coach-QA') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (card["id"],),
+            )
         last_comment = await cursor2.fetchone()
         if not last_comment:
             continue
 
         comment_text = last_comment["content"] or ""
 
-        # Map author to asking_role
-        author = last_comment["author"]
-        ROLE_MAP = {
-            "产品经理": "pm", "PM": "pm",
-            "行业顾问": "industry", "Industry": "industry",
-            "Coach-Dev": "coach_dev", "Coach-QA": "coach_review",
-        }
-        asking_role = ROLE_MAP.get(author, "pm")
+        # Map author to asking_role (only needed for pending status)
+        if card["status"] != "research":
+            author = last_comment["author"]
+            ROLE_MAP = {
+                "产品经理": "pm", "PM": "pm",
+                "行业顾问": "industry", "Industry": "industry",
+                "Coach-Dev": "coach_dev", "Coach-QA": "coach_review",
+            }
+            asking_role = ROLE_MAP.get(author, "pm")
 
         # Count research rounds
         cursor3 = await db.execute(

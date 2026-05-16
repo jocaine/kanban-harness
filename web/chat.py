@@ -289,16 +289,20 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
 
 
 async def _build_pm_system_prompt(project_id: int) -> str:
-    """Build PM-role system prompt with full project context."""
+    """Build PM-role system prompt from real pm.yaml + project context."""
+    from agents.registry import registry
+
     sections = []
-    sections.append(
-        "你是产品经理（PM），Dashboard 对话的唯一入口。你的策略是快速决策、立即行动。\n"
-    )
+
+    # Load real PM system prompt from pm.yaml
+    pm_role = registry.get("pm")
+    if pm_role:
+        sections.append(pm_role.system_prompt)
+    else:
+        sections.append("你是 PM。负责理解用户意图并主动执行。\n")
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-
-        has_architecture = False
 
         if project_id:
             cursor = await db.execute(
@@ -307,20 +311,19 @@ async def _build_pm_system_prompt(project_id: int) -> str:
             )
             proj = await cursor.fetchone()
             if proj:
-                sections.append(f"## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description'] or ''}")
+                sections.append(f"\n## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description'] or ''}")
                 if proj["advisor_skill"]:
                     sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:2000]}")
                 if proj["product_memory"]:
                     sections.append(f"\n## 产品记忆（决策历史）\n\n{proj['product_memory'][:1500]}")
 
-            # Check architecture
+            # Architecture doc
             cursor = await db.execute(
                 "SELECT content FROM project_architecture WHERE project_id=?",
                 (project_id,),
             )
             arch_row = await cursor.fetchone()
             if arch_row and arch_row["content"]:
-                has_architecture = True
                 sections.append(f"\n## 项目架构\n\n{arch_row['content'][:2000]}")
 
             cursor = await db.execute(
@@ -348,6 +351,24 @@ async def _build_pm_system_prompt(project_id: int) -> str:
                 for p in projects:
                     sections.append(f"- [{p['prefix']}] {p['name']} (id: {p['id']})")
 
+    # Chat-specific directives (complement pm.yaml, not duplicate it)
+    sections.append("""
+## 聊天专属指令
+
+仅用于聊天界面（不改变 pm.yaml 中的角色边界）：
+- 用户描述需求/想法 → 调用 create_requirement 建卡（status=pending, type=dev）
+- 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research）
+- 用户问进度 → 调用 list_requirements
+- 用户要移动卡片 → 调用 move_requirement
+- 用户要更新架构 → 调用 set_architecture
+
+原则：
+1. 绝不追问，宁可先建卡再让用户调整
+2. 需要调研的内容不要自己做，建 research 卡交给行业顾问
+3. 每张卡片包含：title、description（功能目标+验收标准）、priority
+4. 建卡后告知用户创建了什么
+""")
+
     # Inject recent conversation history
     history = await _get_recent_history(project_id)
     if history:
@@ -355,48 +376,6 @@ async def _build_pm_system_prompt(project_id: int) -> str:
         for msg in history[-10:]:
             prefix = "用户" if msg["role"] == "user" else "PM"
             sections.append(f"**{prefix}:** {msg['content'][:500]}")
-
-    # PM action directives — vary based on architecture state
-    if not has_architecture and project_id:
-        sections.append("""
-## 行动指令
-
-⚠️ 当前项目尚未确定技术架构。Dev 无法开始工作。你需要：
-1. 询问用户技术方向偏好（语言、框架、部署方式）
-2. 用户确认后，调用 set_architecture 写入架构文档（markdown格式，包含：技术栈、目录结构规划、核心依赖、部署方式）
-3. 建 research 卡让行业顾问调研技术细节（框架对比、最佳实践）
-4. 建一张"项目骨架搭建"卡到 pending 列
-
-其他行动规则：
-- 用户描述需求/想法 → 可以先建卡，但提醒用户需要先确定架构才能开发
-- 用户问进度/状态 → 调用 list_requirements 查看
-- 用户闲聊 → 正常对话
-
-原则：
-1. 主动引导用户确认技术方向，不要等用户问
-2. 架构文档不需要完美，先确定大方向，后续可以调整
-3. 回复简洁直接
-""")
-    else:
-        sections.append("""
-## 行动指令
-
-行动规则：
-- 用户描述需求/想法 → 立即拆解为卡片，调用 create_requirement 建卡（status=pending, type=dev）
-- 用户的需求涉及调研（竞品、市场、技术选型） → 调用 create_research_card 建卡（type=research, status=research），行业顾问会异步处理
-- 调研型卡片（type=research）审计通过后直接到 done，不走开发流程
-- 用户问进度/状态 → 调用 list_requirements 查看
-- 用户要移动卡片 → 调用 move_requirement
-- 用户要调整架构 → 调用 set_architecture 更新架构文档
-- 用户闲聊 → 正常对话
-
-原则：
-1. 绝不追问，宁可先建卡再让用户调整
-2. 需要调研的内容不要自己做，建 research 卡交给行业顾问异步处理
-3. 每张卡片包含：title、description（功能目标+验收标准）、priority
-4. 建卡后立即告知用户创建了什么，让用户可以微调
-5. 回复简洁直接，不要长篇大论
-""")
 
     return "\n".join(sections)
 

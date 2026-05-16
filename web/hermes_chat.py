@@ -12,6 +12,7 @@ from typing import AsyncGenerator
 import aiosqlite
 
 from core.database import DB_PATH
+from agents.registry import registry
 
 logger = logging.getLogger("kh.hermes")
 
@@ -27,14 +28,11 @@ API_KEY = os.getenv("API_KEY", "") or os.getenv("OPENAI_API_KEY", "") or os.gete
 API_BASE_URL = os.getenv("API_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("ANTHROPIC_BASE_URL", "")
 
 
-ACTION_DIRECTIVES = """## 行动指令
+CHAT_DIRECTIVES = """## 聊天专属指令
 
-根据用户意图自主选择行动，不要追问：
-- 用户描述新想法/需求 → 直接拆解为多张结构化卡片，调用 kanban MCP 创建（kanban_create_requirements）
-- 用户要求调研/竞品分析 → 用 web_search 搜索，产出结构化报告
-- 用户问技术可行性 → 基于项目架构评估，给出结论和建议
+以下指令补充 PM prompt，仅在聊天界面生效（不在 PM agent 自动触发时生效）：
+- 用户描述新想法/需求 → 直接拆解为多张结构化卡片，调用 kanban MCP 创建
 - 用户说"你自己想/随便/你来决定/都行" → 基于产品记忆和项目上下文自主决策，给出方案并执行
-- 用户要操作看板（建卡、移动、查进度） → 调用 kanban MCP 对应工具
 - 用户闲聊/问问题 → 正常对话，结合项目上下文回答
 
 原则：
@@ -101,13 +99,20 @@ def _detect_role(user_message: str) -> str:
     return "pm"
 
 
+def _get_role_prompt(role: str) -> str:
+    """Load the real agent system prompt from YAML config."""
+    agent = registry.get(role)
+    if agent:
+        return agent.system_prompt
+    return f"你是 {role}。负责理解用户意图并主动执行。"
+
+
 async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str, dict]:
     """Build prompt with context. Returns (prompt_str, context_summary).
 
     context_summary contains factual info about what was loaded, for the route event.
     """
     sections = []
-    sections.append("你是 Kanban Harness 的 AI 团队协调员（PM 角色）。你负责理解用户意图并主动执行。")
     summary = {}
 
     has_context = False
@@ -122,7 +127,6 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
             )
             proj = await cursor.fetchone()
             if proj:
-                sections.append(f"\n## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description']}")
                 summary["project"] = proj["name"]
 
                 if proj["advisor_skill"]:
@@ -184,7 +188,13 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
             "如果用户要创建需求，先用 kanban_list_versions 找到活跃版本再创建。"
         )
 
-    sections.append(ACTION_DIRECTIVES)
+    # Determine role and inject its system prompt (real agent YAML)
+    role = _detect_role(user_message)
+    role_prompt = _get_role_prompt(role)
+    sections.insert(0, role_prompt)
+
+    # Append chat-specific directives (complement role prompt, not duplicate it)
+    sections.append(CHAT_DIRECTIVES)
 
     # Inject conversation history (last 10 exchanges, truncated)
     history = await _get_chat_history(project_id)
@@ -406,10 +416,8 @@ def _build_hermes_env() -> dict:
 async def ensure_hermes_config():
     """Ensure hermes config exists and MCP points to local KH server.
 
-    Called on KH startup. Creates ~/.hermes/config.yaml if missing,
-    and always patches mcp_servers.kanban to point to the local MCP server
-    (stdio transport → localhost FastAPI), preventing data from being
-    written to a remote server.
+    Called on KH startup. Always syncs model/base_url from env vars,
+    and patches mcp_servers.kanban to point to the local MCP server.
     """
     import yaml
 
@@ -427,26 +435,75 @@ async def ensure_hermes_config():
         "env": {"KH_BASE_URL": f"http://localhost:{port}"},
     }
 
+    # Always read model/base_url from env
+    model = HERMES_MODEL or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+
     if config_file.exists():
         with open(config_file, "r") as f:
             config = yaml.safe_load(f) or {}
-        config.setdefault("mcp_servers", {})
-        config["mcp_servers"]["kanban"] = local_mcp
     else:
-        model = HERMES_MODEL or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
         config = {
             "_config_version": 1,
-            "model": {"default": model},
             "agent": {"max_turns": 30, "reasoning_effort": "medium"},
             "approvals": {"mode": "yolo"},
             "toolsets": ["hermes-cli"],
-            "mcp_servers": {"kanban": local_mcp},
         }
-        if API_BASE_URL:
-            config["model"]["base_url"] = API_BASE_URL
+
+    # Always sync model settings from env
+    config.setdefault("model", {})
+    config["model"]["default"] = model
+    if API_BASE_URL:
+        config["model"]["base_url"] = API_BASE_URL
+
+    # Always patch MCP server
+    config.setdefault("mcp_servers", {})
+    config["mcp_servers"]["kanban"] = local_mcp
 
     with open(config_file, "w") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 
     logger.info(f"Ensured hermes config with local MCP at {config_file}")
 
+
+def sync_claude_settings():
+    """Sync API env vars into project .claude/settings.json for Claude Code.
+
+    Reads API_KEY / API_BASE_URL / CHAT_MODEL / ANTHROPIC_* from environment
+    and writes them into the project's .claude/settings.json so that Claude Code
+    sessions and subprocesses inherit the same API configuration as the container.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    claude_dir = project_root / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    settings_file = claude_dir / "settings.json"
+
+    # Gather env vars that matter for both hermes (OpenAI-compat) and anthropic SDK
+    env = {}
+    for key in ("API_KEY", "API_BASE_URL", "CHAT_MODEL",
+                "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+                "OPENAI_API_KEY", "OPENAI_BASE_URL"):
+        val = os.getenv(key)
+        if val:
+            env[key] = val
+
+    if not env:
+        logger.warning("sync_claude_settings: no API env vars found, skipping")
+        return
+
+    # Read existing settings
+    if settings_file.exists():
+        with open(settings_file) as f:
+            settings = json.load(f)
+    else:
+        settings = {"permissions": {"allow": []}}
+
+    # Merge env — do NOT overwrite keys already present (manual config wins)
+    existing_env = settings.get("env", {})
+    merged = {**env, **existing_env}  # existing_env takes priority
+    settings["env"] = merged
+
+    with open(settings_file, "w") as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    logger.info("Synced %d env vars into %s", len(merged), settings_file)

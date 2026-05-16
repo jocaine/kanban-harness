@@ -208,8 +208,10 @@ class CommentAgent:
         if cfg.base_url or ANTHROPIC_BASE_URL:
             kwargs["base_url"] = cfg.base_url or ANTHROPIC_BASE_URL
         client = anthropic.AsyncAnthropic(**kwargs)
+        # Sync model from env (same source as hermes_chat.py::ensure_hermes_config)
+        model_name = os.getenv("HERMES_MODEL") or os.getenv("CHAT_MODEL") or cfg.name or "claude-sonnet-4-6"
         msg = await client.messages.create(
-            model=cfg.name,
+            model=model_name,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )

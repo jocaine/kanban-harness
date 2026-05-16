@@ -13,11 +13,16 @@ load_dotenv(override=True)
 
 from core.database import init_db
 from scheduler import SchedulerEngine
+from web.hermes_chat import ensure_hermes_config, sync_claude_settings
 
 scheduler = SchedulerEngine()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: sync API config from env to hermes and claude settings
+    await ensure_hermes_config()
+    sync_claude_settings()
+
     await init_db()
     await scheduler.start()
     yield

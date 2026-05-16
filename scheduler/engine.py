@@ -206,7 +206,7 @@ class SchedulerEngine:
                 async with aiosqlite.connect(DB_PATH) as db:
                     db.row_factory = aiosqlite.Row
                     await db.execute(
-                        "UPDATE requirements SET status='testing', "
+                        "UPDATE requirements SET status='testing', assignee='Coach-Review', "
                         "updated_at=datetime('now','localtime') WHERE id=?",
                         (card["id"],),
                     )
@@ -318,6 +318,20 @@ class SchedulerEngine:
                 return
             card = dict(card_row)
 
+            # 设 assignee 匹配前端 COL_ROLE_MAP，卡片显示为"活跃"而非"排队中"
+            AGENT_COLUMN_ROLE = {
+                "industry": "Industry",
+                "pm": "PM",
+                "coach_dev": "Coach-Dev",
+                "coach_review": "Coach-Review",
+            }
+            col_role = AGENT_COLUMN_ROLE.get(role_name, role_name)
+            await db.execute(
+                "UPDATE requirements SET assignee=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (col_role, requirement_id),
+            )
+            await db.commit()
+
         input_context = json.dumps({"requirement_id": requirement_id, "code": card.get("code", "")})
         session_id = await self.session_manager.create_session(
             project_id=event["project_id"],
@@ -376,8 +390,24 @@ class SchedulerEngine:
                 else:
                     new_status = self._next_status_for_role(role_name, old_status)
 
-                logger.info("[SCHED] %s posting comment for [%s], move: %s → %s",
-                            author, card.get("code", ""), old_status, new_status or "(stay)")
+                # === LOG: every role's decision & move ===
+                if new_status and new_status != old_status:
+                    logger.info("[MOVE] role=%s card=[%s] %s → %s | comment_has_signals=[转给PM]=%s [需要补充]=%s [调研充分]=%s",
+                                role_name, card.get("code", ""), old_status, new_status,
+                                "[转给PM]" in comment_text, "[需要补充]" in comment_text, "[调研充分]" in comment_text)
+                elif role_name == "pm" and old_status == "pending" and new_status == "":
+                    logger.info("[MOVE] role=%s card=[%s] %s → %s | PM evaluated research card → staying in pending, awaiting CEO approval via Reigns",
+                                role_name, card.get("code", ""), old_status, new_status or "(stay)")
+                elif role_name == "industry" and old_status == "research" and new_status == "research":
+                    if "[需要补充]" in comment_text:
+                        logger.info("[CEO-ASK] role=%s card=[%s] | industry marked [需要补充] → CEO must decide via Reigns panel",
+                                    role_name, card.get("code", ""))
+                    else:
+                        logger.info("[MOVE] role=%s card=[%s] %s → %s | industry working, no status change",
+                                    role_name, card.get("code", ""), old_status, new_status or "(stay)")
+                else:
+                    logger.info("[MOVE] role=%s card=[%s] %s → %s",
+                                role_name, card.get("code", ""), old_status, new_status or "(stay)")
 
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute(
@@ -386,10 +416,19 @@ class SchedulerEngine:
                     )
 
                     if new_status and new_status != old_status:
+                        COL_ASSIGNEE = {
+                            "research": "Industry",
+                            "pending": "PM",
+                            "dev": "Coach-Dev",
+                            "testing": "Coach-Review",
+                        }
+                        col_assignee = COL_ASSIGNEE.get(new_status, "")
                         await db.execute(
-                            "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
-                            (new_status, card["id"]),
+                            "UPDATE requirements SET status=?, assignee=?, updated_at=datetime('now','localtime') WHERE id=?",
+                            (new_status, col_assignee, card["id"]),
                         )
+                        logger.info("[STATUS-CHANGE] card=[%s] status %s → %s by %s",
+                                    card.get("code", ""), old_status, new_status, role_name)
 
                         if new_status == "pending":
                             # 默认静默等 CEO。但 [转给PM] 标记触发 PM
@@ -399,11 +438,11 @@ class SchedulerEngine:
                                     (project_id, "status_changed", card["id"],
                                      json.dumps({"old_status": old_status, "new_status": "pending", "moved_by": "industry"})),
                                 )
-                                logger.info("[SCHED] %s commented + moved [%s] %s → pending (trigger PM via [转给PM])",
-                                            author, card.get("code", ""), old_status)
+                                logger.info("[EVENT-EMIT] status_changed card=[%s] %s→pending moved_by=industry → triggers PM",
+                                            card.get("code", ""), old_status)
                             else:
-                                logger.info("[SCHED] %s commented + moved [%s] %s → pending (awaiting CEO)",
-                                            author, card.get("code", ""), old_status)
+                                logger.info("[EVENT-EMIT] card=[%s] moved to pending by %s → awaiting CEO decision",
+                                            card.get("code", ""), role_name)
                         else:
                             # Emit status_changed event to trigger next role in chain
                             await db.execute(
@@ -411,8 +450,8 @@ class SchedulerEngine:
                                 (project_id, "status_changed", card["id"],
                                  json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": role_name})),
                             )
-                            logger.info("[SCHED] %s commented + moved [%s] %s → %s",
-                                        author, card.get("code", ""), old_status, new_status)
+                            logger.info("[EVENT-EMIT] status_changed card=[%s] %s→%s moved_by=%s",
+                                        card.get("code", ""), old_status, new_status, role_name)
 
                     await db.commit()
 
@@ -424,8 +463,9 @@ class SchedulerEngine:
     def _parse_pm_research_decision(self, comment: str, research_rounds: int, req_type: str = "dev") -> str:
         """Parse PM's evaluation of research completeness.
 
-        For research-type cards, routes to 'done' (skip dev/testing).
-        For dev-type cards, routes to 'dev' (normal flow).
+        Normal flow: PM evaluates → [调研充分] → done (for research) or dev (for dev cards).
+        CEO is only involved when PM flags [需要补充] (needs more info) or when role disagreement arises.
+
         Returns: 'research' (need more), 'done'/'dev' (ready), or '' (no move).
         """
         MAX_RESEARCH_ROUNDS = 10
@@ -438,23 +478,26 @@ class SchedulerEngine:
 
         # Parse PM's decision signal from comment
         if "[需要补充]" in comment or "[NEED_MORE]" in comment:
+            logger.info("[SCHED-DECISION] PM → [需要补充] → sending back to research (CEO may need to arbitrate)")
             return "research"
         if "[调研充分]" in comment or "[READY]" in comment:
+            logger.info("[SCHED-DECISION] PM → [调研充分] → %s (normal flow, no CEO needed)", ready_target)
             return ready_target
 
         # Fallback heuristic
         if any(kw in comment for kw in ("移回调研", "退回调研", "补充调研", "继续调研", "需要进一步")):
+            logger.info("[SCHED-DECISION] PM → heuristic 'need more research' → sending back to research")
             return "research"
         if any(kw in comment for kw in ("推进开发", "进入开发", "可以开发", "调研完成", "材料充分")):
+            logger.info("[SCHED-DECISION] PM → heuristic 'ready' → %s", ready_target)
             return ready_target
 
-        # No clear signal — default to research
+        # No clear signal
         if research_rounds == 0:
-            logger.info("[SCHED] PM created card with no decision signal, defaulting to research")
+            logger.info("[SCHED-DECISION] PM created card with no decision signal → defaulting to research")
             return "research"
 
-        # No clear signal — stay in pending
-        logger.info("[SCHED] PM comment has no clear decision signal, staying in pending")
+        logger.info("[SCHED-DECISION] PM comment has no clear decision signal → staying in pending")
         return ""
 
     def _parse_industry_decision(self, comment: str) -> str:
@@ -466,10 +509,13 @@ class SchedulerEngine:
         - 'research' if no marker (continue working in research)
         """
         if "[转给PM]" in comment:
+            logger.info("[SCHED-DECISION] industry → [转给PM] → moving to pending (PM will evaluate)")
             return "pending"
         if "[需要补充]" in comment:
-            return "research"  # stay in research column, CEO decides via Reigns
-        return "research"  # stay in research, continue working
+            logger.info("[SCHED-DECISION] industry → [需要补充] → staying in research (CEO decides via Reigns)")
+            return "research"
+        logger.info("[SCHED-DECISION] industry → no decision marker → staying in research")
+        return "research"
 
     def _next_status_for_role(self, role_name: str, current_status: str, card: dict | None = None) -> str:
         """Determine what status a role should move the card to after commenting.

@@ -292,6 +292,7 @@ function renderGitSection(project) {
 }
 
 function renderProjectOverview() {
+    hideDoneDrawer();
     const el = document.getElementById('welcome-view');
     const total = versions.reduce((s, v) => s + (v.req_count || 0), 0);
     const done = versions.reduce((s, v) => s + (v.done_count || 0), 0);
@@ -508,7 +509,17 @@ async function saveVersion() {
     if (currentVersion && editingVersionId) {
         currentVersion = versions.find(v => v.id === editingVersionId);
     }
-    if (!currentVersion) renderProjectOverview();
+    if (!currentVersion) {
+        hideDoneDrawer();
+        renderProjectOverview();
+    }
+}
+
+function hideDoneDrawer() {
+    const drawer = document.getElementById('done-drawer');
+    const tab = document.getElementById('done-tab');
+    if (drawer) { drawer.classList.remove('open'); drawer.remove(); }
+    if (tab) { tab.classList.remove('active'); tab.remove(); }
 }
 
 async function deleteVersion(vid) {
@@ -520,7 +531,10 @@ async function deleteVersion(vid) {
         document.getElementById('board-view').style.display = 'none';
     }
     await loadVersions(currentProject.id);
-    if (!currentVersion) renderProjectOverview();
+    if (!currentVersion) {
+        hideDoneDrawer();
+        renderProjectOverview();
+    }
 }
 
 // ==================== Requirements ====================
@@ -596,7 +610,11 @@ function renderRequirements() {
         cardsEl.appendChild(divider);
 
         if (waitingCards.length > 0) {
-            waitingCards.forEach(r => cardsEl.appendChild(createCardEl(r)));
+            waitingCards.forEach(r => {
+                const cardEl = createCardEl(r);
+                cardEl.title = getQueueReason(r);
+                cardsEl.appendChild(cardEl);
+            });
         } else {
             const emptyWaiting = document.createElement('div');
             emptyWaiting.className = 'empty-section';
@@ -647,6 +665,17 @@ function renderRequirements() {
         doneCardsEl.innerHTML = '<div class="empty-col">拖拽需求到这里</div>';
     } else {
         doneCards.forEach(r => doneCardsEl.appendChild(createCardEl(r)));
+    }
+}
+
+function getQueueReason(r) {
+    switch (r.status) {
+        case 'research': return '等待行业顾问调研分析';
+        case 'pending':  return '需要 CEO 决策审批';
+        case 'dev':      return schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现';
+        case 'testing':  return '等待 Coach-Review 测试验收';
+        case 'blocked':  return '已阻塞，需要人工介入';
+        default:         return '排队等待中';
     }
 }
 
