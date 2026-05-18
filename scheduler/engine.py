@@ -121,25 +121,28 @@ class SchedulerEngine:
 
         Ready means either:
         - Repo has real code (more than init commit), OR
-        - Repo has architecture doc (init flow completed, scaffold can proceed)
+        - Repo has architecture doc (init flow completed, scaffold can proceed), OR
+        - Local workspace exists (init'd below for projects without remote repo)
         """
         # If there's a remote URL, assume the repo is ready (will be cloned)
         if git_remote_url:
             return True
 
-        repo_path = os.path.join(
-            os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces")),
-            f"project_{project_id}",
-        )
-        if not os.path.isdir(os.path.join(repo_path, ".git")):
-            # Check if architecture exists — if so, allow scaffold generation
-            has_arch = await self._has_architecture(project_id)
-            if has_arch:
-                return True
-            logger.info("[SCHED] skip project_%d: no repo and no architecture (needs init flow)", project_id)
-            return False
+        workspace = os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces"))
+        repo_path = os.path.join(workspace, f"project_{project_id}")
+        os.makedirs(repo_path, exist_ok=True)
 
-        # Check if repo has more than just the init commit
+        git_dir = os.path.join(repo_path, ".git")
+        if not os.path.isdir(git_dir):
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", repo_path, "init", "-b", "main",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            logger.info("[SCHED] init'd local workspace for project_%d at %s (no remote repo)", project_id, repo_path)
+
+        # Check if repo has an initial commit; create one if empty
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", repo_path, "rev-list", "--count", "HEAD",
             stdout=asyncio.subprocess.PIPE,
@@ -147,13 +150,34 @@ class SchedulerEngine:
         )
         stdout, _ = await proc.communicate()
         commit_count = int(stdout.decode().strip() or "0")
-        if commit_count <= 1:
-            # Empty repo — but if architecture exists, allow scaffold
-            has_arch = await self._has_architecture(project_id)
-            if has_arch:
-                return True
-            logger.info("[SCHED] skip project_%d: repo is empty (%d commits, needs init flow)", project_id, commit_count)
-            return False
+        if commit_count == 0:
+            # Empty repo — make an initial commit for worktree support
+            for cfg in [("user.name", "Coach-Dev"), ("user.email", "coach-dev@kanban-harness")]:
+                await asyncio.create_subprocess_exec(
+                    "git", "-C", repo_path, "config", *cfg,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", repo_path, "commit", "--allow-empty", "-m", "init",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            logger.info("[SCHED] made initial commit for project_%d", project_id)
+
+        # Ensure default branch is named 'main' (not 'master') — needed for coach_dev worktree/check logic
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", repo_path, "branch", "--list", "master",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if stdout.decode().strip():
+            await asyncio.create_subprocess_exec(
+                "git", "-C", repo_path, "branch", "-m", "master", "main",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            logger.info("[SCHED] renamed master→main for project_%d", project_id)
+
+        logger.info("[SCHED] project_%d: local workspace ready for coach_dev", project_id)
         return True
 
     async def _has_architecture(self, project_id: int) -> bool:
@@ -194,22 +218,27 @@ class SchedulerEngine:
 
     async def _run_agent(self, session_id: int, card: dict, repo_path: str):
         try:
-            from agents.coach_dev import CoachDev, ToolchainMissingError
+            from agents.coach_dev import CoachDev
             agent = CoachDev(repo_path=repo_path, project_id=card["project_id"])
             result = await agent.execute(card)
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
 
             if result.get("success"):
+                is_scaffold = result.get("is_scaffold", False)
                 commit_hash = result.get("commit", "")
                 commit_msg = result.get("commit_message", "")
                 branch = result.get("branch", "")
                 async with aiosqlite.connect(DB_PATH) as db:
                     db.row_factory = aiosqlite.Row
-                    await db.execute(
-                        "UPDATE requirements SET status='testing', assignee='Coach-Review', "
-                        "updated_at=datetime('now','localtime') WHERE id=?",
-                        (card["id"],),
-                    )
+                    if is_scaffold:
+                        # Scaffold: stay in dev so coach_dev triggers again for real implementation
+                        logger.info(f"[{card['code']}] scaffold complete, staying in dev for implementation round")
+                    else:
+                        await db.execute(
+                            "UPDATE requirements SET status='testing', assignee='Coach-Review', "
+                            "updated_at=datetime('now','localtime') WHERE id=?",
+                            (card["id"],),
+                        )
                     if commit_hash:
                         await db.execute(
                             "INSERT OR IGNORE INTO requirement_commits "
@@ -217,8 +246,9 @@ class SchedulerEngine:
                             "VALUES (?, ?, ?, datetime('now','localtime'))",
                             (card["id"], commit_hash, commit_msg),
                         )
+                    scaffold_label = "（脚手架）" if is_scaffold else ""
                     comment = (
-                        f"**Coach-Dev** 已完成开发\n\n"
+                        f"**Coach-Dev** 已完成开发{scaffold_label}\n\n"
                         f"- 分支: `{branch}`\n"
                         f"- Commit: `{commit_hash[:8]}`\n"
                         f"- 说明: {commit_msg}"
@@ -227,33 +257,15 @@ class SchedulerEngine:
                         "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
                         (card["id"], "Coach-Dev", comment),
                     )
-                    # Emit status_changed event
-                    await db.execute(
-                        "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                        (card["project_id"], "status_changed", card["id"],
-                         json.dumps({"old_status": "dev", "new_status": "testing"})),
-                    )
+                    if not is_scaffold:
+                        # Emit status_changed event to trigger QA review
+                        await db.execute(
+                            "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                            (card["project_id"], "status_changed", card["id"],
+                             json.dumps({"old_status": "dev", "new_status": "testing"})),
+                        )
+                        logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
                     await db.commit()
-                logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
-        except ToolchainMissingError as e:
-            logger.error(f"Toolchain missing for [{card['code']}]: {e.missing}")
-            await self.session_manager.fail_session(session_id, str(e))
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "UPDATE requirements SET status='blocked', "
-                    "updated_at=datetime('now','localtime') WHERE id=?",
-                    (card["id"],),
-                )
-                comment = (
-                    f"**Coach-Dev** 环境检查失败，缺少工具链：\n\n"
-                    f"- {chr(10).join('`' + t + '`' for t in e.missing)}\n\n"
-                    f"请在 Dockerfile 中补充安装，或确认运行环境已配置。"
-                )
-                await db.execute(
-                    "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
-                    (card["id"], "Coach-Dev", comment),
-                )
-                await db.commit()
         except Exception as e:
             logger.error(f"Agent execution failed for [{card['code']}]: {e}")
             await self.session_manager.fail_session(session_id, str(e))
@@ -455,6 +467,16 @@ class SchedulerEngine:
 
                     await db.commit()
 
+                    # === PM research conclusion → product memory ===
+                    if role_name == "pm" and new_status == "done" and req_type == "research":
+                        parsed = self._parse_pm_research_conclusion(comment_text)
+                        if parsed:
+                            await self._append_research_to_memory(
+                                project_id,
+                                card.get("code", ""),
+                                parsed,
+                            )
+
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
         except Exception as e:
             logger.error(f"Comment agent {role_name} failed: {e}")
@@ -500,6 +522,108 @@ class SchedulerEngine:
         logger.info("[SCHED-DECISION] PM comment has no clear decision signal → staying in pending")
         return ""
 
+    def _parse_pm_research_conclusion(self, comment: str) -> dict | None:
+        """Extract structured research conclusions from PM's evaluation comment.
+
+        Expected format (from pm.yaml lines 110-123):
+            [调研充分]
+            可靠性：<source reliability assessment>
+            提炼结论：
+            - <point 1>
+            - <point 2>
+            归档建议：建议写入<area>
+
+        Returns dict with keys: reliability (str), conclusions (list), archive_target (str).
+        Returns None if comment lacks [调研充分] or has no parseable conclusions.
+        """
+        if "[调研充分]" not in comment:
+            return None
+
+        reliability = ""
+        conclusions = []
+        archive_target = ""
+        in_conclusions = False
+
+        for line in comment.split("\n"):
+            stripped = line.strip()
+
+            # Check for 可靠性 (reliability)
+            for sep in ("：", ":"):
+                if stripped.startswith(f"可靠性{sep}"):
+                    reliability = stripped.split(sep, 1)[1].strip()
+                    in_conclusions = False
+                    break
+
+            # Check for 归档建议 (archive suggestion)
+            for sep in ("：", ":"):
+                if stripped.startswith(f"归档建议{sep}"):
+                    archive_target = stripped.split(sep, 1)[1].strip()
+                    in_conclusions = False
+                    break
+
+            # Toggle conclusions section
+            if stripped == "提炼结论：" or stripped == "提炼结论:":
+                in_conclusions = True
+                continue
+
+            # Collect bullet points in conclusions section
+            if in_conclusions and stripped.startswith("- "):
+                conclusions.append(stripped[2:].strip())
+
+        if not conclusions:
+            return None
+
+        return {
+            "reliability": reliability,
+            "conclusions": conclusions,
+            "archive_target": archive_target,
+        }
+
+    async def _append_research_to_memory(self, project_id: int, card_code: str, parsed: dict) -> None:
+        """Append PM's research conclusions to project product memory.
+
+        Creates or appends to a '### 调研结论' subsection. Each entry is a bullet
+        with card code, date, reliability assessment, and conclusion items.
+        """
+        from datetime import date
+
+        entry = f"- **{card_code}** ({date.today().isoformat()}):\n"
+        if parsed.get("reliability"):
+            entry += f"  - 可靠性: {parsed['reliability']}\n"
+        entry += "  - 结论:\n"
+        for point in parsed["conclusions"]:
+            entry += f"    - {point}\n"
+        if parsed.get("archive_target"):
+            entry += f"  - 归档建议: {parsed['archive_target']}\n"
+
+        import re
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT product_memory FROM projects WHERE id=?", (project_id,)
+            )
+            row = await cursor.fetchone()
+            current = row[0] if row else ""
+
+            section_pattern = re.compile(
+                r"(### 调研结论.*?)(?=\n### |\n## |\Z)", re.DOTALL,
+            )
+            match = section_pattern.search(current)
+            if match:
+                updated_section = match.group(1).rstrip() + f"\n{entry}"
+                updated = current[:match.start()] + updated_section + current[match.end():]
+            else:
+                updated = current.rstrip() + f"\n\n### 调研结论\n\n{entry}\n"
+
+            await db.execute(
+                "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (updated, project_id),
+            )
+            await db.commit()
+
+        logger.info("[PRODUCT-MEMORY] research conclusions appended for card=[%s] project=%d",
+                    card_code, project_id)
+
     def _parse_industry_decision(self, comment: str) -> str:
         """Parse Industry's decision after reading CEO reply or completing research.
 
@@ -536,6 +660,6 @@ class SchedulerEngine:
         if role_name == "coach_dev" and current_status == "dev":
             return "pending"
         if role_name == "coach_review" and current_status == "testing":
-            return "pending"
+            return ""  # Stay in testing, CEO decides via reigns panel
         return ""
 

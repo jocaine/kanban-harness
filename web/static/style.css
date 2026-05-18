@@ -668,3 +668,53 @@ img.chat-avatar{object-fit:cover;border-radius:6px;width:32px}
 #req-modal .modal.fullscreen .req-tab-content .comment-list{max-height:none}
 #req-modal .modal.fullscreen #req-desc{min-height:calc(100vh - 360px)}
 #req-modal .modal.fullscreen #req-notes{min-height:calc(100vh - 360px)}
+
+/* Dev Log Overlay */
+.log-overlay{position:fixed;inset:0;z-index:1001;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center}
+.log-overlay.hidden{display:none}
+.log-panel{width:90vw;height:80vh;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.log-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+.log-header h3{font-size:14px;font-weight:600}
+.log-actions{display:flex;gap:6px;flex-shrink:0}
+.log-actions .btn-icon{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;transition:var(--transition)}
+.log-actions .btn-icon:hover{color:var(--text);background:var(--bg4)}
+.log-filters{display:flex;gap:4px;flex-wrap:wrap;flex:1;padding:0 12px}
+.filter-btn{font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);cursor:pointer;transition:var(--transition);white-space:nowrap;display:flex;align-items:center;gap:3px}
+.filter-btn:hover{border-color:var(--border2);color:var(--text2)}
+.filter-btn.active{border-color:var(--fc,var(--primary));background:color-mix(in srgb, var(--fc,var(--primary)) 15%, transparent);color:var(--fc,var(--primary))}
+.filter-cnt{font-size:10px;opacity:.6;font-weight:600}
+.log-content{flex:1;overflow:auto;padding:8px 0;margin:0;background:var(--bg3);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+.log-line{display:flex;align-items:baseline;gap:6px;padding:1px 16px;font-family:"JetBrains Mono","Fira Code","Cascadia Code",monospace;font-size:12px;line-height:1.6;transition:var(--transition)}
+.log-line:hover{background:var(--bg4)}
+.log-icon{flex-shrink:0;width:18px;text-align:center;font-size:12px}
+.log-label{flex-shrink:0;font-size:11px;font-weight:600;padding:0 6px;border-radius:3px;background:var(--bg4);color:var(--text3);min-width:48px;text-align:center}
+.log-ts{color:var(--text3);font-size:11px;flex-shrink:0;min-width:120px}
+.log-msg{white-space:pre-wrap;word-break:break-all}
+.log-badge{display:inline-block;background:var(--bg4);color:var(--text3);font-size:10px;padding:0 5px;border-radius:3px;font-weight:600}
+.log-dim{color:var(--text3)}
+
+/* Level colors */
+.log-info .log-msg{color:var(--text2)}
+.log-debug .log-msg{color:var(--text3)}
+.log-warn .log-msg{color:var(--warning)}
+.log-warn .log-label{background:var(--warning-bg);color:var(--warning)}
+.log-err .log-msg{color:var(--danger);font-weight:500}
+.log-err .log-label{background:var(--danger-bg);color:var(--danger)}
+
+/* Special line types */
+.log-highlight{background:var(--primary-bg)}
+.log-highlight .log-label{background:var(--primary);color:#fff}
+.log-highlight .log-msg{color:var(--text)}
+.log-chat{background:var(--success-bg)}
+.log-chat .log-label{background:var(--success);color:#fff}
+.log-chat .log-msg{color:var(--text)}
+.log-poll .log-ts{color:var(--text3)}
+.log-poll .log-msg{color:var(--text3);font-style:italic}
+.log-poll .log-badge{background:var(--border);color:var(--text2)}
+
+/* HTTP status colors */
+.log-status-200,.log-status-201,.log-status-204{color:var(--success);font-weight:600}
+.log-status-300,.log-status-301,.log-status-302{color:var(--warning);font-weight:600}
+.log-status-400,.log-status-401,.log-status-403,.log-status-404{color:var(--warning);font-weight:600}
+.log-status-500,.log-status-502,.log-status-503{color:var(--danger);font-weight:700}
+

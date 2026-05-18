@@ -101,7 +101,7 @@ async def list_projects(db: aiosqlite.Connection = Depends(get_db)):
 @router.post("/projects")
 async def create_project(data: ProjectCreate, db: aiosqlite.Connection = Depends(get_db)):
     prefix = data.prefix.strip().upper() if data.prefix else generate_prefix(data.name)
-    check = await db.execute("SELECT 1 FROM projects WHERE prefix=?", (prefix,))
+    check = await db.execute("SELECT 1 FROM projects WHERE prefix=? AND archived=0", (prefix,))
     if await check.fetchone():
         raise HTTPException(409, f"prefix '{prefix}' already exists")
     cursor = await db.execute(
@@ -120,7 +120,7 @@ async def update_project(pid: int, data: ProjectUpdate, db: aiosqlite.Connection
         if val is not None:
             if field == "prefix":
                 val = val.strip().upper()
-                check = await db.execute("SELECT 1 FROM projects WHERE prefix=? AND id!=?", (val, pid))
+                check = await db.execute("SELECT 1 FROM projects WHERE prefix=? AND archived=0 AND id!=?", (val, pid))
                 if await check.fetchone():
                     raise HTTPException(409, f"prefix '{val}' already exists")
             updates.append(f"{field}=?")
@@ -230,6 +230,23 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
 
     row = await db.execute("SELECT * FROM requirements WHERE id=?", (rid,))
     return dict(await row.fetchone())
+
+@router.get("/requirements/by-code")
+@router.get("/requirements/by-code/{code}")
+async def get_requirement_by_code(code: str = "", db: aiosqlite.Connection = Depends(get_db)):
+    """Look up a requirement by its code (e.g. DO-001)."""
+    if not code:
+        raise HTTPException(400, "code parameter is required")
+    row = await db.execute(
+        "SELECT r.*, v.project_id FROM requirements r "
+        "JOIN versions v ON r.version_id=v.id WHERE r.code=? AND r.archived=0",
+        (code,),
+    )
+    req = await row.fetchone()
+    if not req:
+        raise HTTPException(404, f"requirement {code} not found")
+    return dict(req)
+
 
 @router.put("/requirements/{rid}")
 async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection = Depends(get_db)):
@@ -398,9 +415,58 @@ async def add_comment(rid: int, data: CommentCreate, db: aiosqlite.Connection = 
     return dict(await row.fetchone())
 
 
+@router.get("/dev/logs")
+async def dev_logs(lines: int = 200):
+    """Return container logs for development debugging."""
+    import http.client, socket
+    class _UnixConn(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(10)
+            self.sock.connect("/var/run/docker.sock")
+    try:
+        conn = _UnixConn("localhost")
+        conn.request("GET", f"/containers/kanban-harness-web-1/logs?tail={lines}&stdout=true&stderr=true&timestamps=true")
+        resp = conn.getresponse()
+        raw = resp.read()
+        resp.close()
+        conn.close()
+        lines_out = []
+        i = 0
+        while i + 8 <= len(raw):
+            msg_len = int.from_bytes(raw[i+4:i+8], 'big')
+            offset = 8
+            if offset + msg_len <= len(raw):
+                lines_out.append(raw[i+offset:i+offset+msg_len].decode("utf-8", errors="replace").rstrip("\n\r"))
+                i += offset + msg_len
+            else:
+                break
+        return {"logs": lines_out or ["(no log output)"]}
+    except Exception as e:
+        return {"logs": [f"Error fetching logs: {e}"]}
+
+
 @router.delete("/projects/{pid}")
 async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    await db.execute("UPDATE projects SET archived=1, updated_at=datetime('now','localtime') WHERE id=?", (pid,))
+    # Hard delete: remove all related data
+    await db.execute(
+        "DELETE FROM comments WHERE requirement_id IN (SELECT id FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?))",
+        (pid,),
+    )
+    await db.execute(
+        "DELETE FROM requirement_commits WHERE requirement_id IN (SELECT id FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?))",
+        (pid,),
+    )
+    await db.execute(
+        "DELETE FROM agent_events WHERE project_id=?", (pid,),
+    )
+    await db.execute(
+        "DELETE FROM agent_sessions WHERE project_id=?", (pid,),
+    )
+    await db.execute("DELETE FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?)", (pid,))
+    await db.execute("DELETE FROM versions WHERE project_id=?", (pid,))
+    await db.execute("DELETE FROM project_architecture WHERE project_id=?", (pid,))
+    await db.execute("DELETE FROM projects WHERE id=?", (pid,))
     await db.commit()
     return {"ok": True}
 
@@ -914,6 +980,16 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
                     WHERE c2.requirement_id = c.requirement_id
                 )
             ))
+            OR (r.status = 'testing' AND r.id IN (
+                SELECT c.requirement_id FROM comments c
+                WHERE c.author IN ('Coach-Review', 'Coach-QA')
+                AND c.id = (
+                    SELECT MAX(c2.id) FROM comments c2
+                    WHERE c2.requirement_id = c.requirement_id
+                    AND c2.author IN ('Coach-Review', 'Coach-QA', '产品经理', 'PM',
+                                      '行业顾问', 'Industry', 'Coach-Dev')
+                )
+            ))
         )
     """
     params = []
@@ -1002,8 +1078,8 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "requirement not found")
-    if row["status"] not in ("pending", "research"):
-        raise HTTPException(400, "card must be in pending or research status")
+    if row["status"] not in ("pending", "research", "testing"):
+        raise HTTPException(400, "card must be in pending, research, or testing status")
     req_type = row["type"]
 
     # Determine target status

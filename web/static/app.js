@@ -1484,7 +1484,240 @@ document.addEventListener('keydown', e => {
         }
         ['project-modal', 'version-modal', 'req-modal'].forEach(id => hideModal(id));
     }
+    // Ctrl+Shift+L: toggle dev log viewer
+    if (e.ctrlKey && e.shiftKey && e.key === 'L') {
+        e.preventDefault();
+        toggleLogViewer();
+    }
 });
+
+let _logFilters = new Set(['poll', 'api', 'dim', 'info', 'highlight', 'chat', 'err']); // all visible by default
+
+async function toggleLogViewer() {
+    const overlay = document.getElementById('log-overlay');
+    if (!overlay.classList.contains('hidden')) {
+        closeLogViewer();
+        return;
+    }
+    _logFilters = new Set(['poll', 'api', 'dim', 'info', 'highlight', 'chat', 'err']);
+    overlay.classList.remove('hidden');
+    await fetchLogs();
+}
+
+function toggleLogFilter(key) {
+    if (_logFilters.has(key)) _logFilters.delete(key);
+    else _logFilters.add(key);
+    renderLogLines();
+    // Update button active state
+    document.querySelectorAll('#log-filters .filter-btn').forEach(btn => {
+        const k = btn.dataset.filter;
+        btn.classList.toggle('active', _logFilters.has(k));
+    });
+}
+
+async function fetchLogs() {
+    const el = document.getElementById('log-content');
+    el.innerHTML = '<div class="log-line"><span class="log-ts">加载中...</span></div>';
+    try {
+        const res = await fetch('/api/dev/logs?lines=300');
+        const data = await res.json();
+        const lines = data.logs || [];
+        const pollRe = /"(?:GET|POST) \/api\/(scheduler\/status|agents\/sessions|decisions\/pending)/;
+
+        // Parse & collapse consecutive polling
+        const grouped = [];
+        for (let i = 0; i < lines.length; i++) {
+            const raw = lines[i];
+            const pm = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+Z\s+(.*)/);
+            const ts = pm ? pm[1].replace('T', ' ') : '';
+            const msg = pm ? pm[2] : raw;
+            const pollKey = pollRe.test(msg) ? msg.match(/(scheduler\/status|agents\/sessions|decisions\/pending)/)[1] : null;
+            if (pollKey) {
+                const last = grouped[grouped.length - 1];
+                if (last && last.pollKey === pollKey && last.pollCount > 0) {
+                    last.pollCount++;
+                    last.ts = ts;
+                    continue;
+                }
+                grouped.push({ts, msg, pollKey, pollCount: 1, raw, filterKey: 'poll'});
+            } else {
+                const a = annotateLog(msg);
+                let filterKey = 'info';
+                if (a.cls === 'log-err') filterKey = 'err';
+                else if (a.cls === 'log-chat') filterKey = 'chat';
+                else if (a.cls === 'log-highlight') filterKey = 'highlight';
+                else if (a.cls === 'log-dim') filterKey = 'dim';
+                else if (a.label === 'API 查询') filterKey = 'api';
+                grouped.push({ts, msg, pollKey: null, pollCount: 0, raw, annotation: a, filterKey});
+            }
+        }
+        _lastLogLines = grouped;
+        buildFilterBar(grouped);
+        renderLogLines();
+    } catch (err) {
+        el.innerHTML = '<div class="log-line log-err"><span class="log-ts">-</span><span class="log-icon">❌</span><span class="log-msg">获取日志失败: ' + escapeHtml(err.message) + '</span></div>';
+    }
+}
+
+function buildFilterBar(grouped) {
+    const counts = {};
+    grouped.forEach(g => { counts[g.filterKey] = (counts[g.filterKey] || 0) + 1; });
+    const defs = [
+        {key: 'err', label: '错误', icon: '❌', color: '#ef4444'},
+        {key: 'chat', label: '用户', icon: '💬', color: '#22c55e'},
+        {key: 'highlight', label: '事件', icon: '📌', color: '#6366f1'},
+        {key: 'info', label: '信息', icon: 'ℹ️', color: '#94a3b8'},
+        {key: 'api', label: 'API', icon: '📡', color: '#94a3b8'},
+        {key: 'dim', label: '调试', icon: '🔧', color: '#64748b'},
+        {key: 'poll', label: '轮询', icon: '🔄', color: '#64748b'},
+    ];
+    const bar = document.getElementById('log-filters');
+    bar.innerHTML = defs.map(d => {
+        const active = _logFilters.has(d.key) ? 'active' : '';
+        const cnt = counts[d.key] || 0;
+        return `<button class="filter-btn ${active}" data-filter="${d.key}" style="--fc:${d.color}" onclick="toggleLogFilter('${d.key}')">${d.icon} ${d.label} <span class="filter-cnt">${cnt}</span></button>`;
+    }).join('');
+}
+
+function renderLogLines() {
+    const el = document.getElementById('log-content');
+    el.innerHTML = _lastLogLines.map(g => {
+        if (!_logFilters.has(g.filterKey)) return '';
+        if (g.pollKey) {
+            const label = { 'scheduler/status': '调度器状态', 'agents/sessions': 'Agent 会话', 'decisions/pending': '待决策' }[g.pollKey] || g.pollKey;
+            return `<div class="log-line log-poll">`
+                + `<span class="log-ts">${g.ts}</span>`
+                + `<span class="log-icon">🔄</span>`
+                + `<span class="log-msg">轮询 <strong>${label}</strong>${g.pollCount > 1 ? ` <span class="log-badge">×${g.pollCount}</span>` : ''}</span></div>`;
+        }
+        const a = g.annotation || {cls:'',icon:'',label:'',display:''};
+        return `<div class="log-line ${a.cls}">`
+            + `<span class="log-ts">${g.ts}</span>`
+            + (a.icon ? `<span class="log-icon">${a.icon}</span>` : '')
+            + `<span class="log-label">${a.label}</span>`
+            + `<span class="log-msg">${a.display || escapeHtml(g.msg)}</span></div>`;
+    }).join('');
+    if (!el.innerHTML.trim()) {
+        el.innerHTML = '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">所有过滤器已关闭，点击上方按钮显示日志</div>';
+    }
+}
+
+function annotateLog(msg) {
+    let icon = '', label = '', cls = 'log-info', display = '';
+
+    // Errors
+    if (/ERROR|CRITICAL|Traceback|UNIQUE constraint|failed|Error/i.test(msg)) {
+        cls = 'log-err'; icon = '❌'; label = '错误';
+        // Try to extract the actual error
+        const em = msg.match(/(?:ERROR|error)\s*(?:[-:]\s*)?(.+?)(?:\s*\(|$)/);
+        display = em ? escapeHtml(em[1].trim()) : escapeHtml(msg);
+        return {icon, label, cls, display};
+    }
+    if (/WARNING|WARN/i.test(msg)) {
+        cls = 'log-warn'; icon = '⚠️'; label = '警告';
+        return {icon, label, cls, display: escapeHtml(msg)};
+    }
+
+    // App lifecycle
+    if (/Application startup complete/.test(msg)) {
+        icon = '🚀'; label = '服务就绪';
+        display = '<span class="log-dim">应用启动完成</span>';
+        return {icon, label, cls: 'log-highlight', display};
+    }
+    if (/Scheduler started/.test(msg)) {
+        icon = '⏱'; label = '调度器';
+        display = '<span class="log-dim">AI 调度器已启动</span>';
+        return {icon, label, cls, display};
+    }
+    if (/Started server process/.test(msg)) {
+        icon = '🔌'; label = 'HTTP 服务';
+        display = '<span class="log-dim">Uvicorn 服务进程已启动</span>';
+        return {icon, label, cls: 'log-highlight', display};
+    }
+    if (/Loaded agent role/.test(msg)) {
+        icon = '🤖'; label = 'Agent';
+        const role = msg.match(/Loaded agent role: (\S+)/);
+        const roleName = role ? role[1] : '';
+        display = `Agent 角色已加载: <strong>${roleName}</strong>`;
+        return {icon, label, cls, display};
+    }
+
+    // Chat / User interaction
+    if (/\[CHAT\]/.test(msg)) {
+        icon = '💬'; label = '用户';
+        const chatM = msg.match(/user message:\s*"([^"]+)"/);
+        display = chatM ? '用户说: "' + escapeHtml(chatM[1]) + '"' : escapeHtml(msg);
+        cls = 'log-chat';
+        return {icon, label, cls, display};
+    }
+
+    // PM Agent actions
+    if (/\[PM\]/.test(msg)) {
+        icon = '📋'; label = 'PM';
+        if (/tool_exec/.test(msg)) {
+            const toolM = msg.match(/tool_exec:\s*(\w+)/);
+            display = toolM ? '调用工具: ' + escapeHtml(toolM[1]) : escapeHtml(msg);
+        } else if (/tool_call/.test(msg)) {
+            const roundM = msg.match(/round=(\d+)/);
+            display = '工具调用返回' + (roundM ? ` (第${roundM[1]}轮)` : '');
+            cls = 'log-dim';
+        } else if (/auto-created version/.test(msg)) {
+            display = '👉 自动创建版本 v0.1 MVP';
+            cls = 'log-highlight';
+        } else if (/done, \d+ tool rounds/.test(msg)) {
+            display = '✅ PM 决策完成: ' + escapeHtml(msg.replace(/.*done, /, ''));
+            cls = 'log-highlight';
+        } else {
+            display = escapeHtml(msg);
+        }
+        return {icon, label, cls, display};
+    }
+
+    // HTTP API calls (non-polling)
+    const httpM = msg.match(/"([A-Z]+) (\/(?:api\/)?[^\s]*) HTTP\/1\.1" (\d+)/);
+    if (httpM) {
+        const method = httpM[1], path = httpM[2], status = httpM[3];
+        const isErr = status >= '400';
+        if (isErr) { cls = 'log-err'; icon = '❌'; }
+        else { icon = '📡'; }
+        label = method === 'POST' ? 'API 写入' : 'API 查询';
+        const pathShort = path.length > 50 ? path.slice(0, 47) + '...' : path;
+        display = `${method} ${escapeHtml(pathShort)} → <span class="log-status-${status}">${status}</span>`;
+        if (isErr) cls = 'log-err';
+        return {icon, label, cls, display};
+    }
+
+    // HTTP Request to AI (DeepSeek/OpenAI)
+    if (/HTTP Request: POST/.test(msg) && /chat\/completions/.test(msg)) {
+        icon = '🤖'; label = 'AI 调用';
+        const ms = (new Date().getTime() - Date.parse(msg.match(/\d{4}[-/]\d{2}[-/]\d{2}/)?.[0] || '') || 0) / 1000;
+        display = '请求 AI 模型 (DeepSeek)';
+        cls = 'log-dim';
+        return {icon, label, cls, display};
+    }
+
+    // DB operations
+    if (/DB|database|INSERT|SELECT|UPDATE|DELETE|requirements\.code/.test(msg)) {
+        icon = '🗄'; label = '数据库';
+        cls = 'log-dim';
+        display = escapeHtml(msg);
+        return {icon, label, cls, display};
+    }
+
+    // Default
+    return {icon: '', label: '', cls, display: escapeHtml(msg)};
+}
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function closeLogViewer(event) {
+    if (event && event.target !== event.currentTarget) return;
+    document.getElementById('log-overlay').classList.add('hidden');
+}
 
 function copyCode(code) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -2123,10 +2356,12 @@ function truncate(str, len) {
 
 let _pendingDecisions = [];
 let _currentDecision = null;
+let _lastLogLines = []; // cache for log filter toggling
 
 async function pollDecisions() {
     try {
-        const resp = await fetch('/api/decisions/pending');
+        const params = currentProject ? `?project_id=${currentProject.id}` : '';
+        const resp = await fetch('/api/decisions/pending' + params);
         if (!resp.ok) return;
         const data = await resp.json();
         _pendingDecisions = data.decisions || [];
@@ -2230,6 +2465,11 @@ function buildSpeech(decision) {
     // Strip decision markers
     summary = summary.replace(/^\[需要补充\]\s*/m, '').replace(/^\[调研充分\]\s*/m, '');
 
+    // Remove numbered pipe-separated lines (LLM artifact: "55 发出视觉提示 | 无 |")
+    summary = summary.replace(/^\d+\s*[^|\n]+\|[^|\n]+(\|.*)?$/gm, '');
+    // Collapse excess blank lines left by removal
+    summary = summary.replace(/\n{3,}/g, '\n\n');
+
     const role = decision.asking_role || 'pm';
     const isPM = role === 'pm';
 
@@ -2314,7 +2554,8 @@ async function loadDecisionCard(decision) {
     cardEl.innerHTML = '<div style="color:var(--text3);padding:20px">加载中...</div>';
 
     try {
-        const resp = await fetch(`/api/requirements/by-code/${decision.code}`);
+        if (!decision.code) throw new Error('no code');
+        const resp = await fetch(`/api/requirements/by-code/${encodeURIComponent(decision.code)}`);
         if (!resp.ok) throw new Error('load failed');
         const req = await resp.json();
 

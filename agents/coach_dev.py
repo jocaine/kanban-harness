@@ -33,30 +33,46 @@ class CoachDev:
 
         logger.info(f"Coach-Dev starting: [{code}] {title}")
 
-        try:
-            await self._setup_worktree(branch_name, worktree_path)
+        # Recovery: if on a stale feature branch (from crash before merge-back),
+        # checkout main so _is_scaffold_mode() and _setup_worktree() work correctly
+        current_branch = await self._get_current_branch()
+        if current_branch and current_branch.startswith("feature/"):
+            logger.info(f"Coach-Dev: on stale branch {current_branch}, switching to main")
+            await self._run_git("checkout", "main")
 
-            # Detect scaffold mode: empty repo + architecture doc available
-            is_scaffold = await self._is_scaffold_mode()
+        # Detect scaffold mode — empty repo works directly, no worktree needed
+        is_scaffold = await self._is_scaffold_mode()
+
+        try:
             if is_scaffold:
                 architecture = await self._get_architecture()
                 prompt = self._build_scaffold_prompt(card, architecture)
                 logger.info(f"Coach-Dev scaffold mode for [{code}] (arch: {len(architecture)} chars)")
+                work_path = self.repo_path
+                # Branch may exist from a previous scaffold run that merged back
+                branch_list = await self._run_git("branch", "--list", branch_name)
+                if branch_list.strip():
+                    await self._run_git("checkout", branch_name)
+                else:
+                    await self._run_git("checkout", "-b", branch_name)
             else:
+                await self._setup_worktree(branch_name, worktree_path)
                 prompt = self._build_prompt(card)
+                work_path = worktree_path
 
-            output = await self._run_claude(prompt, worktree_path)
+            output = await self._run_claude(prompt, work_path)
             has_commits = await self._check_commits(branch_name)
 
             if has_commits:
-                commit_hash = await self._get_latest_commit(worktree_path)
-                commit_message = await self._get_commit_message(worktree_path)
+                commit_hash = await self._get_latest_commit(work_path)
+                commit_message = await self._get_commit_message(work_path)
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
                 logger.info(f"Coach-Dev completed: [{code}] {summary}")
                 return {
                     "success": True, "summary": summary,
                     "branch": branch_name, "commit": commit_hash,
                     "commit_message": commit_message,
+                    "is_scaffold": is_scaffold,
                 }
             else:
                 logger.warning(f"Coach-Dev produced no commits for [{code}]")
@@ -69,7 +85,12 @@ class CoachDev:
             logger.error(f"Coach-Dev failed for [{code}]: {e}")
             raise
         finally:
-            await self._cleanup_worktree(worktree_path)
+            if is_scaffold:
+                # After scaffold, merge back to main so next trigger starts from clean main
+                await self._run_git("checkout", "main")
+                await self._run_git("merge", branch_name, "--no-edit")
+            else:
+                await self._cleanup_worktree(worktree_path)
 
     def _build_prompt(self, card: dict) -> str:
         code = card.get("code", "")
@@ -191,6 +212,15 @@ class CoachDev:
         proc = await asyncio.create_subprocess_exec(
             "git", "log", "-1", "--format=%s",
             cwd=worktree_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        return stdout.decode().strip()
+
+    async def _get_current_branch(self) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", self.repo_path, "rev-parse", "--abbrev-ref", "HEAD",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

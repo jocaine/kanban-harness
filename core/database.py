@@ -207,7 +207,7 @@ async def init_db():
 
             -- Indexes
             CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_prefix ON projects(prefix) WHERE prefix != '';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_prefix ON projects(prefix) WHERE prefix != '' AND archived=0;
 
             -- Chat conversation history
             CREATE TABLE IF NOT EXISTS chat_messages (
@@ -284,14 +284,14 @@ async def next_code(db: aiosqlite.Connection, version_id: int) -> str:
     proj = await row.fetchone()
     if not proj:
         return ""
-    prefix, project_id = proj[0], proj[1]
+    prefix = proj[0]
     cursor = await db.execute(
         "SELECT MAX(CAST(SUBSTR(r.code, LENGTH(p.prefix)+2) AS INTEGER)) "
         "FROM requirements r "
         "JOIN versions v ON r.version_id=v.id "
         "JOIN projects p ON v.project_id=p.id "
-        "WHERE v.project_id=? AND r.code != '' AND r.code IS NOT NULL",
-        (project_id,)
+        "WHERE p.prefix=? AND p.archived=0 AND r.code != '' AND r.code IS NOT NULL",
+        (prefix,)
     )
     max_seq = (await cursor.fetchone())[0] or 0
     return f"{prefix}-{max_seq + 1:03d}"

@@ -206,10 +206,23 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 is_research = name == "create_research_card"
                 req_type = "research" if is_research else "dev"
                 status = "research" if is_research else "pending"
-                await db.execute(
-                    "INSERT INTO requirements (version_id,title,description,priority,type,status,code,position) VALUES (?,?,?,?,?,?,?,?)",
-                    (version_id, title, desc, priority, req_type, status, code, pos),
-                )
+                # Retry with incremented code on unique constraint failure
+                import re as _re
+                for _attempt in range(5):
+                    try:
+                        await db.execute(
+                            "INSERT INTO requirements (version_id,title,description,priority,type,status,code,position) VALUES (?,?,?,?,?,?,?,?)",
+                            (version_id, title, desc, priority, req_type, status, code, pos),
+                        )
+                        break
+                    except Exception as _e:
+                        if "UNIQUE constraint" in str(_e) and _attempt < 4:
+                            # Increment code suffix and retry
+                            _m = _re.search(r'(\d+)$', code)
+                            code = code[:_m.start()] + str(int(_m.group()) + 1).zfill(_m.end() - _m.start()) if _m else code + "-2"
+                            logger.warning("[PM] code conflict, retrying with %s", code)
+                        else:
+                            raise
                 # Get the new requirement ID for event emit
                 cursor = await db.execute("SELECT last_insert_rowid()")
                 new_req_id = (await cursor.fetchone())[0]

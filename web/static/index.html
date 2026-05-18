@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=41">
+    <link rel="stylesheet" href="static/style.css?v=45">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -369,6 +369,21 @@
         </div>
     </div>
 
-    <script src="static/app.js?v=39"></script>
+    <!-- Dev Log Overlay -->
+    <div class="log-overlay hidden" id="log-overlay" onclick="closeLogViewer(event)">
+        <div class="log-panel" onclick="event.stopPropagation()">
+            <div class="log-header">
+                <h3>容器日志</h3>
+                <div class="log-filters" id="log-filters"></div>
+                <div class="log-actions">
+                    <button class="btn-icon" onclick="fetchLogs()" title="刷新">↻</button>
+                    <button class="btn-icon" onclick="closeLogViewer()">&times;</button>
+                </div>
+            </div>
+            <pre class="log-content" id="log-content">加载中...</pre>
+        </div>
+    </div>
+
+    <script src="static/app.js?v=42"></script>
 </body>
 </html>
