@@ -319,14 +319,12 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 
         if project_id:
             cursor = await db.execute(
-                "SELECT name, description, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
+                "SELECT name, description, prefix, product_memory FROM projects WHERE id=?",
                 (project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 sections.append(f"\n## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description'] or ''}")
-                if proj["advisor_skill"]:
-                    sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:2000]}")
                 if proj["product_memory"]:
                     sections.append(f"\n## 产品记忆（决策历史）\n\n{proj['product_memory'][:1500]}")
 

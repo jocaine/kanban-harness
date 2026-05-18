@@ -6,7 +6,6 @@ color: "#22c55e"
 
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
   base_url: ""
   timeout: 600
 

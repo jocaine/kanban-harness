@@ -6,7 +6,6 @@ color: "#06b6d4"
 
 model:
   provider: hermes
-  name: ""
   base_url: ""
   timeout: 120
   toolsets:
@@ -145,7 +144,6 @@ permissions:
     - projects
     - versions
     - architecture
-    - advisor_skill
     - product_memory
   can_write:
     - comments

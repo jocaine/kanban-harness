@@ -114,7 +114,6 @@ async def init_db():
                 description TEXT DEFAULT '',
                 color TEXT DEFAULT '#4f46e5',
                 prefix TEXT DEFAULT '',
-                advisor_skill TEXT DEFAULT '',
                 product_memory TEXT DEFAULT '',
                 git_repo_path TEXT DEFAULT '',
                 git_remote_url TEXT DEFAULT '',

@@ -90,15 +90,12 @@ async def list_projects(db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(
         "SELECT id, name, description, color, prefix, archived, created_at, updated_at, "
         "git_repo_path, git_remote_url, "
-        "(advisor_skill != '' AND advisor_skill IS NOT NULL) as has_advisor_skill, "
         "(SELECT COUNT(*) FROM versions WHERE project_id=p.id) as version_count, "
         "(SELECT COUNT(*) FROM requirements r JOIN versions v ON r.version_id=v.id "
         "WHERE v.project_id=p.id AND r.archived=0) as req_count "
         "FROM projects p WHERE p.archived=0 ORDER BY p.updated_at DESC"
     )
     rows = [dict(row) for row in await cursor.fetchall()]
-    for row in rows:
-        row["has_advisor_skill"] = bool(row["has_advisor_skill"])
     return rows
 
 @router.post("/projects")
@@ -682,21 +679,6 @@ async def put_architecture(pid: int, db: aiosqlite.Connection = Depends(get_db),
         await db.execute("UPDATE project_architecture SET content=?, updated_at=datetime('now','localtime') WHERE project_id=?", (content, pid))
     else:
         await db.execute("INSERT INTO project_architecture (project_id, content) VALUES (?,?)", (pid, content))
-    await db.commit()
-    return {"ok": True}
-
-
-@router.get("/projects/{pid}/advisor-skill")
-async def get_advisor_skill(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT advisor_skill FROM projects WHERE id=?", (pid,))
-    row = await cursor.fetchone()
-    return {"content": row[0] if row else ""}
-
-
-@router.put("/projects/{pid}/advisor-skill")
-async def put_advisor_skill(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    content = body.get("content", "")
-    await db.execute("UPDATE projects SET advisor_skill=?, updated_at=datetime('now','localtime') WHERE id=?", (content, pid))
     await db.commit()
     return {"ok": True}
 

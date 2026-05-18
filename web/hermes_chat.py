@@ -122,17 +122,12 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
 
         if project_id:
             cursor = await db.execute(
-                "SELECT name, description, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
+                "SELECT name, description, prefix, product_memory FROM projects WHERE id=?",
                 (project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 summary["project"] = proj["name"]
-
-                if proj["advisor_skill"]:
-                    skill = proj["advisor_skill"][:2000]
-                    sections.append(f"\n## 产品顾问知识\n\n{skill}")
-                    has_context = True
 
                 if proj["product_memory"]:
                     memory = proj["product_memory"][:1500]
@@ -182,7 +177,6 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
             "\n## 上下文提示\n\n"
             "当前项目尚未配置详细上下文。你可以通过 kanban MCP 工具获取更多信息：\n"
             "- 用 kanban_list_projects 查看可用项目\n"
-            "- 用 kanban_get_advisor_skill 获取产品顾问知识\n"
             "- 用 kanban_get_product_memory 获取产品记忆\n"
             "- 用 kanban_list_requirements 查看当前需求\n"
             "如果用户要创建需求，先用 kanban_list_versions 找到活跃版本再创建。"

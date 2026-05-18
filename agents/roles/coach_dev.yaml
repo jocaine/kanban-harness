@@ -6,7 +6,6 @@ color: "#f59e0b"
 
 model:
   provider: anthropic
-  name: claude-opus-4-6
   base_url: ""
   timeout: 600
 

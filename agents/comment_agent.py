@@ -123,14 +123,12 @@ class CommentAgent:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT name, prefix, advisor_skill, product_memory FROM projects WHERE id=?",
+                "SELECT name, prefix, product_memory FROM projects WHERE id=?",
                 (self.project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 sections.append(f"## 项目：{proj['name']} ({proj['prefix']})")
-                if proj["advisor_skill"]:
-                    sections.append(f"\n## 产品顾问知识\n\n{proj['advisor_skill'][:1500]}")
                 if proj["product_memory"]:
                     sections.append(f"\n## 产品记忆\n\n{proj['product_memory'][:1000]}")
 
