@@ -669,14 +669,15 @@ function renderRequirements() {
 }
 
 function getQueueReason(r) {
-    switch (r.status) {
-        case 'research': return '等待行业顾问调研分析';
-        case 'pending':  return '需要 CEO 决策审批';
-        case 'dev':      return schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现';
-        case 'testing':  return '等待 Coach-Review 测试验收';
-        case 'blocked':  return '已阻塞，需要人工介入';
-        default:         return '排队等待中';
-    }
+    if (r.queue_reason) return r.queue_reason;
+    const defaults = {
+        research: '等待行业顾问调研分析',
+        pending:  '需要 CEO 决策审批',
+        dev:      schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现',
+        testing:  '等待 Coach-Review 测试验收',
+        blocked:  '已阻塞，需要人工介入',
+    };
+    return defaults[r.status] || '排队等待中';
 }
 
 function createCardEl(r) {
@@ -694,6 +695,7 @@ function createCardEl(r) {
     const assigneeHtml = r.assignee ? '<span title="负责人">' + esc(r.assignee) + '</span>' : '';
     const hoursHtml = r.estimated_hours > 0 ? '<span title="工时">' + r.actual_hours + '/' + r.estimated_hours + 'h</span>' : '';
     const attHtml = (r.attachments && r.attachments.length > 0) ? '<span title="附件">' + r.attachments.length + '个附件</span>' : '';
+    const queueReasonHtml = r.queue_reason ? '<span class="queue-reason-badge" title="排队原因">' + esc(r.queue_reason) + '</span>' : '';
 
     const reviewBadge = r.reviewed === false ? '<span class="review-badge unreviewed">未审议</span>' : '';
     const typeBadge = r.type === 'research' ? '<span class="type-badge research">调研</span>' : '';
@@ -709,7 +711,7 @@ function createCardEl(r) {
         <div class="card-title">${esc(r.title)}</div>
         ${r.description ? '<div class="card-desc md-content">' + renderMd(r.description) + '</div>' : ''}
         <div class="card-bottom">
-            <div class="card-meta">${assigneeHtml}${deadlineHtml}${hoursHtml}${attHtml}</div>
+            <div class="card-meta">${assigneeHtml}${deadlineHtml}${hoursHtml}${attHtml}${queueReasonHtml}</div>
             <div class="card-actions">
                 <button onclick="event.stopPropagation();showReqModal(${r.id})" title="编辑">&#9998;</button>
                 <button onclick="event.stopPropagation();archiveReq(${r.id})" title="归档">&#128230;</button>
@@ -840,6 +842,12 @@ function showReqModal(editId) {
         if (typeof tags === 'string') tags = tags.split(',').map(t => t.trim()).filter(Boolean);
         document.getElementById('req-tags').value = tags.join(', ');
         document.getElementById('req-notes').value = r.notes || '';
+        document.getElementById('req-queue-reason').value = r.queue_reason || '';
+        const preset = document.getElementById('req-queue-reason-preset');
+        const qr = r.queue_reason || '';
+        const presetLabels = {waiting_reply: '等待回复', waiting_dependency: '等待依赖完成', waiting_turn: '排队等待中', need_info: '缺信息，需补充', deferred: '推迟处理'};
+        const matched = Object.entries(presetLabels).find(([k, v]) => v === qr);
+        preset.value = matched ? matched[0] : '';
         renderAttachments(r.attachments || []);
         loadComments(editId);
         loadCommits(editId);
@@ -865,6 +873,8 @@ function showReqModal(editId) {
         document.getElementById('req-notes').value = '';
         document.getElementById('attachment-list').innerHTML = '';
         document.getElementById('commits-section').style.display = 'none';
+        document.getElementById('req-queue-reason').value = '';
+        document.getElementById('req-queue-reason-preset').value = '';
     }
     document.getElementById('req-modal').classList.remove('hidden');
     document.getElementById('req-title').focus();
@@ -913,7 +923,8 @@ async function saveRequirement() {
         estimated_hours: parseFloat(document.getElementById('req-hours').value) || 0,
         actual_hours: parseFloat(document.getElementById('req-actual').value) || 0,
         tags,
-        notes: document.getElementById('req-notes').value.trim()
+        notes: document.getElementById('req-notes').value.trim(),
+        queue_reason: document.getElementById('req-queue-reason').value.trim()
     };
 
     let rid = editingReqId;
@@ -936,6 +947,15 @@ async function saveRequirement() {
     await loadRequirements(currentVersion.id);
     renderRequirements();
     await refreshVersions();
+}
+
+function onQueueReasonPresetChange(select) {
+    const val = select.value;
+    const input = document.getElementById('req-queue-reason');
+    if (val) {
+        const labels = {waiting_reply: '等待回复', waiting_dependency: '等待依赖完成', waiting_turn: '排队等待中', need_info: '缺信息，需补充', deferred: '推迟处理'};
+        input.value = labels[val] || '';
+    }
 }
 
 async function deleteReq(rid) {
@@ -1500,6 +1520,11 @@ async function toggleLogViewer() {
         return;
     }
     _logFilters = new Set(['poll', 'api', 'dim', 'info', 'highlight', 'chat', 'err']);
+    _logViewMode = 'type';
+    document.querySelectorAll('.log-view-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.mode === 'type');
+    });
+    document.getElementById('log-filters').style.display = '';
     overlay.classList.remove('hidden');
     await fetchLogs();
 }
@@ -1717,6 +1742,109 @@ function escapeHtml(s) {
 function closeLogViewer(event) {
     if (event && event.target !== event.currentTarget) return;
     document.getElementById('log-overlay').classList.add('hidden');
+}
+
+// ==================== Log Layer View (by architecture layer) ====================
+
+let _logViewMode = 'type'; // 'type' | 'layer'
+let _layerData = null;
+
+function switchLogView(mode) {
+    _logViewMode = mode;
+    document.querySelectorAll('.log-view-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.mode === mode);
+    });
+    if (mode === 'type') {
+        document.getElementById('log-filters').style.display = '';
+        renderLogLines();
+    } else {
+        document.getElementById('log-filters').style.display = 'none';
+        fetchLogsByLayer();
+    }
+}
+
+function refreshLogs() {
+    if (_logViewMode === 'type') {
+        fetchLogs();
+    } else {
+        fetchLogsByLayer();
+    }
+}
+
+async function fetchLogsByLayer() {
+    const el = document.getElementById('log-content');
+    el.innerHTML = '<div class="log-line"><span class="log-ts">加载中...</span></div>';
+    try {
+        const res = await fetch('/api/dev/logs/layers?lines=300');
+        const data = await res.json();
+        _layerData = data;
+        renderLayerView();
+    } catch (err) {
+        el.innerHTML = '<div class="log-line log-err"><span class="log-ts">-</span><span class="log-icon">❌</span><span class="log-msg">获取分层日志失败: ' + escapeHtml(err.message) + '</span></div>';
+    }
+}
+
+const LAYER_DISPLAY = {
+    core:  { label: 'Core 核心层',   icon: '⚙️', color: '#6366f1', desc: '数据库 · 配置 · 会话管理' },
+    web:   { label: 'Web 服务层',    icon: '🌐', color: '#06b6d4', desc: 'API · Chat · Hermes · 中间件' },
+    agent: { label: 'Agent 智能体层', icon: '🤖', color: '#f59e0b', desc: 'Coach-Dev · CommentAgent · Registry' },
+    sched: { label: 'Scheduler 调度层', icon: '⏱', color: '#22c55e', desc: '定时任务 · 工作流引擎' },
+    mcp:   { label: 'MCP 协议层',    icon: '🔌', color: '#ec4899', desc: 'MCP Server · KH Client' },
+};
+
+function renderLayerView() {
+    const el = document.getElementById('log-content');
+    if (!_layerData || !_layerData.layers) {
+        el.innerHTML = '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">无分层数据</div>';
+        return;
+    }
+
+    const order = ['core', 'web', 'agent', 'sched', 'mcp'];
+    let html = '';
+    let firstNonEmpty = null;
+
+    for (const key of order) {
+        const layer = _layerData.layers[key];
+        if (!layer || !layer.lines || layer.lines.length === 0) continue;
+        if (!firstNonEmpty) firstNonEmpty = key;
+
+        const disp = LAYER_DISPLAY[key] || { label: key, icon: '📋', color: '#64748b', desc: '' };
+        const isFirst = (key === firstNonEmpty);
+        const linesHtml = layer.lines.map(l => {
+            // Use annotateLog for styling
+            const a = annotateLog(l.msg);
+            return `<div class="log-line ${a.cls}">`
+                + `<span class="log-ts">${l.ts}</span>`
+                + (a.icon ? `<span class="log-icon">${a.icon}</span>` : '')
+                + `<span class="log-label">${a.label}</span>`
+                + `<span class="log-msg">${a.display || escapeHtml(l.msg)}</span></div>`;
+        }).join('');
+
+        html += `<div class="layer-section" data-layer="${key}">`
+            + `<div class="layer-header" style="--layer-color:${disp.color}" onclick="toggleLayerSection(this)">`
+            + `<span class="layer-arrow">${isFirst ? '▼' : '▶'}</span>`
+            + `<span class="layer-icon">${disp.icon}</span>`
+            + `<span class="layer-name">${disp.label}</span>`
+            + `<span class="layer-count">${layer.count} 条</span>`
+            + `<span class="layer-desc">${disp.desc}</span>`
+            + `</div>`
+            + `<div class="layer-body" style="display:${isFirst ? 'block' : 'none'}">${linesHtml}</div>`
+            + `</div>`;
+    }
+
+    el.innerHTML = html || '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">无日志数据</div>';
+}
+
+function toggleLayerSection(header) {
+    const body = header.nextElementSibling;
+    const arrow = header.querySelector('.layer-arrow');
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        arrow.textContent = '▼';
+    } else {
+        body.style.display = 'none';
+        arrow.textContent = '▶';
+    }
 }
 
 function copyCode(code) {

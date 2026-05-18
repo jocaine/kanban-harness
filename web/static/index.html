@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=45">
+    <link rel="stylesheet" href="static/style.css?v=46">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -300,6 +300,22 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group flex-1">
+                            <label>排队原因</label>
+                            <div class="queue-reason-row">
+                                <select id="req-queue-reason-preset" onchange="onQueueReasonPresetChange(this)">
+                                    <option value="">自定义</option>
+                                    <option value="waiting_reply">等待回复</option>
+                                    <option value="waiting_dependency">等待依赖</option>
+                                    <option value="waiting_turn">排队等待</option>
+                                    <option value="need_info">缺信息</option>
+                                    <option value="deferred">推迟</option>
+                                </select>
+                                <input type="text" id="req-queue-reason" placeholder="具体排队原因说明" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-1">
                             <label>附件</label>
                             <div class="attachment-area">
                                 <div id="attachment-list" class="attachment-list"></div>
@@ -374,16 +390,20 @@
         <div class="log-panel" onclick="event.stopPropagation()">
             <div class="log-header">
                 <h3>容器日志</h3>
-                <div class="log-filters" id="log-filters"></div>
+                <div class="log-view-tabs">
+                    <button class="log-view-tab active" data-mode="type" onclick="switchLogView('type')">按类型</button>
+                    <button class="log-view-tab" data-mode="layer" onclick="switchLogView('layer')">按层次</button>
+                </div>
                 <div class="log-actions">
-                    <button class="btn-icon" onclick="fetchLogs()" title="刷新">↻</button>
+                    <button class="btn-icon" id="log-refresh-btn" onclick="refreshLogs()" title="刷新">↻</button>
                     <button class="btn-icon" onclick="closeLogViewer()">&times;</button>
                 </div>
             </div>
+            <div class="log-filters" id="log-filters"></div>
             <pre class="log-content" id="log-content">加载中...</pre>
         </div>
     </div>
 
-    <script src="static/app.js?v=42"></script>
+    <script src="static/app.js?v=43"></script>
 </body>
 </html>

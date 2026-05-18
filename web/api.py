@@ -1,4 +1,5 @@
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
@@ -57,6 +58,7 @@ class ReqCreate(BaseModel):
     deadline: str = ""
     estimated_hours: float = 0
     notes: str = ""
+    queue_reason: str = ""
 
 class ReqUpdate(BaseModel):
     title: Optional[str] = None
@@ -70,6 +72,7 @@ class ReqUpdate(BaseModel):
     actual_hours: Optional[float] = None
     notes: Optional[str] = None
     tags: Optional[str] = None
+    queue_reason: Optional[str] = None
 
 class ReqMove(BaseModel):
     status: str
@@ -208,10 +211,10 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
     # 调研类型卡片创建时自动设为 research 状态
     init_status = "research" if data.type == "research" else (data.status or "pending")
     cursor = await db.execute(
-        "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,code,position) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,queue_reason,code,position) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (data.version_id, data.title, description, data.priority, data.type, init_status,
-         data.assignee, data.deadline, data.estimated_hours, notes, code, pos)
+         data.assignee, data.deadline, data.estimated_hours, notes, data.queue_reason, code, pos)
     )
     await db.commit()
     rid = cursor.lastrowid
@@ -251,7 +254,7 @@ async def get_requirement_by_code(code: str = "", db: aiosqlite.Connection = Dep
 @router.put("/requirements/{rid}")
 async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection = Depends(get_db)):
     updates, params = [], []
-    for field in ("title", "description", "priority", "type", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags"):
+    for field in ("title", "description", "priority", "type", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags", "queue_reason"):
         val = getattr(data, field)
         if val is not None:
             if field in ("description", "notes"):
@@ -315,7 +318,7 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     }
     new_assignee = STATUS_ASSIGNEE_MAP.get(data.status, "")
     await db.execute(
-        "UPDATE requirements SET status=?, assignee=?, position=?, updated_at=datetime('now','localtime') WHERE id=?",
+        "UPDATE requirements SET status=?, assignee=?, position=?, queue_reason='', updated_at=datetime('now','localtime') WHERE id=?",
         (data.status, new_assignee, data.position, rid)
     )
 
@@ -415,35 +418,111 @@ async def add_comment(rid: int, data: CommentCreate, db: aiosqlite.Connection = 
     return dict(await row.fetchone())
 
 
-@router.get("/dev/logs")
-async def dev_logs(lines: int = 200):
-    """Return container logs for development debugging."""
+def _classify_log_layer(msg: str) -> str:
+    """Classify a log line by architecture layer: core|web|agent|sched|mcp."""
+    # Module name from log format: "asctime [module.name] LEVEL: msg"
+    m = re.match(r'^.*\[([a-z_]+(?:\.[a-z_]+)*)\]\s+(?:INFO|WARNING|ERROR|DEBUG|WARN):', msg)
+    if m:
+        mod = m.group(1)
+        if mod.startswith('scheduler.'):
+            return 'sched'
+        if mod.startswith('agents.'):
+            return 'agent'
+        if mod.startswith('web.'):
+            return 'web'
+        if mod.startswith('core.'):
+            return 'core'
+        if mod.startswith('kh.'):
+            return 'mcp'
+    # Agent role tags
+    if '[SCHED]' in msg:
+        return 'sched'
+    if '[PM]' in msg or '[CHAT]' in msg or '[hermes]' in msg:
+        return 'web'
+    if 'Coach-Dev' in msg or 'CommentAgent' in msg or 'Loaded agent role' in msg:
+        return 'agent'
+    # MCP
+    if 'MCP' in msg and ('server' in msg.lower() or 'client' in msg.lower()):
+        return 'mcp'
+    # DB migrations
+    if 'Migrating' in msg or 'database' in msg.lower():
+        return 'core'
+    # Everything else (HTTP access, uvicorn lifecycle, startup, etc.) → web
+    return 'web'
+
+
+def _fetch_docker_logs(lines: int = 300):
+    """Fetch container logs via Docker Unix socket. Returns list of decoded lines."""
     import http.client, socket
     class _UnixConn(http.client.HTTPConnection):
         def connect(self):
             self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.sock.settimeout(10)
             self.sock.connect("/var/run/docker.sock")
+    conn = _UnixConn("localhost")
+    conn.request("GET", f"/containers/kanban-harness-web-1/logs?tail={lines}&stdout=true&stderr=true&timestamps=true")
+    resp = conn.getresponse()
+    raw = resp.read()
+    resp.close()
+    conn.close()
+    lines_out = []
+    i = 0
+    while i + 8 <= len(raw):
+        msg_len = int.from_bytes(raw[i+4:i+8], 'big')
+        offset = 8
+        if offset + msg_len <= len(raw):
+            lines_out.append(raw[i+offset:i+offset+msg_len].decode("utf-8", errors="replace").rstrip("\n\r"))
+            i += offset + msg_len
+        else:
+            break
+    return lines_out or ["(no log output)"]
+
+
+@router.get("/dev/logs")
+async def dev_logs(lines: int = 200):
+    """Return container logs for development debugging."""
     try:
-        conn = _UnixConn("localhost")
-        conn.request("GET", f"/containers/kanban-harness-web-1/logs?tail={lines}&stdout=true&stderr=true&timestamps=true")
-        resp = conn.getresponse()
-        raw = resp.read()
-        resp.close()
-        conn.close()
-        lines_out = []
-        i = 0
-        while i + 8 <= len(raw):
-            msg_len = int.from_bytes(raw[i+4:i+8], 'big')
-            offset = 8
-            if offset + msg_len <= len(raw):
-                lines_out.append(raw[i+offset:i+offset+msg_len].decode("utf-8", errors="replace").rstrip("\n\r"))
-                i += offset + msg_len
-            else:
-                break
-        return {"logs": lines_out or ["(no log output)"]}
+        return {"logs": _fetch_docker_logs(lines)}
     except Exception as e:
         return {"logs": [f"Error fetching logs: {e}"]}
+
+
+LAYER_META = {
+    'core':  {'label': 'Core 核心层',   'icon': '⚙️', 'color': '#6366f1', 'desc': '数据库、配置、会话管理'},
+    'web':   {'label': 'Web 服务层',    'icon': '🌐', 'color': '#06b6d4', 'desc': 'API、Chat、Hermes、中间件'},
+    'agent': {'label': 'Agent 智能体层','icon': '🤖', 'color': '#f59e0b', 'desc': 'Coach-Dev、CommentAgent、Registry'},
+    'sched': {'label': 'Scheduler 调度层','icon': '⏱', 'color': '#22c55e','desc': '定时任务、工作流引擎'},
+    'mcp':   {'label': 'MCP 协议层',  'icon': '🔌', 'color': '#ec4899','desc': 'MCP Server、KH Client'},
+}
+
+
+@router.get("/dev/logs/layers")
+async def dev_logs_layers(lines: int = 300):
+    """Return container logs grouped by architecture layer."""
+    try:
+        raw_lines = _fetch_docker_logs(lines)
+        layers = {}
+        for raw in raw_lines:
+            # Parse timestamp + message
+            pm = re.match(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+Z\s+(.*)', raw)
+            ts = pm.group(1).replace('T', ' ') if pm else ''
+            msg = pm.group(2) if pm else raw
+            layer = _classify_log_layer(msg)
+            if layer not in layers:
+                layers[layer] = []
+            layers[layer].append({'ts': ts, 'msg': msg, 'raw': raw})
+        # Build response with layer metadata
+        result = {}
+        for key, meta in LAYER_META.items():
+            lines_in_layer = layers.get(key, [])
+            result[key] = {
+                'meta': meta,
+                'count': len(lines_in_layer),
+                'lines': lines_in_layer,
+            }
+        return {'layers': result, 'total': len(raw_lines)}
+    except Exception as e:
+        return {'layers': {}, 'total': 0, 'error': str(e)}
 
 
 @router.delete("/projects/{pid}")
