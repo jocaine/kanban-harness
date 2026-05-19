@@ -35,7 +35,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "enum": ["research", "pending", "dev", "testing", "done"], "description": "Filter by status"},
+                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done"], "description": "Filter by status"},
                     "limit": {"type": "integer", "description": "Max results", "default": 20},
                 },
             },
@@ -45,7 +45,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "create_requirement",
-            "description": "Create a new requirement card (status=pending for actionable tasks)",
+            "description": "Create a new requirement card (status=organizing for actionable tasks)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -53,6 +53,7 @@ TOOLS = [
                     "description": {"type": "string", "description": "Markdown description with goals and acceptance criteria"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
                     "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
+                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. Default 1800 (30min). Set 3600+ for deep investigation."},
                 },
                 "required": ["title"],
             },
@@ -70,6 +71,7 @@ TOOLS = [
                     "description": {"type": "string", "description": "What to investigate, key questions to answer"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
                     "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
+                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. Default 1800 (30min). Set 3600+ for deep investigation."},
                 },
                 "required": ["title"],
             },
@@ -84,7 +86,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "Requirement code like KH-001"},
-                    "status": {"type": "string", "enum": ["research", "pending", "dev", "testing", "done"]},
+                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done"]},
                 },
                 "required": ["code", "status"],
             },
@@ -203,16 +205,17 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 desc = args.get("description", "")
                 priority = args.get("priority", "P2")
                 initial_comment = args.get("initial_comment", "")
+                agent_timeout = args.get("agent_timeout")
                 is_research = name == "create_research_card"
                 req_type = "research" if is_research else "dev"
-                status = "research" if is_research else "pending"
+                status = "research" if is_research else "organizing"
                 # Retry with incremented code on unique constraint failure
                 import re as _re
                 for _attempt in range(5):
                     try:
                         await db.execute(
-                            "INSERT INTO requirements (version_id,title,description,priority,type,status,code,position) VALUES (?,?,?,?,?,?,?,?)",
-                            (version_id, title, desc, priority, req_type, status, code, pos),
+                            "INSERT INTO requirements (version_id,title,description,priority,type,status,agent_timeout,code,position) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (version_id, title, desc, priority, req_type, status, agent_timeout, code, pos),
                         )
                         break
                     except Exception as _e:
@@ -343,7 +346,7 @@ async def _build_pm_system_prompt(project_id: int) -> str:
                 "WHERE v.project_id=? AND r.archived=0 "
                 "ORDER BY CASE r.status "
                 "  WHEN 'dev' THEN 0 WHEN 'testing' THEN 1 "
-                "  WHEN 'pending' THEN 2 WHEN 'research' THEN 3 WHEN 'done' THEN 4 END, "
+                "  WHEN 'organizing' THEN 2 WHEN 'research' THEN 3 WHEN 'done' THEN 4 END, "
                 "r.priority LIMIT 20",
                 (project_id,),
             )
@@ -367,7 +370,7 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 ## 聊天专属指令
 
 仅用于聊天界面（不改变 pm.yaml 中的角色边界）：
-- 用户描述需求/想法 → 调用 create_requirement 建卡（status=pending, type=dev）
+- 用户描述需求/想法 → 调用 create_requirement 建卡（status=organizing, type=dev）
 - 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research）
 - 用户问进度 → 调用 list_requirements
 - 用户要移动卡片 → 调用 move_requirement
