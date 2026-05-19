@@ -146,6 +146,8 @@ permissions:
     - product_memory
   can_write:
     - comments
+    - product_memory
+    - architecture
   can_move:
     - "research->pending"
   can_create:
