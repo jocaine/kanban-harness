@@ -184,7 +184,27 @@ class CommentAgent:
             )
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(f"hermes timed out after {timeout}s")
+            # Try to salvage partial output from the pipe
+            partial = b""
+            try:
+                partial, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+            partial_text = partial.decode(errors="replace").strip()
+            # Strip any incomplete tool call XML from partial output
+            import re
+            partial_text = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', partial_text, flags=re.DOTALL)
+            partial_text = re.sub(r'<HermesTool:[^>]*/>', '', partial_text)
+            partial_text = re.sub(r'<HermesTool:[^>]*>.*$', '', partial_text, flags=re.DOTALL)
+            timeout_min = timeout // 60
+            logger.warning(f"hermes timed out after {timeout}s, partial output: {partial_text[:200]}")
+            return (
+                f"[转给PM]\n\n"
+                f"[调研超时] 调研在 {timeout_min} 分钟时限内未完成。部分进展如下：\n\n"
+                f"{partial_text[:2000]}\n\n"
+                f"---\n"
+                f"⚠️ 以上为超时前部分结果。PM 请评估：1) 加时重试 2) 基于部分信息推进 3) 缩减调研范围"
+            )
 
         output = stdout.decode(errors="replace").strip()
         if proc.returncode != 0:
