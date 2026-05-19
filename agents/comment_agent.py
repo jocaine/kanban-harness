@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 
 from agents.registry import registry, AgentRole
 from agents.mcp_config import ensure_agent_mcp_config
@@ -32,7 +33,11 @@ class CommentAgent:
         """
         prompt = await self._build_prompt(card, existing_comments or [])
         try:
-            effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
+            # agent_timeout is for long-running research (hermes); other roles use their own default
+            if self.role_config.model.provider == "hermes":
+                effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
+            else:
+                effective_timeout = self.role_config.model.timeout
             response = await self._call_model(prompt, timeout=effective_timeout)
             comment, detail = self._split_detail(response)
             return {
@@ -46,13 +51,57 @@ class CommentAgent:
             return {"success": False, "comment": "", "detail": "", "summary": str(e)}
 
     DETAIL_SEPARATOR = "---DETAIL---"
+    _SUMMARY_MIN_LEN = 150
+    _SUMMARY_MAX_LEN = 800
+    _DETAIL_MARKERS = [
+        re.compile(r'\n\|.+\|.+\|'),                # markdown 表格行
+        re.compile(r'\n#{2,3}\s*(来源|参考|数据|Sources|References)'),
+        re.compile(r'\n#{2,3}\s*双视角分析'),
+        re.compile(r'\n#{2,3}\s*技术环境画像'),
+        re.compile(r'\n-\s*\[.+\]\(https?://'),     # markdown 链接列表
+        re.compile(r'\n\d+\.\s*https?://'),          # 编号链接
+    ]
 
     def _split_detail(self, response: str) -> tuple[str, str]:
-        """Split response into summary and detail by separator marker."""
+        """Split response into summary and detail by separator marker.
+
+        Falls back to heuristic splitting when the model doesn't output
+        the DETAIL_SEPARATOR (common with local models).
+        """
         if self.DETAIL_SEPARATOR in response:
             parts = response.split(self.DETAIL_SEPARATOR, 1)
             return parts[0].strip(), parts[1].strip()
+
+        # Fallback: heuristic split for long outputs missing the separator
+        if len(response) > self._SUMMARY_MAX_LEN:
+            split_point = self._find_detail_boundary(response)
+            if split_point > 0:
+                logger.warning(
+                    "Model output missing DETAIL_SEPARATOR (%d chars), heuristic split at %d",
+                    len(response), split_point,
+                )
+                return response[:split_point].strip(), response[split_point:].strip()
+
         return response, ""
+
+    def _find_detail_boundary(self, text: str) -> int:
+        """Find the earliest position where detail-level content begins."""
+        candidates = []
+        for pattern in self._DETAIL_MARKERS:
+            m = pattern.search(text)
+            if m and m.start() > self._SUMMARY_MIN_LEN:
+                candidates.append(m.start())
+
+        if candidates:
+            return min(candidates)
+
+        # No marker matched — try splitting at paragraph boundary near max length
+        pos = 0
+        for para in text.split('\n\n'):
+            if pos + len(para) + 2 > self._SUMMARY_MAX_LEN:
+                return pos if pos > self._SUMMARY_MIN_LEN else 0
+            pos += len(para) + 2
+        return 0
 
     async def _build_prompt(self, card: dict, comments: list[dict]) -> str:
         """Build prompt. For claude_cli/hermes, system prompt is passed separately."""
@@ -266,6 +315,8 @@ class CommentAgent:
 
     async def _call_claude_cli(self, prompt: str, timeout: int) -> str:
         """Call Claude CLI subprocess with kanban MCP tools."""
+        import time as _time
+
         config_dir = ensure_agent_mcp_config(self.role_config.role, self.project_id)
         tools = ",".join(
             f"mcp__kanban__{t}" for t in self.role_config.allowed_tools
@@ -289,7 +340,8 @@ class CommentAgent:
                 base = base[:-3]
             env["ANTHROPIC_BASE_URL"] = base
 
-        logger.info("CommentAgent(%s) starting CLI, cwd=%s", self.role_config.role, config_dir)
+        role = self.role_config.role
+        logger.info("CommentAgent(%s) starting CLI (timeout=%ds)", role, timeout)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -299,20 +351,71 @@ class CommentAgent:
             env=env,
         )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise
+        start = _time.monotonic()
+        heartbeat_interval = 60
 
+        try:
+            while True:
+                remaining = timeout - (_time.monotonic() - start)
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                wait_time = min(remaining, heartbeat_interval)
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=wait_time
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    if proc.returncode is not None:
+                        stdout, stderr = await proc.communicate()
+                        break
+                    elapsed = int(_time.monotonic() - start)
+                    if elapsed < timeout:
+                        logger.info(
+                            "CommentAgent(%s) still running... %ds/%ds",
+                            role, elapsed, timeout,
+                        )
+                    else:
+                        raise
+        except asyncio.TimeoutError:
+            elapsed = int(_time.monotonic() - start)
+            err_snippet = ""
+            try:
+                proc.terminate()
+                _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=5)
+                err_snippet = stderr_data.decode(errors="replace").strip()[-500:]
+            except Exception:
+                proc.kill()
+                await proc.wait()
+            logger.error(
+                "CommentAgent(%s) timed out after %ds. stderr: %s",
+                role, elapsed, err_snippet[:300] or "(empty)",
+            )
+            raise RuntimeError(
+                f"CommentAgent({role}) timed out after {elapsed}s"
+                + (f" — {err_snippet[:200]}" if err_snippet else "")
+            )
+
+        elapsed = int(_time.monotonic() - start)
         output = stdout.decode(errors="replace").strip()
+        err = stderr.decode(errors="replace").strip()
 
         if proc.returncode != 0:
-            err = stderr.decode(errors="replace").strip()
-            logger.warning("CommentAgent(%s) CLI exited %d: %s", self.role_config.role, proc.returncode, err[:300])
+            logger.warning(
+                "CommentAgent(%s) CLI failed (exit=%d, %ds). stderr: %s",
+                role, proc.returncode, elapsed, err[:300] or "(empty)",
+            )
             if not output:
-                logger.error("CommentAgent(%s) produced no output, stderr: %s", self.role_config.role, err[:500])
+                raise RuntimeError(
+                    f"CommentAgent({role}) exit {proc.returncode}: {err[:200] or 'no output'}"
+                )
+        else:
+            if not output:
+                logger.warning(
+                    "CommentAgent(%s) CLI exited 0 but produced no output (%ds). stderr: %s",
+                    role, elapsed, err[:300] or "(empty)",
+                )
+            else:
+                logger.info("CommentAgent(%s) done (%ds, %d chars)", role, elapsed, len(output))
 
         return output

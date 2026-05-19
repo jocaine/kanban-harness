@@ -8,7 +8,7 @@ import aiosqlite
 
 from core.database import get_db, DB_PATH
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.core.session")
 
 MAX_RETRIES = 2
 DEFAULT_TIMEOUT = 600  # 10 minutes
@@ -136,8 +136,13 @@ class SessionManager:
         for session in sessions:
             started = datetime.strptime(session["started_at"], "%Y-%m-%d %H:%M:%S")
             timeout = timedelta(seconds=session["timeout_seconds"])
-            if now - started > timeout:
-                logger.warning(f"Session {session['id']} timed out")
+            elapsed = now - started
+            if elapsed > timeout:
+                logger.warning(
+                    "Session %d timed out: agent=%s, project=%d, ran %ds (limit %ds)",
+                    session["id"], session["agent_role"], session["project_id"],
+                    int(elapsed.total_seconds()), session["timeout_seconds"],
+                )
                 await self.fail_session(session["id"], error="timeout")
 
     async def _timeout_loop(self, interval: int):

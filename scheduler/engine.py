@@ -10,7 +10,7 @@ import aiosqlite
 
 from core.database import DB_PATH
 from core.config import get_project_repo_path
-from core.session_manager import SessionManager
+from core.session_manager import SessionManager, DEFAULT_TIMEOUT
 from agents.registry import registry
 
 logger = logging.getLogger("kh.sched.engine")
@@ -346,11 +346,18 @@ class SchedulerEngine:
             await db.commit()
 
         input_context = json.dumps({"requirement_id": requirement_id, "code": card.get("code", "")})
+        # Only use card's agent_timeout for research (hermes) roles; others use default
+        role_cfg = registry.get(role_name)
+        if role_cfg and role_cfg.model.provider == "hermes":
+            effective_timeout = card.get("agent_timeout") or DEFAULT_TIMEOUT
+        else:
+            effective_timeout = DEFAULT_TIMEOUT
         session_id = await self.session_manager.create_session(
             project_id=event["project_id"],
             agent_role=role_name,
             trigger_type=f"event:{event['event_type']}",
             input_context=input_context,
+            timeout_seconds=effective_timeout,
         )
 
         asyncio.create_task(self._run_comment_agent(session_id, role_name, card, event["project_id"]))
