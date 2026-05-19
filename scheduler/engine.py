@@ -358,7 +358,7 @@ class SchedulerEngine:
         """Execute a comment agent and post its output.
 
         Workflow principle: 评论后必移动，移动后 emit event 触发下一个角色。
-        Research loop: industry→pending→PM evaluates→back to research or forward to dev (max 10 rounds).
+        Research loop: industry→organizing→PM evaluates→back to research or forward to dev (max 10 rounds).
         """
         try:
             from agents.comment_agent import CommentAgent
@@ -389,10 +389,10 @@ class SchedulerEngine:
                 author = role_config.display_name if role_config else role_name
                 comment_text = result["comment"]
 
-                # Determine move: PM evaluating pending research card parses decision
+                # Determine move: PM evaluating organizing research card parses decision
                 old_status = card.get("status", "")
                 req_type = card.get("type", "dev")
-                if role_name == "pm" and old_status == "pending":
+                if role_name == "pm" and old_status == "organizing":
                     new_status = self._parse_pm_research_decision(
                         comment_text, research_rounds, req_type
                     )
@@ -407,8 +407,8 @@ class SchedulerEngine:
                     logger.info("[MOVE] role=%s card=[%s] %s → %s | comment_has_signals=[转给PM]=%s [需要补充]=%s [调研充分]=%s",
                                 role_name, card.get("code", ""), old_status, new_status,
                                 "[转给PM]" in comment_text, "[需要补充]" in comment_text, "[调研充分]" in comment_text)
-                elif role_name == "pm" and old_status == "pending" and new_status == "":
-                    logger.info("[MOVE] role=%s card=[%s] %s → %s | PM evaluated research card → staying in pending, awaiting CEO approval via Reigns",
+                elif role_name == "pm" and old_status == "organizing" and new_status == "":
+                    logger.info("[MOVE] role=%s card=[%s] %s → %s | PM evaluated research card → staying in organizing, awaiting CEO approval via Reigns",
                                 role_name, card.get("code", ""), old_status, new_status or "(stay)")
                 elif role_name == "industry" and old_status == "research" and new_status == "research":
                     if "[需要补充]" in comment_text:
@@ -430,7 +430,7 @@ class SchedulerEngine:
                     if new_status and new_status != old_status:
                         COL_ASSIGNEE = {
                             "research": "Industry",
-                            "pending": "PM",
+                            "organizing": "PM",
                             "dev": "Coach-Dev",
                             "testing": "Coach-Review",
                         }
@@ -442,18 +442,18 @@ class SchedulerEngine:
                         logger.info("[STATUS-CHANGE] card=[%s] status %s → %s by %s",
                                     card.get("code", ""), old_status, new_status, role_name)
 
-                        if new_status == "pending":
+                        if new_status == "organizing":
                             # 默认静默等 CEO。但 [转给PM] 标记触发 PM
                             if role_name == "industry" and "[转给PM]" in comment_text:
                                 await db.execute(
                                     "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
                                     (project_id, "status_changed", card["id"],
-                                     json.dumps({"old_status": old_status, "new_status": "pending", "moved_by": "industry"})),
+                                     json.dumps({"old_status": old_status, "new_status": "organizing", "moved_by": "industry"})),
                                 )
-                                logger.info("[EVENT-EMIT] status_changed card=[%s] %s→pending moved_by=industry → triggers PM",
+                                logger.info("[EVENT-EMIT] status_changed card=[%s] %s→organizing moved_by=industry → triggers PM",
                                             card.get("code", ""), old_status)
                             else:
-                                logger.info("[EVENT-EMIT] card=[%s] moved to pending by %s → PM will pick up for evaluation",
+                                logger.info("[EVENT-EMIT] card=[%s] moved to organizing by %s → PM will pick up for evaluation",
                                             card.get("code", ""), role_name)
                         else:
                             # Emit status_changed event to trigger next role in chain
@@ -528,7 +528,7 @@ class SchedulerEngine:
             logger.info("[SCHED-DECISION] PM created card with no decision signal → defaulting to research")
             return "research"
 
-        logger.info("[SCHED-DECISION] PM comment has no clear decision signal → staying in pending")
+        logger.info("[SCHED-DECISION] PM comment has no clear decision signal → staying in organizing")
         return ""
 
     def _parse_pm_research_conclusion(self, comment: str) -> dict | None:
@@ -637,13 +637,13 @@ class SchedulerEngine:
         """Parse Industry's decision after reading CEO reply or completing research.
 
         Returns:
-        - 'pending' if [转给PM] (forward to PM for evaluation)
+        - 'organizing' if [转给PM] (forward to PM for evaluation)
         - 'research' if [需要补充] (stay in research, CEO decides via Reigns panel)
         - 'research' if no marker (continue working in research)
         """
         if "[转给PM]" in comment:
-            logger.info("[SCHED-DECISION] industry → [转给PM] → moving to pending (PM will evaluate)")
-            return "pending"
+            logger.info("[SCHED-DECISION] industry → [转给PM] → moving to organizing (PM will evaluate)")
+            return "organizing"
         if "[需要补充]" in comment:
             logger.info("[SCHED-DECISION] industry → [需要补充] → staying in research (CEO decides via Reigns)")
             return "research"
@@ -654,20 +654,20 @@ class SchedulerEngine:
         """Determine what status a role should move the card to after commenting.
 
         评论后必移动原则：各角色完成工作后移入下一列的排队中状态等对应角色处理。
-        - Industry (research) → pending（转 PM 评估，由 [转给PM] 标记触发）
+        - Industry (research) → organizing（转 PM 评估，由 [转给PM] 标记触发）
         - Coach-Dev (dev) → no comment-agent path, handled via _run_agent → testing
         - Coach-QA (testing) → no comment-agent path, handled via CEO reigns
-        - PM 在 pending 时不移动（由 CEO 通过王权面板决策）
+        - PM 在 organizing 时不移动（由 CEO 通过王权面板决策）
         - PM 创建调研卡 → research
         """
-        if role_name == "pm" and current_status == "pending":
+        if role_name == "pm" and current_status == "organizing":
             return ""
         if role_name == "pm" and current_status in ("", "research"):
             return "research"
         if role_name == "industry" and current_status == "research":
-            return "pending"
+            return "organizing"
         if role_name == "coach_dev" and current_status == "dev":
-            return "pending"
+            return "organizing"
         if role_name == "coach_review" and current_status == "testing":
             return ""  # Stay in testing, CEO decides via reigns panel
         return ""

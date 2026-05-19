@@ -150,7 +150,7 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
                 "WHERE v.project_id=? AND r.archived=0 "
                 "ORDER BY CASE r.status "
                 "  WHEN 'dev' THEN 0 WHEN 'testing' THEN 1 "
-                "  WHEN 'pending' THEN 2 WHEN 'done' THEN 3 END, "
+                "  WHEN 'organizing' THEN 2 WHEN 'done' THEN 3 END, "
                 "r.priority LIMIT 20",
                 (project_id,),
             )

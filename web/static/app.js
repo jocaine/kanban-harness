@@ -52,7 +52,7 @@ function parseHash() {
 
 const STATUS_MAP = {
     research: {label: '调研中', color: '#a855f7', dot: '#c084fc'},
-    pending: {label: '需求整理', color: '#6366f1', dot: '#818cf8'},
+    organizing: {label: '需求整理', color: '#6366f1', dot: '#818cf8'},
     dev: {label: '开发中', color: '#f59e0b', dot: '#fbbf24'},
     testing: {label: '测试中', color: '#06b6d4', dot: '#22d3ee'},
     done: {label: '已完成', color: '#22c55e', dot: '#4ade80'}
@@ -545,7 +545,7 @@ async function loadRequirements(vid) {
 
 const COL_ROLE_MAP = {
     research: {role: 'Industry', avatar: '/static/avatars/industry_avatar.png'},
-    pending: {role: 'PM', avatar: '/static/avatars/pm_avatar.png'},
+    organizing: {role: 'PM', avatar: '/static/avatars/pm_avatar.png'},
     dev: {role: 'Coach-Dev', avatar: '/static/avatars/coach_dev_avatar.png'},
     testing: {role: 'Coach-Review', avatar: '/static/avatars/coach_review_avatar.png'},
 };
@@ -672,7 +672,7 @@ function getQueueReason(r) {
     if (r.queue_reason) return r.queue_reason;
     const defaults = {
         research: '等待行业顾问调研分析',
-        pending:  '等待 PM 需求整理',
+        organizing:  '等待 PM 需求整理',
         dev:      schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现',
         testing:  '等待 Coach-Review 测试验收',
         blocked:  '已阻塞，需要人工介入',
@@ -864,7 +864,7 @@ function showReqModal(editId) {
         document.getElementById('req-desc').value = '';
         document.getElementById('req-priority').value = 'P2';
         document.getElementById('req-type').value = 'dev';
-        document.getElementById('req-status').value = 'pending';
+        document.getElementById('req-status').value = 'organizing';
         document.getElementById('req-assignee').value = '';
         document.getElementById('req-deadline').value = '';
         document.getElementById('req-hours').value = 0;
@@ -1104,7 +1104,7 @@ function renderTagList() {
             </div>
             <div class="tag-card-stats">
                 ${t.research > 0 ? '<span class="tag-stat research">' + t.research + ' 调研中</span>' : ''}
-                ${t.pending > 0 ? '<span class="tag-stat pending">' + t.pending + ' 需求整理</span>' : ''}
+                ${t.organizing > 0 ? '<span class="tag-stat organizing">' + t.organizing + ' 需求整理</span>' : ''}
                 ${t.dev > 0 ? '<span class="tag-stat dev">' + t.dev + ' 开发中</span>' : ''}
                 ${t.testing > 0 ? '<span class="tag-stat testing">' + t.testing + ' 测试中</span>' : ''}
                 ${t.done > 0 ? '<span class="tag-stat done">' + t.done + ' 已完成</span>' : ''}
@@ -1129,7 +1129,7 @@ async function showTagDetail(tag) {
 
     updateDescCollapsible('tag', data.description || '');
 
-    const statusOrder = ['research', 'pending', 'dev', 'testing', 'done'];
+    const statusOrder = ['research', 'organizing', 'dev', 'testing', 'done'];
     for (const status of statusOrder) {
         let items = data.grouped[status] || [];
         if (priFilter) items = items.filter(r => r.priority === priFilter);
@@ -2342,11 +2342,11 @@ function renderTeamWorkflow() {
             <div class="wf-arrow-move">📦→ research</div>
             <div class="wf-node wf-industry">Industry 调研<span class="wf-sub">联网搜索+分析</span></div>
             <div class="wf-arrow-comment">💬→</div>
-            <div class="wf-node wf-pm">PM 审核<span class="wf-sub">research→pending</span></div>
+            <div class="wf-node wf-pm">PM 审核<span class="wf-sub">research→organizing</span></div>
         </div>
         <div class="workflow-title">开发链（需求交付）</div>
         <div class="workflow-main">
-            <div class="wf-node wf-pm">PM 分配<span class="wf-sub">pending→dev</span></div>
+            <div class="wf-node wf-pm">PM 分配<span class="wf-sub">organizing→dev</span></div>
             <div class="wf-arrow-move">📦→ dev</div>
             <div class="wf-node wf-dev">Dev 开发<span class="wf-sub">编码+commit</span></div>
             <div class="wf-arrow-move">📦→ testing</div>
@@ -2359,9 +2359,9 @@ function renderTeamWorkflow() {
             <div class="wf-esc-flow">
                 <span class="wf-esc-step">Dev 发现问题</span>
                 <span class="wf-esc-arrow">→</span>
-                <span class="wf-esc-step">退回 PM<span class="wf-esc-sub">dev→pending</span></span>
+                <span class="wf-esc-step">退回 PM<span class="wf-esc-sub">dev→organizing</span></span>
                 <span class="wf-esc-arrow">→</span>
-                <span class="wf-esc-step">PM 修改重推<span class="wf-esc-sub">pending→dev</span></span>
+                <span class="wf-esc-step">PM 修改重推<span class="wf-esc-sub">organizing→dev</span></span>
                 <span class="wf-esc-arrow">→</span>
                 <span class="wf-esc-step wf-esc-blocked">仍有分歧→阻塞<span class="wf-esc-sub">dev→blocked</span></span>
                 <span class="wf-esc-arrow">→</span>
@@ -2407,7 +2407,7 @@ function renderTeamGrid(agents) {
         const toolsHtml = [...uniqueTools, ...commonTools].map(t =>
             `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
         ).join('');
-        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
         const TRIGGER_LABELS = {
             'requirement_created': '新需求触发',
             'status_changed': '状态变更触发',
@@ -2418,16 +2418,16 @@ function renderTeamGrid(agents) {
         ).join('');
 
         const MOVE_EXPLAIN = {
-            'pending->dev': '分配任务给开发',
+            'organizing->dev': '分配任务给开发',
             'dev->testing': '提交代码送测',
-            'dev->pending': '退回需求给PM',
+            'dev->organizing': '退回需求给PM',
             'dev->blocked': '请求CEO裁决',
             'testing->done': '验收通过完成',
             'testing->dev': '打回修改',
-            'blocked->pending': '解除阻塞重排',
+            'blocked->organizing': '解除阻塞重排',
         };
         const STATUS_ROLE = {
-            'pending': 'pm',
+            'organizing': 'pm',
             'dev': 'coach_dev',
             'testing': 'coach_review',
             'done': '',
@@ -2437,8 +2437,8 @@ function renderTeamGrid(agents) {
             const parts = m.split('->');
             const fromStatus = parts[0];
             const toStatus = parts[1];
-            const fromLabel = fromStatus.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
-            const toLabel = toStatus.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const fromLabel = fromStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const toLabel = toStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
             const explain = MOVE_EXPLAIN[m] || '';
             const fromRole = STATUS_ROLE[fromStatus] || '';
             const toRole = STATUS_ROLE[toStatus] || '';
@@ -2509,13 +2509,13 @@ function updateDecisionBadges() {
     }
 
     // Map asking_role to the kanban column status
-    const roleToStatus = { pm: 'pending', industry: 'research', coach_dev: 'dev', coach_review: 'testing' };
+    const roleToStatus = { pm: 'organizing', industry: 'research', coach_dev: 'dev', coach_review: 'testing' };
     const roleLabels = { pm: 'PM', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
 
     // Group by card's actual status so badge appears on the right column
     const byStatus = {};
     for (const d of _pendingDecisions) {
-        const s = d.status || 'pending';
+        const s = d.status || 'organizing';
         if (!byStatus[s]) byStatus[s] = [];
         byStatus[s].push(d);
     }

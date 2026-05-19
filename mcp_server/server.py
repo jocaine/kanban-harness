@@ -119,7 +119,7 @@ async def kh_submit_idea(idea: str, project_id: int = 0, priority: str = "P2") -
     return (
         f"已建卡：{req['code']} — {req['title']}\n"
         f"项目：{target_project['name']} / {active_version['name']}\n"
-        f"优先级：{priority} | 状态：pending"
+        f"优先级：{priority} | 状态：organizing"
     )
 
 
@@ -174,7 +174,7 @@ async def kh_ask_pm(question: str) -> str:
                 reqs = await client.list_requirements(ver["id"])
                 all_reqs.extend(reqs)
 
-    stats = {"research": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0}
+    stats = {"research": 0, "organizing": 0, "dev": 0, "testing": 0, "done": 0}
     p0_items = []
     for req in all_reqs:
         stats[req["status"]] = stats.get(req["status"], 0) + 1
@@ -182,7 +182,7 @@ async def kh_ask_pm(question: str) -> str:
             p0_items.append(f"[{req['code']}] {req['title']}")
 
     context = (
-        f"当前看板状态：research={stats['research']}, pending={stats['pending']}, dev={stats['dev']}, "
+        f"当前看板状态：research={stats['research']}, organizing={stats['organizing']}, dev={stats['dev']}, "
         f"testing={stats['testing']}, done={stats['done']}\n"
     )
     if p0_items:

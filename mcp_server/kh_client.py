@@ -58,7 +58,7 @@ class KHClient:
         return await self._get(f"/api/versions/{version_id}/requirements")
 
     async def create_requirement(self, version_id: int, title: str, description: str = "",
-                                  priority: str = "P2", status: str = "pending") -> dict:
+                                  priority: str = "P2", status: str = "organizing") -> dict:
         return await self._post("/api/requirements", json={
             "version_id": version_id,
             "title": title,
