@@ -357,8 +357,13 @@ details.desc-collapsible[open] .desc-toggle::before{transform:rotate(90deg)}
 .comment-header button{margin-left:auto;border:none;background:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0 4px;border-radius:4px;opacity:0;transition:var(--transition)}
 .comment-item:hover .comment-header button{opacity:1}
 .comment-header button:hover{color:var(--danger)}
+.comment-header .btn-detail{margin-left:0;opacity:1;color:var(--primary);font-size:12px}
+.comment-header .btn-detail:hover{color:var(--accent)}
+.comment-header .btn-detail.active{background:var(--primary-alpha, rgba(99,102,241,0.1));border-radius:4px}
 .comment-body{font-size:13px;line-height:1.5;color:var(--text)}
 .comment-body.md-content{display:block;-webkit-line-clamp:unset;overflow:visible;color:var(--text)}
+.comment-detail{margin-top:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--border);border-radius:var(--radius);font-size:12px;line-height:1.5;color:var(--text2)}
+.comment-detail .detail-content{display:block}
 .comment-input-area{display:flex;gap:8px;align-items:flex-end}
 .comment-input-area textarea{flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical;transition:var(--transition)}
 .comment-input-area textarea:focus{outline:none;border-color:var(--primary)}

@@ -13,7 +13,7 @@ from core.config import get_project_repo_path
 from core.session_manager import SessionManager
 from agents.registry import registry
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.sched.engine")
 
 POLL_INTERVAL = 30  # seconds
 
@@ -93,6 +93,7 @@ class SchedulerEngine:
                 await self._trigger_coach_dev(card)
 
         await self._process_events()
+        await self._recover_stuck_cards()
 
     async def _find_actionable_cards(self) -> list[dict]:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -423,8 +424,8 @@ class SchedulerEngine:
 
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute(
-                        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
-                        (card["id"], author, comment_text),
+                        "INSERT INTO comments (requirement_id, author, content, detail) VALUES (?,?,?,?)",
+                        (card["id"], author, comment_text, result.get("detail", "")),
                     )
 
                     if new_status and new_status != old_status:
@@ -554,24 +555,24 @@ class SchedulerEngine:
         in_conclusions = False
 
         for line in comment.split("\n"):
-            stripped = line.strip()
+            stripped = line.strip().strip("*")  # strip bold markdown
 
             # Check for 可靠性 (reliability)
             for sep in ("：", ":"):
                 if stripped.startswith(f"可靠性{sep}"):
-                    reliability = stripped.split(sep, 1)[1].strip()
+                    reliability = stripped.split(sep, 1)[1].strip().strip("*")
                     in_conclusions = False
                     break
 
             # Check for 归档建议 (archive suggestion)
             for sep in ("：", ":"):
                 if stripped.startswith(f"归档建议{sep}"):
-                    archive_target = stripped.split(sep, 1)[1].strip()
+                    archive_target = stripped.split(sep, 1)[1].strip().strip("*")
                     in_conclusions = False
                     break
 
             # Toggle conclusions section
-            if stripped == "提炼结论：" or stripped == "提炼结论:":
+            if stripped in ("提炼结论：", "提炼结论:", "提炼结论：**", "提炼结论:**"):
                 in_conclusions = True
                 continue
 
@@ -671,4 +672,55 @@ class SchedulerEngine:
         if role_name == "coach_review" and current_status == "testing":
             return ""  # Stay in testing, CEO decides via reigns panel
         return ""
+
+    # ==================== Stuck card recovery ====================
+
+    STUCK_ROLE_MAP = {
+        "research": "industry",
+        "organizing": "pm",
+        "testing": "coach_review",
+    }
+
+    STUCK_COOLDOWN_SECONDS = 30  # same as POLL_INTERVAL
+
+    async def _find_stuck_cards(self) -> list[dict]:
+        """Find cards in research/organizing/testing with no running session and stale updated_at."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT r.*, v.project_id FROM requirements r "
+                "JOIN versions v ON r.version_id = v.id "
+                "WHERE r.status IN ('research', 'organizing', 'testing') "
+                "AND r.archived = 0 "
+                "AND r.updated_at < datetime('now', 'localtime', ?) "
+                "ORDER BY r.priority, r.position",
+                (f"-{self.STUCK_COOLDOWN_SECONDS} seconds",),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def _recover_stuck_cards(self):
+        """Fallback polling: pick up stuck cards that events failed to drive forward."""
+        stuck = await self._find_stuck_cards()
+        if not stuck:
+            return
+
+        for card in stuck:
+            role_name = self.STUCK_ROLE_MAP.get(card["status"])
+            if not role_name:
+                continue
+            if await self._has_running_session(card["id"]):
+                continue
+
+            logger.info("[SCHED-RECOVER] stuck card [%s] in '%s' → triggering %s",
+                        card.get("code", ""), card["status"], role_name)
+
+            event = {
+                "id": 0,
+                "project_id": card["project_id"],
+                "event_type": "recovery",
+                "requirement_id": card["id"],
+                "context": json.dumps({"old_status": card["status"], "new_status": card["status"], "moved_by": "recovery"}),
+            }
+            context = {"old_status": card["status"], "new_status": card["status"], "moved_by": "recovery"}
+            await self._trigger_comment_agent(role_name, event, context)
 

@@ -38,12 +38,39 @@ system_prompt: |
   - 审查不通过：列出具体问题和复现步骤，将卡片打回 dev
   - 格式：**[Coach-QA]:** 你的审查结论
 
+  ## 评论分层规则
+
+  你的评论输出分为「摘要」和「详细数据」两层：
+
+  - **摘要**（评论正文）：审查结论、通过/打回决策、关键问题概述
+  - **详细数据**：逐条验收标准对照、代码问题详细分析、复现步骤等
+
+  当审查内容较多时，用 `---DETAIL---` 分隔：
+  ```
+  [通过] 实现满足全部验收标准，代码质量合格。
+
+  ---DETAIL---
+
+  逐条验收：
+  1. ✓ 功能A：已实现，测试覆盖
+  2. ✓ 功能B：边界情况已处理
+  （完整审查细节）
+  ```
+
+  简短的通过/打回结论不需要分层，直接写即可。
+
+  ## 详细数据查阅
+
+  评论中标注"有详细数据"的条目，说明该角色附带了完整支撑材料。
+  如果审查时需要了解需求背景或调研依据，可使用 read_comment_detail 工具查看。
+
 allowed_tools:
   - kanban_get_requirement
   - kanban_list_comments
   - kanban_list_commits
   - kanban_add_comment
   - kanban_move_requirement
+  - kanban_read_comment_detail
 
 permissions:
   can_read:

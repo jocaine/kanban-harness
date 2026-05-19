@@ -573,6 +573,15 @@ async def delete_comment(cid: int, db: aiosqlite.Connection = Depends(get_db)):
     return {"ok": True}
 
 
+@router.get("/comments/{cid}/detail")
+async def get_comment_detail(cid: int, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute("SELECT detail FROM comments WHERE id=?", (cid,))
+    row = await cursor.fetchone()
+    if not row:
+        return {"error": "评论不存在"}
+    return {"detail": row["detail"] or ""}
+
+
 # ==================== 1b. Missing CRUD Endpoints ====================
 
 @router.get("/requirements/by-code/{code}")
@@ -1020,12 +1029,14 @@ DECISION_MARKERS = ("[调研充分]", "[READY]", "[需要补充]", "[NEED_MORE]"
 async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
     """List cards waiting for CEO/human decision.
 
-    Includes:
-    - Cards in organizing queue (from any role, e.g. [转给PM])
-    - Research cards where Industry marked [需要补充] (stay in research, CEO decides)
-    """
-    import json
+    Only shows cards where an agent EXPLICITLY asked for CEO input:
+    - organizing: PM wrote [需要补充] (evaluated research, needs CEO guidance)
+    - research: Industry wrote [需要补充] (needs CEO to provide info)
+    - testing: Coach-Review posted results (CEO decides accept/reject)
 
+    Does NOT show cards merely transiting through a status (e.g. PM still processing).
+    Excludes cards with a running agent session.
+    """
     query = """
         SELECT r.id, r.code, r.title, r.priority, r.status, r.description,
                r.updated_at, r.type, v.project_id, p.name as project_name, p.prefix
@@ -1033,8 +1044,22 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
         JOIN versions v ON r.version_id = v.id
         JOIN projects p ON v.project_id = p.id
         WHERE r.archived = 0
+        AND NOT EXISTS (
+            SELECT 1 FROM agent_sessions s
+            WHERE s.status = 'running'
+            AND s.input_context LIKE '%' || r.id || '%'
+        )
         AND (
-            r.status = 'organizing'
+            (r.status = 'organizing' AND r.id IN (
+                SELECT c.requirement_id FROM comments c
+                WHERE c.author IN ('产品经理', 'PM')
+                AND c.content LIKE '%[需要补充]%'
+                AND c.id = (
+                    SELECT MAX(c2.id) FROM comments c2
+                    WHERE c2.requirement_id = c.requirement_id
+                    AND c2.author IN ('产品经理', 'PM')
+                )
+            ))
             OR (r.status = 'research' AND r.id IN (
                 SELECT c.requirement_id FROM comments c
                 WHERE c.author IN ('行业顾问', 'Industry')
@@ -1067,22 +1092,27 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
 
     results = []
     for card in cards:
-        # Determine asking_role based on card status, not last commenter
-        # research status → always industry (only industry works in research)
         if card["status"] == "research":
             asking_role = "industry"
-            # Get the latest industry comment for the preview
             cursor2 = await db.execute(
                 "SELECT content, author, created_at FROM comments "
                 "WHERE requirement_id=? AND author IN ('行业顾问', 'Industry') "
                 "ORDER BY created_at DESC LIMIT 1",
                 (card["id"],),
             )
-        else:
-            # organizing status → determine from last agent comment
+        elif card["status"] == "organizing":
+            asking_role = "pm"
             cursor2 = await db.execute(
                 "SELECT content, author, created_at FROM comments "
-                "WHERE requirement_id=? AND author IN ('产品经理', 'PM', '行业顾问', 'Industry', 'Coach-Dev', 'Coach-QA') "
+                "WHERE requirement_id=? AND author IN ('产品经理', 'PM') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (card["id"],),
+            )
+        else:
+            asking_role = "coach_review"
+            cursor2 = await db.execute(
+                "SELECT content, author, created_at FROM comments "
+                "WHERE requirement_id=? AND author IN ('Coach-Review', 'Coach-QA') "
                 "ORDER BY created_at DESC LIMIT 1",
                 (card["id"],),
             )
@@ -1092,17 +1122,6 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
 
         comment_text = last_comment["content"] or ""
 
-        # Map author to asking_role (only needed for organizing status)
-        if card["status"] != "research":
-            author = last_comment["author"]
-            ROLE_MAP = {
-                "产品经理": "pm", "PM": "pm",
-                "行业顾问": "industry", "Industry": "industry",
-                "Coach-Dev": "coach_dev", "Coach-QA": "coach_review",
-            }
-            asking_role = ROLE_MAP.get(author, "pm")
-
-        # Count research rounds
         cursor3 = await db.execute(
             "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='行业顾问'",
             (card["id"],),

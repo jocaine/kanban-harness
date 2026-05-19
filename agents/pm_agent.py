@@ -11,7 +11,7 @@ import os
 from agents.mcp_config import ensure_agent_mcp_config
 from agents.registry import registry, AgentRole
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.agent.pm")
 
 DEFAULT_TIMEOUT = 300
 
@@ -60,9 +60,12 @@ class PMAgent:
         )
 
         if comments:
-            card_context += "\n### 已有评论（最近 5 条）\n\n"
-            for c in comments[-5:]:
-                card_context += f"**{c.get('author', 'unknown')}:** {c.get('content', '')}\n\n"
+            card_context += "\n### 已有评论\n\n"
+            for c in comments:
+                text = c.get('content', '')
+                if c.get('detail'):
+                    text += "\n\n_(有详细数据，可通过 read_comment_detail 工具查看)_"
+                card_context += f"**{c.get('author', 'unknown')}:** {text}\n\n"
 
         suffix = self._build_suffix(card, comments)
         card_context += f"\n---\n\n{suffix}"

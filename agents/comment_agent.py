@@ -7,7 +7,7 @@ import os
 from agents.registry import registry, AgentRole
 from agents.mcp_config import ensure_agent_mcp_config
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.agent.comment")
 
 
 class CommentAgent:
@@ -28,20 +28,31 @@ class CommentAgent:
     async def execute(self, card: dict, existing_comments: list[dict] | None = None) -> dict:
         """Generate a review comment for the given card.
 
-        Returns: {"success": bool, "comment": str, "summary": str}
+        Returns: {"success": bool, "comment": str, "detail": str, "summary": str}
         """
         prompt = await self._build_prompt(card, existing_comments or [])
         try:
             effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
             response = await self._call_model(prompt, timeout=effective_timeout)
+            comment, detail = self._split_detail(response)
             return {
-                "success": bool(response),
-                "comment": response,
+                "success": bool(comment),
+                "comment": comment,
+                "detail": detail,
                 "summary": f"{self.role_config.display_name} reviewed [{card.get('code', '')}]",
             }
         except Exception as e:
             logger.error(f"CommentAgent({self.role_config.role}) failed: {e}")
-            return {"success": False, "comment": "", "summary": str(e)}
+            return {"success": False, "comment": "", "detail": "", "summary": str(e)}
+
+    DETAIL_SEPARATOR = "---DETAIL---"
+
+    def _split_detail(self, response: str) -> tuple[str, str]:
+        """Split response into summary and detail by separator marker."""
+        if self.DETAIL_SEPARATOR in response:
+            parts = response.split(self.DETAIL_SEPARATOR, 1)
+            return parts[0].strip(), parts[1].strip()
+        return response, ""
 
     async def _build_prompt(self, card: dict, comments: list[dict]) -> str:
         """Build prompt. For claude_cli/hermes, system prompt is passed separately."""
@@ -62,8 +73,11 @@ class CommentAgent:
 
         if comments:
             card_context += "\n### 已有评论\n\n"
-            for c in comments[-5:]:
-                card_context += f"**{c.get('author', 'unknown')}:** {c.get('content', '')}\n\n"
+            for c in comments:
+                text = c.get('content', '')
+                if c.get('detail'):
+                    text += "\n\n_(有详细数据，可通过 read_comment_detail 工具查看)_"
+                card_context += f"**{c.get('author', 'unknown')}:** {text}\n\n"
 
         suffix = self._build_suffix(card, comments)
         card_context += f"\n---\n\n{suffix}"
@@ -81,16 +95,30 @@ class CommentAgent:
         role = self.role_config.role
         status = card.get("status", "")
 
-        # PM evaluating a organizing card that came from research (has industry comments)
+        # PM in organizing: two scenarios
         if role == "pm" and status == "organizing":
             has_industry = any(c.get("author") == "行业顾问" for c in comments)
             if has_industry:
+                # Scenario A: evaluating industry research results
                 return (
                     "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑决策：\n\n"
                     "- 如果材料充分（有具体数据、竞品对比、可落地方案）→ 评论开头写 [调研充分]\n"
                     "  - 开发需求（type=dev）：整理最终验收标准\n"
                     "  - 调研需求（type=research）：提炼结论要点，后续系统会自动归档\n"
                     "- 如果材料不足（缺少关键数据、方案不具体、风险未量化）→ 评论开头写 [需要补充]，然后明确列出需要补充的具体内容和重点方向\n\n"
+                    "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
+                )
+            else:
+                # Scenario B: new card from user, PM does triage/breakdown
+                return (
+                    "这是一张新到达 organizing 列的卡片，你是 PM gatekeeper，负责拆解和分发。\n\n"
+                    "请分析这张卡片的描述，做出以下判断：\n\n"
+                    "1. 如果需求描述清晰、验收标准明确、无需额外调研 → 评论开头写 [调研充分]\n"
+                    "   然后补充验收标准和技术要点，系统会将卡片推进到 dev 列\n\n"
+                    "2. 如果需求涉及不确定因素（市场数据、竞品情况、技术可行性未知）→ 评论开头写 [需要补充]\n"
+                    "   然后明确列出需要行业顾问调研的具体问题，系统会将卡片移到 research 列\n\n"
+                    "3. 如果需求太大需要拆分 → 评论开头写 [需要补充]\n"
+                    "   说明拆分建议，等 CEO 确认后再建子卡\n\n"
                     "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
                 )
 
@@ -131,7 +159,7 @@ class CommentAgent:
             if proj:
                 sections.append(f"## 项目：{proj['name']} ({proj['prefix']})")
                 if proj["product_memory"]:
-                    sections.append(f"\n## 产品记忆\n\n{proj['product_memory'][:1000]}")
+                    sections.append(f"\n## 产品记忆\n\n{proj['product_memory']}")
 
             cursor = await db.execute(
                 "SELECT r.code, r.title, r.status, r.priority "
@@ -167,9 +195,12 @@ class CommentAgent:
         await ensure_hermes_config()
 
         toolsets = cfg.toolsets if hasattr(cfg, "toolsets") and cfg.toolsets else []
+        skills = cfg.skills if hasattr(cfg, "skills") and cfg.skills else []
         cmd = ["hermes", "-z", prompt]
         if toolsets:
             cmd.extend(["-t", ",".join(toolsets)])
+        if skills:
+            cmd.extend(["--skills", ",".join(skills)])
         if cfg.name:
             cmd.extend(["--model", cfg.name])
 

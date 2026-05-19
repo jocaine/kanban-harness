@@ -3,7 +3,7 @@ import aiosqlite
 import os
 from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.core.database")
 
 load_dotenv(override=True)
 
@@ -156,6 +156,16 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
+    # Migration 5: Add detail column to comments
+    cursor = await db.execute("PRAGMA table_info(comments)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "detail" not in columns:
+        logger.info("Migrating comments table: adding detail column")
+        await db.execute(
+            "ALTER TABLE comments ADD COLUMN detail TEXT DEFAULT ''"
+        )
+    await db.commit()
+
 
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
@@ -229,6 +239,7 @@ async def init_db():
                 requirement_id INTEGER NOT NULL,
                 author TEXT DEFAULT '',
                 content TEXT NOT NULL,
+                detail TEXT DEFAULT '',
                 created_at DATETIME DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
             );
@@ -329,6 +340,8 @@ async def init_db():
             logger.info("Migrating requirements table: adding type column")
             await db2.executescript("""
                 PRAGMA foreign_keys=OFF;
+                DROP TABLE IF EXISTS requirements_new;
+                DELETE FROM requirements WHERE status NOT IN ('research','organizing','dev','testing','done','blocked');
                 CREATE TABLE requirements_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     version_id INTEGER NOT NULL,

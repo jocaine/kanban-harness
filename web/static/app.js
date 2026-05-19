@@ -1385,12 +1385,33 @@ function renderComments(comments) {
             <div class="comment-header">
                 <span class="comment-author">${esc(c.author) || '系统'}</span>
                 <span>${esc(c.created_at)}</span>
+                ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})" title="查看详细数据">📋</button>` : ''}
                 <button onclick="event.stopPropagation();deleteComment(${c.id})" title="删除">&times;</button>
             </div>
             <div class="comment-body md-content">${renderRoleChat(c.content)}</div>
+            <div class="comment-detail" id="detail-${c.id}" style="display:none"></div>
         </div>
     `).join('');
     list.innerHTML = html;
+}
+
+async function toggleDetail(btn, cid) {
+    const el = document.getElementById('detail-' + cid);
+    if (el.style.display !== 'none') {
+        el.style.display = 'none';
+        btn.classList.remove('active');
+        return;
+    }
+    if (!el.dataset.loaded) {
+        el.innerHTML = '<em>加载中...</em>';
+        const resp = await api('/api/comments/' + cid + '/detail');
+        el.innerHTML = resp.detail
+            ? `<div class="detail-content md-content">${renderRoleChat(resp.detail)}</div>`
+            : '<em>无详细数据</em>';
+        el.dataset.loaded = '1';
+    }
+    el.style.display = 'block';
+    btn.classList.add('active');
 }
 
 async function addComment() {
@@ -1512,6 +1533,9 @@ document.addEventListener('keydown', e => {
 });
 
 let _logFilters = new Set(['poll', 'api', 'dim', 'info', 'highlight', 'chat', 'err']); // all visible by default
+let _logViewMode = 'type'; // 'type' | 'layer'
+let _layerData = null;
+let _lastLogLines = [];
 
 async function toggleLogViewer() {
     const overlay = document.getElementById('log-overlay');
@@ -1668,7 +1692,7 @@ function annotateLog(msg) {
     }
 
     // Chat / User interaction
-    if (/\[CHAT\]/.test(msg)) {
+    if (/\[kh\.web\.chat\]/.test(msg) || /\[CHAT\]/.test(msg)) {
         icon = '💬'; label = '用户';
         const chatM = msg.match(/user message:\s*"([^"]+)"/);
         display = chatM ? '用户说: "' + escapeHtml(chatM[1]) + '"' : escapeHtml(msg);
@@ -1677,7 +1701,7 @@ function annotateLog(msg) {
     }
 
     // PM Agent actions
-    if (/\[PM\]/.test(msg)) {
+    if (/\[kh\.agent\.pm\]/.test(msg) || /\[PM\]/.test(msg)) {
         icon = '📋'; label = 'PM';
         if (/tool_exec/.test(msg)) {
             const toolM = msg.match(/tool_exec:\s*(\w+)/);
@@ -1746,8 +1770,6 @@ function closeLogViewer(event) {
 
 // ==================== Log Layer View (by architecture layer) ====================
 
-let _logViewMode = 'type'; // 'type' | 'layer'
-let _layerData = null;
 
 function switchLogView(mode) {
     _logViewMode = mode;
@@ -2484,7 +2506,6 @@ function truncate(str, len) {
 
 let _pendingDecisions = [];
 let _currentDecision = null;
-let _lastLogLines = []; // cache for log filter toggling
 
 async function pollDecisions() {
     try {
@@ -2701,8 +2722,10 @@ async function loadDecisionCard(decision) {
                 <div class="comment-header">
                     <span class="comment-author">${esc(c.author || '系统')}</span>
                     <span>${esc(c.created_at)}</span>
+                    ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})" title="查看详细数据">📋</button>` : ''}
                 </div>
                 <div class="comment-body md-content">${renderRoleChat(c.content)}</div>
+                <div class="comment-detail" id="detail-${c.id}" style="display:none"></div>
             </div>
         `).join('');
 
