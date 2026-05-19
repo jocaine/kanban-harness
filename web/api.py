@@ -53,12 +53,13 @@ class ReqCreate(BaseModel):
     description: str = ""
     priority: str = "P2"
     type: str = "dev"
-    status: str = "pending"
+    status: str = "organizing"
     assignee: str = ""
     deadline: str = ""
     estimated_hours: float = 0
     notes: str = ""
     queue_reason: str = ""
+    agent_timeout: Optional[int] = None
 
 class ReqUpdate(BaseModel):
     title: Optional[str] = None
@@ -73,6 +74,7 @@ class ReqUpdate(BaseModel):
     notes: Optional[str] = None
     tags: Optional[str] = None
     queue_reason: Optional[str] = None
+    agent_timeout: Optional[int] = None
 
 class ReqMove(BaseModel):
     status: str
@@ -206,12 +208,13 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
     )
     pos = (await cursor.fetchone())[0]
     # 调研类型卡片创建时自动设为 research 状态
-    init_status = "research" if data.type == "research" else (data.status or "pending")
+    init_status = "research" if data.type == "research" else (data.status or "organizing")
     cursor = await db.execute(
-        "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,queue_reason,code,position) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,queue_reason,agent_timeout,code,position) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (data.version_id, data.title, description, data.priority, data.type, init_status,
-         data.assignee, data.deadline, data.estimated_hours, notes, data.queue_reason, code, pos)
+         data.assignee, data.deadline, data.estimated_hours, notes, data.queue_reason,
+         data.agent_timeout, code, pos)
     )
     await db.commit()
     rid = cursor.lastrowid
@@ -251,7 +254,7 @@ async def get_requirement_by_code(code: str = "", db: aiosqlite.Connection = Dep
 @router.put("/requirements/{rid}")
 async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection = Depends(get_db)):
     updates, params = [], []
-    for field in ("title", "description", "priority", "type", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags", "queue_reason"):
+    for field in ("title", "description", "priority", "type", "status", "assignee", "deadline", "estimated_hours", "actual_hours", "notes", "tags", "queue_reason", "agent_timeout"):
         val = getattr(data, field)
         if val is not None:
             if field in ("description", "notes"):
@@ -269,7 +272,7 @@ async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection
 
 @router.put("/requirements/{rid}/move")
 async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    valid = ("research", "pending", "dev", "testing", "done", "blocked")
+    valid = ("research", "organizing", "dev", "testing", "done", "blocked")
     if data.status not in valid:
         raise HTTPException(400, f"status must be one of {valid}")
 
@@ -283,8 +286,8 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     req_type = row["type"]
 
     # Type-based state machine rules
-    if req_type == "dev" and old_status == "pending" and data.status == "done":
-        raise HTTPException(400, "开发需求不能直接从 pending 移到 done，须经过 dev→testing→done 流程")
+    if req_type == "dev" and old_status == "organizing" and data.status == "done":
+        raise HTTPException(400, "开发需求不能直接从 organizing 移到 done，须经过 dev→testing→done 流程")
     if req_type == "research" and data.status in ("dev", "testing"):
         raise HTTPException(400, "调研需求不能移到 dev/testing 列，审计通过后直接到 done")
 
@@ -295,8 +298,8 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
                 403,
                 f"Role '{agent_role}' cannot move {old_status}->{data.status}, allowed: {allowed}"
             )
-        # Dev moving to pending/blocked MUST provide a reason
-        if agent_role == "coach_dev" and data.status in ("pending", "blocked") and not data.reason:
+        # Dev moving to organizing/blocked MUST provide a reason
+        if agent_role == "coach_dev" and data.status in ("organizing", "blocked") and not data.reason:
             raise HTTPException(
                 400,
                 f"Role 'coach_dev' must provide a reason when moving to '{data.status}'"
@@ -309,7 +312,7 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     # 进入对应列时自动设 assignee，前端据此判断活跃/排队中
     STATUS_ASSIGNEE_MAP = {
         "research": "Industry",
-        "pending": "PM",
+        "organizing": "PM",
         "dev": "Coach-Dev",
         "testing": "Coach-Review",
     }
@@ -605,7 +608,7 @@ async def list_tags(project_id: int = 0, db: aiosqlite.Connection = Depends(get_
             tags = [t.strip() for t in tags.split(",") if t.strip()]
         for t in tags:
             if t not in tag_stats:
-                tag_stats[t] = {"tag": t, "total": 0, "research": 0, "pending": 0, "dev": 0, "testing": 0, "done": 0, "description": ""}
+                tag_stats[t] = {"tag": t, "total": 0, "research": 0, "organizing": 0, "dev": 0, "testing": 0, "done": 0, "description": ""}
             tag_stats[t]["total"] += 1
 
     cursor = await db.execute(
@@ -649,7 +652,7 @@ async def get_tag_requirements(tag: str, project_id: int = 0, db: aiosqlite.Conn
         if tag in tags:
             filtered.append(r)
 
-    grouped = {"research": [], "pending": [], "dev": [], "testing": [], "done": []}
+    grouped = {"research": [], "organizing": [], "dev": [], "testing": [], "done": []}
     for r in filtered:
         if r["status"] in grouped:
             grouped[r["status"]].append(r)
@@ -1018,7 +1021,7 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
     """List cards waiting for CEO/human decision.
 
     Includes:
-    - Cards in pending queue (from any role, e.g. [转给PM])
+    - Cards in organizing queue (from any role, e.g. [转给PM])
     - Research cards where Industry marked [需要补充] (stay in research, CEO decides)
     """
     import json
@@ -1031,7 +1034,7 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
         JOIN projects p ON v.project_id = p.id
         WHERE r.archived = 0
         AND (
-            r.status = 'pending'
+            r.status = 'organizing'
             OR (r.status = 'research' AND r.id IN (
                 SELECT c.requirement_id FROM comments c
                 WHERE c.author IN ('行业顾问', 'Industry')
@@ -1076,7 +1079,7 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
                 (card["id"],),
             )
         else:
-            # pending status → determine from last agent comment
+            # organizing status → determine from last agent comment
             cursor2 = await db.execute(
                 "SELECT content, author, created_at FROM comments "
                 "WHERE requirement_id=? AND author IN ('产品经理', 'PM', '行业顾问', 'Industry', 'Coach-Dev', 'Coach-QA') "
@@ -1089,7 +1092,7 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
 
         comment_text = last_comment["content"] or ""
 
-        # Map author to asking_role (only needed for pending status)
+        # Map author to asking_role (only needed for organizing status)
         if card["status"] != "research":
             author = last_comment["author"]
             ROLE_MAP = {
@@ -1132,21 +1135,21 @@ class CEODecisionInput(BaseModel):
 
 @router.post("/decisions/{rid}/submit")
 async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Connection = Depends(get_db)):
-    """CEO submits a decision on a pending card."""
+    """CEO submits a decision on a card awaiting CEO input."""
     import json
 
     cursor = await db.execute("SELECT status, type FROM requirements WHERE id=?", (rid,))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "requirement not found")
-    if row["status"] not in ("pending", "research", "testing"):
-        raise HTTPException(400, "card must be in pending, research, or testing status")
+    if row["status"] not in ("organizing", "research", "testing"):
+        raise HTTPException(400, "card must be in organizing, research, or testing status")
     req_type = row["type"]
 
     # Determine target status
     ROLE_WORK_STATUS = {
         "industry": "research",
-        "pm": "pending",
+        "pm": "organizing",
         "coach_dev": "dev",
         "coach_review": "testing",
     }
@@ -1156,7 +1159,7 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
         new_status = "research"
     elif data.decision == "reply_to_role":
         # Return card to the asking role's working column
-        new_status = ROLE_WORK_STATUS.get(data.asking_role, "pending")
+        new_status = ROLE_WORK_STATUS.get(data.asking_role, "organizing")
     else:
         new_status = ""
 
@@ -1203,4 +1206,4 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
             )
 
     await db.commit()
-    return {"ok": True, "new_status": new_status or "pending"}
+    return {"ok": True, "new_status": new_status or "organizing"}

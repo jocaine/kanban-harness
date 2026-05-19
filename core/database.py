@@ -40,7 +40,7 @@ async def _migrate_db(db: aiosqlite.Connection):
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
                 type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
-                status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
+                status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
                 estimated_hours REAL DEFAULT 0,
@@ -63,7 +63,52 @@ async def _migrate_db(db: aiosqlite.Connection):
         """)
         await db.commit()
 
-    # Migration: Add queue_reason column to requirements
+    # Migration 2: Rename 'pending' → 'organizing' in status constraint + data
+    cursor = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='requirements'"
+    )
+    row = await cursor.fetchone()
+    if row and "'organizing'" not in row[0]:
+        logger.info("Migrating requirements table: pending→organizing status rename")
+        await db.executescript("""
+            PRAGMA foreign_keys=OFF;
+            DROP TABLE IF EXISTS requirements_new;
+            CREATE TABLE requirements_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
+                status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
+                assignee TEXT DEFAULT '',
+                deadline TEXT DEFAULT '',
+                estimated_hours REAL DEFAULT 0,
+                actual_hours REAL DEFAULT 0,
+                tags TEXT DEFAULT '[]',
+                notes TEXT DEFAULT '',
+                queue_reason TEXT DEFAULT '',
+                code TEXT DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT (datetime('now','localtime')),
+                updated_at DATETIME DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (version_id) REFERENCES versions(id) ON DELETE CASCADE
+            );
+            INSERT INTO requirements_new
+                SELECT id, version_id, title, description, priority, type,
+                       CASE WHEN status='pending' THEN 'organizing' ELSE status END,
+                       assignee, deadline, estimated_hours, actual_hours, tags, notes,
+                       queue_reason, code, position, archived, created_at, updated_at
+                FROM requirements;
+            DROP TABLE requirements;
+            ALTER TABLE requirements_new RENAME TO requirements;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
+            PRAGMA foreign_keys=ON;
+        """)
+        await db.commit()
+
+    # Migration 3: Add queue_reason column to requirements
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "queue_reason" not in columns:
@@ -78,7 +123,7 @@ async def _migrate_db(db: aiosqlite.Connection):
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
                 type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
-                status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
+                status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
                 estimated_hours REAL DEFAULT 0,
@@ -99,6 +144,16 @@ async def _migrate_db(db: aiosqlite.Connection):
             CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
             PRAGMA foreign_keys=ON;
         """)
+    await db.commit()
+
+    # Migration 4: Add agent_timeout column to requirements
+    cursor = await db.execute("PRAGMA table_info(requirements)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "agent_timeout" not in columns:
+        logger.info("Migrating requirements table: adding agent_timeout column")
+        await db.execute(
+            "ALTER TABLE requirements ADD COLUMN agent_timeout INTEGER DEFAULT NULL"
+        )
     await db.commit()
 
 
@@ -143,7 +198,7 @@ async def init_db():
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
                 type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
-                status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
+                status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
                 estimated_hours REAL DEFAULT 0,
@@ -281,7 +336,7 @@ async def init_db():
                     description TEXT DEFAULT '',
                     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
                     type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
-                    status TEXT DEFAULT 'pending' CHECK(status IN ('research','pending','dev','testing','done','blocked')),
+                    status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
                     assignee TEXT DEFAULT '',
                     deadline TEXT DEFAULT '',
                     estimated_hours REAL DEFAULT 0,

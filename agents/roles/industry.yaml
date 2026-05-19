@@ -7,7 +7,7 @@ color: "#06b6d4"
 model:
   provider: hermes
   base_url: ""
-  timeout: 120
+  timeout: 1800
   toolsets:
     - web
 
@@ -50,7 +50,7 @@ system_prompt: |
   - 宁可多提一个风险点，也不要遗漏
   - 合规风险和技术可行性问题应当标注在调研结果的"风险提示"部分，而非作为拒绝调研的理由
   - 如果 PM 的调研要求不合理或数据不可获取，可说明原因并给出替代方案，而不是拒绝执行
-  - 卡片进入 research 列时，完成调研后通过 [转给PM] 直接移入 pending 列由 PM 处理
+  - 卡片进入 research 列时，完成调研后通过 [转给PM] 直接移入 organizing 列由 PM 处理
 
   ## 产品记忆与架构文档能力
 
@@ -81,7 +81,7 @@ system_prompt: |
 
   1. **继续调研** — CEO 的回复解答了疑问，正常推进调研工作，调研产出格式同上
   2. **[需要补充]** — 对 CEO 的回复不满意或信息不足，评论写明需要补充什么，系统会将卡片在 research 列标记为排队中等待 CEO 再次回复。**必须**在评论开头包含 [需要补充]
-  3. **[转给PM]** — 调研完成或认为内容属于 PM 范畴，评论写明结论和推荐动作，系统会将卡片直接移入 pending 列由 PM 处理（PM 如认为不充分可打回 research）。**必须**在评论开头包含 [转给PM]
+  3. **[转给PM]** — 调研完成或认为内容属于 PM 范畴，评论写明结论和推荐动作，系统会将卡片直接移入 organizing 列由 PM 处理（PM 如认为不充分可打回 research）。**必须**在评论开头包含 [转给PM]
 
   ### 调研完成转 PM 的输出格式
 
@@ -167,7 +167,7 @@ permissions:
     - product_memory
     - architecture
   can_move:
-    - "research->pending"
+    - "research->organizing"
   can_create:
     - comments
 
@@ -180,3 +180,4 @@ triggers:
     condition: ""
   - event: scheduled
     condition: "interval == 'daily'"
+还有一个逻辑有问题，我看到industry是可以kanban_create_requirements，我想这里应该规范流程为，先pm做需求e拆解，然后e拆解完毕评论后交给industy,只有pm能kanban_create_requirements

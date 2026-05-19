@@ -37,7 +37,8 @@ class CommentAgent:
         """
         prompt = await self._build_prompt(card, existing_comments or [])
         try:
-            response = await self._call_model(prompt)
+            effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
+            response = await self._call_model(prompt, timeout=effective_timeout)
             return {
                 "success": bool(response),
                 "comment": response,
@@ -80,8 +81,8 @@ class CommentAgent:
         role = self.role_config.role
         status = card.get("status", "")
 
-        # PM evaluating a pending card that came from research (has industry comments)
-        if role == "pm" and status == "pending":
+        # PM evaluating a organizing card that came from research (has industry comments)
+        if role == "pm" and status == "organizing":
             has_industry = any(c.get("author") == "行业顾问" for c in comments)
             if has_industry:
                 return (
@@ -147,17 +148,18 @@ class CommentAgent:
 
         return "\n".join(sections)
 
-    async def _call_model(self, prompt: str) -> str:
+    async def _call_model(self, prompt: str, timeout: int | None = None) -> str:
         cfg = self.role_config.model
+        effective_timeout = timeout or cfg.timeout
 
         if cfg.provider == "hermes":
-            return await self._call_hermes(prompt, cfg)
+            return await self._call_hermes(prompt, cfg, effective_timeout)
         elif cfg.provider == "anthropic":
-            return await self._call_anthropic(prompt, cfg)
+            return await self._call_anthropic(prompt, effective_timeout)
         else:
-            return await self._call_openai(prompt, cfg)
+            return await self._call_openai(prompt, effective_timeout)
 
-    async def _call_hermes(self, prompt: str, cfg) -> str:
+    async def _call_hermes(self, prompt: str, cfg, timeout: int) -> str:
         """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
         from web.hermes_chat import ensure_hermes_config, _build_hermes_env
         await ensure_hermes_config()
@@ -178,11 +180,11 @@ class CommentAgent:
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=cfg.timeout
+                proc.communicate(), timeout=timeout
             )
         except asyncio.TimeoutError:
             proc.kill()
-            raise RuntimeError(f"hermes timed out after {cfg.timeout}s")
+            raise RuntimeError(f"hermes timed out after {timeout}s")
 
         output = stdout.decode(errors="replace").strip()
         if proc.returncode != 0:
@@ -196,18 +198,18 @@ class CommentAgent:
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
-    async def _call_anthropic(self, prompt: str, cfg) -> str:
+    async def _call_anthropic(self, prompt: str, timeout: int) -> str:
         import anthropic
 
         api_key = ANTHROPIC_API_KEY
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set")
-        kwargs = {"api_key": api_key}
-        if cfg.base_url or ANTHROPIC_BASE_URL:
-            kwargs["base_url"] = cfg.base_url or ANTHROPIC_BASE_URL
+        kwargs = {"api_key": api_key, "timeout": timeout}
+        if self.role_config.model.base_url or ANTHROPIC_BASE_URL:
+            kwargs["base_url"] = self.role_config.model.base_url or ANTHROPIC_BASE_URL
         client = anthropic.AsyncAnthropic(**kwargs)
         # Sync model from env (same source as hermes_chat.py::ensure_hermes_config)
-        model_name = os.getenv("HERMES_MODEL") or os.getenv("CHAT_MODEL") or cfg.name or "claude-sonnet-4-6"
+        model_name = os.getenv("HERMES_MODEL") or os.getenv("CHAT_MODEL") or self.role_config.model.name or "claude-sonnet-4-6"
         msg = await client.messages.create(
             model=model_name,
             max_tokens=1024,
@@ -218,7 +220,8 @@ class CommentAgent:
                 return block.text
         return ""
 
-    async def _call_openai(self, prompt: str, cfg) -> str:
+    async def _call_openai(self, prompt: str, timeout: int) -> str:
+        cfg = self.role_config.model
         base = (cfg.base_url or OPENAI_BASE_URL or "https://api.openai.com").rstrip("/")
         api_key = OPENAI_API_KEY
         if not api_key:
@@ -232,7 +235,7 @@ class CommentAgent:
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 1024,
                 },
-                timeout=cfg.timeout,
+                timeout=timeout,
             )
             resp.raise_for_status()
             choices = resp.json().get("choices", [])
