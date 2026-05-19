@@ -161,6 +161,8 @@ class CommentAgent:
 
     async def _call_hermes(self, prompt: str, cfg, timeout: int) -> str:
         """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
+        import time as _time
+
         from web.hermes_chat import ensure_hermes_config, _build_hermes_env
         await ensure_hermes_config()
 
@@ -178,41 +180,57 @@ class CommentAgent:
             stderr=asyncio.subprocess.PIPE,
             env=_build_hermes_env(),
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
+
+        async def _read_until(stream, deadline):
+            """Read stream chunks until deadline, return accumulated bytes."""
+            chunks = []
+            while True:
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    chunk = await asyncio.wait_for(stream.read(4096), timeout=max(remaining, 1))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                except asyncio.TimeoutError:
+                    break
+            return b"".join(chunks)
+
+        deadline = _time.monotonic() + timeout
+        stdout_task = asyncio.create_task(_read_until(proc.stdout, deadline))
+        stderr_task = asyncio.create_task(_read_until(proc.stderr, deadline))
+        stdout_data, stderr_data = await asyncio.gather(stdout_task, stderr_task)
+
+        timed_out = proc.returncode is None
+        if timed_out:
             proc.kill()
-            # Try to salvage partial output from the pipe
-            partial = b""
-            try:
-                partial, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                pass
-            partial_text = partial.decode(errors="replace").strip()
-            # Strip any incomplete tool call XML from partial output
+
+        await proc.wait()  # reap zombie
+
+        output = stdout_data.decode(errors="replace").strip()
+        if timed_out:
+            # Strip incomplete tool call XML
             import re
-            partial_text = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', partial_text, flags=re.DOTALL)
-            partial_text = re.sub(r'<HermesTool:[^>]*/>', '', partial_text)
-            partial_text = re.sub(r'<HermesTool:[^>]*>.*$', '', partial_text, flags=re.DOTALL)
+            output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
+            output = re.sub(r'<HermesTool:[^>]*/>', '', output)
+            output = re.sub(r'<HermesTool:[^>]*>.*$', '', output, flags=re.DOTALL)
             timeout_min = timeout // 60
-            logger.warning(f"hermes timed out after {timeout}s, partial output: {partial_text[:200]}")
+            logger.warning(f"hermes timed out after {timeout}s, partial output: {output[:200]}")
             return (
                 f"[转给PM]\n\n"
                 f"[调研超时] 调研在 {timeout_min} 分钟时限内未完成。部分进展如下：\n\n"
-                f"{partial_text[:2000]}\n\n"
+                f"{output[:2000]}\n\n"
                 f"---\n"
                 f"⚠️ 以上为超时前部分结果。PM 请评估：1) 加时重试 2) 基于部分信息推进 3) 缩减调研范围"
             )
 
-        output = stdout.decode(errors="replace").strip()
         if proc.returncode != 0:
-            err = stderr.decode(errors="replace").strip()
+            err = stderr_data.decode(errors="replace").strip()
             logger.warning(f"hermes exited {proc.returncode}: {err[:200]}")
             if not output:
                 raise RuntimeError(f"hermes failed: {err[:300]}")
-        # Strip Hermes tool call XML tags (both <HermesTool: name>...</HermesTool: name> and <HermesTool: name>...</HermesTool>)
+        # Strip Hermes tool call XML tags
         import re
         output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
