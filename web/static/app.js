@@ -672,7 +672,7 @@ function getQueueReason(r) {
     if (r.queue_reason) return r.queue_reason;
     const defaults = {
         research: '等待行业顾问调研分析',
-        pending:  '需要 CEO 决策审批',
+        pending:  '等待 PM 需求整理',
         dev:      schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现',
         testing:  '等待 Coach-Review 测试验收',
         blocked:  '已阻塞，需要人工介入',
@@ -1104,7 +1104,7 @@ function renderTagList() {
             </div>
             <div class="tag-card-stats">
                 ${t.research > 0 ? '<span class="tag-stat research">' + t.research + ' 调研中</span>' : ''}
-                ${t.pending > 0 ? '<span class="tag-stat pending">' + t.pending + ' 待开发</span>' : ''}
+                ${t.pending > 0 ? '<span class="tag-stat pending">' + t.pending + ' 需求整理</span>' : ''}
                 ${t.dev > 0 ? '<span class="tag-stat dev">' + t.dev + ' 开发中</span>' : ''}
                 ${t.testing > 0 ? '<span class="tag-stat testing">' + t.testing + ' 测试中</span>' : ''}
                 ${t.done > 0 ? '<span class="tag-stat done">' + t.done + ' 已完成</span>' : ''}
@@ -2407,7 +2407,7 @@ function renderTeamGrid(agents) {
         const toolsHtml = [...uniqueTools, ...commonTools].map(t =>
             `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
         ).join('');
-        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
         const TRIGGER_LABELS = {
             'requirement_created': '新需求触发',
             'status_changed': '状态变更触发',
@@ -2437,8 +2437,8 @@ function renderTeamGrid(agents) {
             const parts = m.split('->');
             const fromStatus = parts[0];
             const toStatus = parts[1];
-            const fromLabel = fromStatus.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
-            const toLabel = toStatus.replace('research', '调研').replace('pending', '待办').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const fromLabel = fromStatus.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const toLabel = toStatus.replace('research', '调研').replace('pending', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
             const explain = MOVE_EXPLAIN[m] || '';
             const fromRole = STATUS_ROLE[fromStatus] || '';
             const toRole = STATUS_ROLE[toStatus] || '';

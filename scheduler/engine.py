@@ -453,7 +453,7 @@ class SchedulerEngine:
                                 logger.info("[EVENT-EMIT] status_changed card=[%s] %s→pending moved_by=industry → triggers PM",
                                             card.get("code", ""), old_status)
                             else:
-                                logger.info("[EVENT-EMIT] card=[%s] moved to pending by %s → awaiting CEO decision",
+                                logger.info("[EVENT-EMIT] card=[%s] moved to pending by %s → PM will pick up for evaluation",
                                             card.get("code", ""), role_name)
                         else:
                             # Emit status_changed event to trigger next role in chain
@@ -464,6 +464,15 @@ class SchedulerEngine:
                             )
                             logger.info("[EVENT-EMIT] status_changed card=[%s] %s→%s moved_by=%s",
                                         card.get("code", ""), old_status, new_status, role_name)
+
+                    # Industry [需要补充]: 不移动列，但在当前列标记为排队中等 CEO 回复
+                    if role_name == "industry" and "[需要补充]" in comment_text:
+                        await db.execute(
+                            "UPDATE requirements SET assignee='', queue_reason='等待 CEO 补充信息', updated_at=datetime('now','localtime') WHERE id=?",
+                            (card["id"],),
+                        )
+                        logger.info("[QUEUE] card=[%s] queued in research (assignee cleared), waiting for CEO reply",
+                                    card.get("code", ""))
 
                     await db.commit()
 
@@ -644,10 +653,10 @@ class SchedulerEngine:
     def _next_status_for_role(self, role_name: str, current_status: str, card: dict | None = None) -> str:
         """Determine what status a role should move the card to after commenting.
 
-        评论后必移动原则：角色在主动列完成工作后移入 pending 排队中等 CEO 决策。
-        - Industry (research) → pending
-        - Coach-Dev (dev) → pending（不走自动 testing）
-        - Coach-QA (testing) → pending（不走自动 done）
+        评论后必移动原则：各角色完成工作后移入下一列的排队中状态等对应角色处理。
+        - Industry (research) → pending（转 PM 评估，由 [转给PM] 标记触发）
+        - Coach-Dev (dev) → no comment-agent path, handled via _run_agent → testing
+        - Coach-QA (testing) → no comment-agent path, handled via CEO reigns
         - PM 在 pending 时不移动（由 CEO 通过王权面板决策）
         - PM 创建调研卡 → research
         """
