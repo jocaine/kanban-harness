@@ -1,19 +1,13 @@
-"""Comment Agent — generates review comments by calling configured LLM or Hermes CLI."""
+"""Comment Agent — generates review comments via Hermes CLI, Claude CLI, or LLM API."""
 
 import asyncio
 import logging
 import os
 
-import httpx
-
 from agents.registry import registry, AgentRole
+from agents.mcp_config import ensure_agent_mcp_config
 
 logger = logging.getLogger(__name__)
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("API_KEY", "")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
 
 
 class CommentAgent:
@@ -21,7 +15,8 @@ class CommentAgent:
 
     For roles with provider='hermes', delegates to the hermes CLI subprocess
     which has its own tool loop (web_search, browser, etc.).
-    For other providers, calls the LLM API directly (text-only, no tools).
+    For roles with provider='claude_cli', delegates to the Claude CLI subprocess
+    with kanban MCP tools.
     """
 
     def __init__(self, role_name: str, project_id: int = 0):
@@ -49,11 +44,11 @@ class CommentAgent:
             return {"success": False, "comment": "", "summary": str(e)}
 
     async def _build_prompt(self, card: dict, comments: list[dict]) -> str:
-        system = self.role_config.system_prompt
+        """Build prompt. For claude_cli/hermes, system prompt is passed separately."""
 
-        # Inject project context for hermes provider (it has tool capabilities)
+        # Inject project context for providers with tool capabilities
         context_section = ""
-        if self.project_id and self.role_config.model.provider == "hermes":
+        if self.project_id and self.role_config.model.provider in ("hermes", "claude_cli"):
             context_section = await self._get_project_context()
 
         card_context = (
@@ -70,10 +65,15 @@ class CommentAgent:
             for c in comments[-5:]:
                 card_context += f"**{c.get('author', 'unknown')}:** {c.get('content', '')}\n\n"
 
-        # Context-specific instruction suffix
         suffix = self._build_suffix(card, comments)
         card_context += f"\n---\n\n{suffix}"
 
+        # For claude_cli, system prompt goes via --append-system-prompt; return card context only
+        if self.role_config.model.provider == "claude_cli":
+            return f"{context_section}\n\n{card_context}"
+
+        # For hermes, include system prompt inline
+        system = self.role_config.system_prompt
         return f"{system}\n\n{context_section}\n\n{card_context}"
 
     def _build_suffix(self, card: dict, comments: list[dict]) -> str:
@@ -154,10 +154,10 @@ class CommentAgent:
 
         if cfg.provider == "hermes":
             return await self._call_hermes(prompt, cfg, effective_timeout)
-        elif cfg.provider == "anthropic":
-            return await self._call_anthropic(prompt, effective_timeout)
+        elif cfg.provider == "claude_cli":
+            return await self._call_claude_cli(prompt, effective_timeout)
         else:
-            return await self._call_openai(prompt, effective_timeout)
+            raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
     async def _call_hermes(self, prompt: str, cfg, timeout: int) -> str:
         """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
@@ -182,7 +182,6 @@ class CommentAgent:
         )
 
         async def _read_until(stream, deadline):
-            """Read stream chunks until deadline, return accumulated bytes."""
             chunks = []
             while True:
                 remaining = deadline - _time.monotonic()
@@ -206,11 +205,10 @@ class CommentAgent:
         if timed_out:
             proc.kill()
 
-        await proc.wait()  # reap zombie
+        await proc.wait()
 
         output = stdout_data.decode(errors="replace").strip()
         if timed_out:
-            # Strip incomplete tool call XML
             import re
             output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
             output = re.sub(r'<HermesTool:[^>]*/>', '', output)
@@ -230,51 +228,60 @@ class CommentAgent:
             logger.warning(f"hermes exited {proc.returncode}: {err[:200]}")
             if not output:
                 raise RuntimeError(f"hermes failed: {err[:300]}")
-        # Strip Hermes tool call XML tags
         import re
         output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
-    async def _call_anthropic(self, prompt: str, timeout: int) -> str:
-        import anthropic
-
-        api_key = ANTHROPIC_API_KEY
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY not set")
-        kwargs = {"api_key": api_key, "timeout": timeout}
-        if self.role_config.model.base_url or ANTHROPIC_BASE_URL:
-            kwargs["base_url"] = self.role_config.model.base_url or ANTHROPIC_BASE_URL
-        client = anthropic.AsyncAnthropic(**kwargs)
-        # Sync model from env (same source as hermes_chat.py::ensure_hermes_config)
-        model_name = os.getenv("HERMES_MODEL") or os.getenv("CHAT_MODEL") or self.role_config.model.name or "claude-sonnet-4-6"
-        msg = await client.messages.create(
-            model=model_name,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
+    async def _call_claude_cli(self, prompt: str, timeout: int) -> str:
+        """Call Claude CLI subprocess with kanban MCP tools."""
+        config_dir = ensure_agent_mcp_config(self.role_config.role, self.project_id)
+        tools = ",".join(
+            f"mcp__kanban__{t}" for t in self.role_config.allowed_tools
         )
-        for block in msg.content:
-            if hasattr(block, "text"):
-                return block.text
-        return ""
 
-    async def _call_openai(self, prompt: str, timeout: int) -> str:
-        cfg = self.role_config.model
-        base = (cfg.base_url or OPENAI_BASE_URL or "https://api.openai.com").rstrip("/")
-        api_key = OPENAI_API_KEY
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY not set")
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{base}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": cfg.name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,
-                },
-                timeout=timeout,
+        cmd = [
+            "claude",
+            "-p", prompt,
+            "--print",
+            "--allowedTools", tools,
+            "--model", self.role_config.model.name or "claude-sonnet-4-6",
+            "--append-system-prompt", self.role_config.system_prompt,
+        ]
+
+        env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL": "1"}
+        if "API_KEY" in os.environ and "ANTHROPIC_AUTH_TOKEN" not in env:
+            env["ANTHROPIC_AUTH_TOKEN"] = os.environ["API_KEY"]
+        if "API_BASE_URL" in os.environ and "ANTHROPIC_BASE_URL" not in env:
+            base = os.environ["API_BASE_URL"].rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            env["ANTHROPIC_BASE_URL"] = base
+
+        logger.info("CommentAgent(%s) starting CLI, cwd=%s", self.role_config.role, config_dir)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=config_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
             )
-            resp.raise_for_status()
-            choices = resp.json().get("choices", [])
-            return choices[0]["message"]["content"] if choices else ""
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise
+
+        output = stdout.decode(errors="replace").strip()
+
+        if proc.returncode != 0:
+            err = stderr.decode(errors="replace").strip()
+            logger.warning("CommentAgent(%s) CLI exited %d: %s", self.role_config.role, proc.returncode, err[:300])
+            if not output:
+                logger.error("CommentAgent(%s) produced no output, stderr: %s", self.role_config.role, err[:500])
+
+        return output

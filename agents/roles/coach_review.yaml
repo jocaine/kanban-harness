@@ -5,7 +5,8 @@ icon: "🔍"
 color: "#22c55e"
 
 model:
-  provider: anthropic
+  provider: claude_cli
+  name: claude-sonnet-4-6
   base_url: ""
   timeout: 600
 
