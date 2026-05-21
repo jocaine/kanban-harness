@@ -357,13 +357,26 @@ details.desc-collapsible[open] .desc-toggle::before{transform:rotate(90deg)}
 .comment-header button{margin-left:auto;border:none;background:none;color:var(--text3);cursor:pointer;font-size:14px;padding:0 4px;border-radius:4px;opacity:0;transition:var(--transition)}
 .comment-item:hover .comment-header button{opacity:1}
 .comment-header button:hover{color:var(--danger)}
-.comment-header .btn-detail{margin-left:0;opacity:1;color:var(--primary);font-size:12px}
-.comment-header .btn-detail:hover{color:var(--accent)}
-.comment-header .btn-detail.active{background:var(--primary-alpha, rgba(99,102,241,0.1));border-radius:4px}
+.comment-header .btn-detail{margin-left:0;opacity:1;color:var(--primary);font-size:11px;padding:2px 8px;border:1px solid var(--primary);border-radius:4px;background:transparent;cursor:pointer}
+.comment-header .btn-detail:hover{background:var(--primary);color:#fff}
+.comment-header .btn-detail.active{background:var(--primary);color:#fff}
+.comment-header .btn-download-md{margin-left:0;opacity:0;color:var(--text3);font-size:12px;cursor:pointer}
+.comment-item:hover .comment-header .btn-download-md{opacity:1}
+.comment-header .btn-download-md:hover{color:var(--primary)}
 .comment-body{font-size:13px;line-height:1.5;color:var(--text)}
 .comment-body.md-content{display:block;-webkit-line-clamp:unset;overflow:visible;color:var(--text)}
 .comment-detail{margin-top:8px;padding:10px 12px;background:var(--bg2);border:1px dashed var(--border);border-radius:var(--radius);font-size:12px;line-height:1.5;color:var(--text2)}
 .comment-detail .detail-content{display:block}
+
+/* Detail Overlay */
+#detail-overlay{display:none;position:fixed;top:5vh;left:5vw;width:90vw;height:85vh;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 16px 48px rgba(0,0,0,.5);z-index:2000;flex-direction:column;overflow:hidden}
+.detail-overlay-header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);font-size:15px;font-weight:600;color:var(--text);flex-shrink:0}
+.detail-overlay-header button{border:none;background:none;font-size:22px;color:var(--text3);cursor:pointer;padding:0 4px}
+.detail-overlay-header button:hover{color:var(--text)}
+.detail-overlay-body{flex:1;overflow-y:auto;padding:24px 32px;font-size:14px;line-height:1.7;color:var(--text)}
+.detail-overlay-body table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0}
+.detail-overlay-body th,.detail-overlay-body td{border:1px solid var(--border);padding:8px 12px;text-align:left}
+.detail-overlay-body th{background:var(--bg3);font-weight:600}
 .comment-input-area{display:flex;gap:8px;align-items:flex-end}
 .comment-input-area textarea{flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical;transition:var(--transition)}
 .comment-input-area textarea:focus{outline:none;border-color:var(--primary)}

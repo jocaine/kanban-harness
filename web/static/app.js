@@ -101,7 +101,7 @@ const ROLE_AVATARS = {
 
 function renderRoleChat(content) {
     if (!content) return '';
-    const rolePattern = /\*\*\[?([^\]*:→]+?)\]?\s*(?:→\s*([^\]*:]+?))?\s*[：:]\s*\*\*/;
+    const rolePattern = /\*\*\[([^\]]+?)\]\s*[：:]\s*\*\*/;
     if (!rolePattern.test(content)) return renderMd(content);
     const colorMap = {};
     let colorIdx = 0;
@@ -121,14 +121,7 @@ function renderRoleChat(content) {
         const part = sections[i].trim();
         if (!part) continue;
 
-        if (i > 0 && sections[i - 1] !== undefined) {
-            const prevRaw = sections[i - 1];
-            if (/^###\s+/.test('### ' + prevRaw)) {
-                // This check is tricky with split; let's use a different approach
-            }
-        }
-
-        if (i % 2 === 1) {
+        if (i > 0 && i % 2 === 1) {
             html += `<div class="chat-section-title">${esc(part)}</div>`;
             continue;
         }
@@ -140,7 +133,7 @@ function renderRoleChat(content) {
         let currentLines = [];
 
         for (const line of lines) {
-            const m = line.match(/\*\*\[?([^\]*:→]+?)\]?\s*(?:→\s*([^\]*:]+?))?\s*[：:]\s*\*\*(.*)/);
+            const m = line.match(/\*\*\[([^\]]+?)(?:\s*→\s*([^\]]+?))?\]\s*[：:]\s*\*\*(.*)/);
             if (m) {
                 if (currentRole) {
                     bubbles.push({role: currentRole, target: currentTarget, text: currentLines.join('\n')});
@@ -1385,33 +1378,64 @@ function renderComments(comments) {
             <div class="comment-header">
                 <span class="comment-author">${esc(c.author) || '系统'}</span>
                 <span>${esc(c.created_at)}</span>
-                ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})" title="查看详细数据">📋</button>` : ''}
+                ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})">详情</button>` : ''}
+                <button class="btn-download-md" onclick="event.stopPropagation();downloadCommentMd(${c.id})" title="下载 Markdown">⬇</button>
                 <button onclick="event.stopPropagation();deleteComment(${c.id})" title="删除">&times;</button>
             </div>
             <div class="comment-body md-content">${renderRoleChat(c.content)}</div>
-            <div class="comment-detail" id="detail-${c.id}" style="display:none"></div>
         </div>
     `).join('');
     list.innerHTML = html;
+    list._commentsData = comments;
 }
 
 async function toggleDetail(btn, cid) {
-    const el = document.getElementById('detail-' + cid);
-    if (el.style.display !== 'none') {
+    const el = document.getElementById('detail-overlay');
+    if (!el) return;
+    if (el.style.display !== 'none' && el.dataset.cid === String(cid)) {
         el.style.display = 'none';
         btn.classList.remove('active');
         return;
     }
-    if (!el.dataset.loaded) {
-        el.innerHTML = '<em>加载中...</em>';
+    el.dataset.cid = String(cid);
+    el.innerHTML = '<div class="detail-overlay-header"><span>详细数据</span><button onclick="closeDetailOverlay()">&times;</button></div><div class="detail-overlay-body"><em>加载中...</em></div>';
+    el.style.display = 'flex';
+    btn.classList.add('active');
+    try {
         const resp = await api('/api/comments/' + cid + '/detail');
-        el.innerHTML = resp.detail
+        const body = el.querySelector('.detail-overlay-body');
+        body.innerHTML = resp.detail
             ? `<div class="detail-content md-content">${renderRoleChat(resp.detail)}</div>`
             : '<em>无详细数据</em>';
-        el.dataset.loaded = '1';
+    } catch (e) {
+        const body = el.querySelector('.detail-overlay-body');
+        body.innerHTML = '<em>加载失败: ' + esc(e.message) + '</em>';
     }
-    el.style.display = 'block';
-    btn.classList.add('active');
+}
+
+function closeDetailOverlay() {
+    const el = document.getElementById('detail-overlay');
+    if (el) el.style.display = 'none';
+    document.querySelectorAll('.btn-detail.active').forEach(b => b.classList.remove('active'));
+}
+
+async function downloadCommentMd(cid) {
+    const list = document.getElementById('comment-list');
+    const comments = (list && list._commentsData) || window._decisionComments || [];
+    const c = comments.find(x => x.id === cid);
+    if (!c) return;
+    let md = c.content || '';
+    if (c.detail) {
+        const resp = await api('/api/comments/' + cid + '/detail');
+        if (resp.detail) md += '\n\n---\n\n## 详细数据\n\n' + resp.detail;
+    }
+    const blob = new Blob([md], {type: 'text/markdown;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `comment-${cid}-${(c.author || 'system').replace(/\s+/g, '_')}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 async function addComment() {
@@ -2717,15 +2741,16 @@ async function loadDecisionCard(decision) {
         const descHtml = renderMd(req.description || '');
 
         const recentComments = comments.slice(-8);
+        window._decisionComments = recentComments;
         let commentsHtml = recentComments.map(c => `
             <div class="comment-item">
                 <div class="comment-header">
                     <span class="comment-author">${esc(c.author || '系统')}</span>
                     <span>${esc(c.created_at)}</span>
-                    ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})" title="查看详细数据">📋</button>` : ''}
+                    ${c.detail ? `<button class="btn-detail" onclick="event.stopPropagation();toggleDetail(this,${c.id})">详情</button>` : ''}
+                    <button class="btn-download-md" onclick="event.stopPropagation();downloadCommentMd(${c.id})" title="下载 Markdown">⬇</button>
                 </div>
                 <div class="comment-body md-content">${renderRoleChat(c.content)}</div>
-                <div class="comment-detail" id="detail-${c.id}" style="display:none"></div>
             </div>
         `).join('');
 
