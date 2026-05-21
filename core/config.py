@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.core.config")
 
 WORKSPACE_BASE = os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces"))
 

@@ -35,7 +35,10 @@ platform_toolsets:
   - file
   - terminal
   - skills
+security:
+  allow_private_urls: true
 toolsets:
 - hermes-cli
 web:
-  search_backend: searxng
+  extract_backend: firecrawl
+  search_backend: firecrawl

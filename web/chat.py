@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from core.database import DB_PATH
 
-logger = logging.getLogger("kh.chat")
+logger = logging.getLogger("kh.web.chat")
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -63,7 +63,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "create_research_card",
-            "description": "Create a research card (status=research). Use when the topic needs investigation — competitor analysis, market research, tech feasibility study. The industry advisor will pick it up asynchronously.",
+            "description": "Create a research card (type=research). PM will structure it first, then hand off to industry advisor for async investigation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -208,7 +208,7 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 agent_timeout = args.get("agent_timeout")
                 is_research = name == "create_research_card"
                 req_type = "research" if is_research else "dev"
-                status = "research" if is_research else "organizing"
+                status = "organizing"
                 # Retry with incremented code on unique constraint failure
                 import re as _re
                 for _attempt in range(5):
@@ -371,14 +371,14 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 
 仅用于聊天界面（不改变 pm.yaml 中的角色边界）：
 - 用户描述需求/想法 → 调用 create_requirement 建卡（status=organizing, type=dev）
-- 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research）
+- 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research，PM先拆解再交给行业顾问）
 - 用户问进度 → 调用 list_requirements
 - 用户要移动卡片 → 调用 move_requirement
 - 用户要更新架构 → 调用 set_architecture
 
 原则：
 1. 绝不追问，宁可先建卡再让用户调整
-2. 需要调研的内容不要自己做，建 research 卡交给行业顾问
+2. 需要调研的内容不要自己做，建 research 卡让 PM 拆解后交给行业顾问
 3. 每张卡片包含：title、description（功能目标+验收标准）、priority
 4. 建卡后告知用户创建了什么
 """)

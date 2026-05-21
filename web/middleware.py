@@ -8,8 +8,8 @@ from starlette.responses import JSONResponse
 
 from agents.registry import registry
 
-logger = logging.getLogger(__name__)
-api_logger = logging.getLogger("kanban.api")
+logger = logging.getLogger("kh.web.middleware")
+api_logger = logging.getLogger("kh.web.middleware.api")
 
 # Map (method, path_keyword) → (action, resource)
 ROUTE_RULES: list[tuple[str, str, str, str]] = [

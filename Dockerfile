@@ -40,8 +40,11 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN pip install --no-cache-dir hermes-agent
 
-RUN echo 'name: searxng\nkind: backend\ndescription: SearXNG metasearch (self-hosted, free)' \
-    > $(python3 -c "import site; print(site.getsitepackages()[0])")/plugins/web/searxng/plugin.yaml
+RUN SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
+    echo 'name: searxng\nkind: backend\ndescription: SearXNG metasearch (self-hosted, free)' \
+    > "$SITE/plugins/web/searxng/plugin.yaml" && \
+    printf 'name: web-firecrawl\nversion: 1.0.0\ndescription: Firecrawl web search + content extraction\nauthor: NousResearch\nkind: backend\nprovides_web_providers:\n  - firecrawl\n' \
+    > "$SITE/plugins/web/firecrawl/plugin.yaml"
 
 RUN npm install -g @anthropic-ai/claude-code
 
@@ -50,6 +53,7 @@ RUN git config --global user.name "KH-Coach" && \
     git config --global user.email "coach@kanban-harness.local"
 
 RUN mkdir -p /root/.hermes /root/.claude /tmp/kh-worktrees
+COPY skills/ /root/.hermes/skills/
 
 # === AI shell wrapper (KH-078) — 偶尔变 ===
 COPY scripts/ai-exec /usr/local/bin/ai-exec

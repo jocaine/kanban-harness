@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.agent.coach_dev")
 
 DEFAULT_TIMEOUT = 600  # 10 minutes
 WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")

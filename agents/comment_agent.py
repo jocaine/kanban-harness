@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from pathlib import Path
 
 from agents.registry import registry, AgentRole
 from agents.mcp_config import ensure_agent_mcp_config
@@ -139,6 +140,19 @@ class CommentAgent:
         system = self.role_config.system_prompt
         return f"{system}\n\n{context_section}\n\n{card_context}"
 
+    def _load_skill(self, skill_name: str) -> str:
+        """Load skill file content for prompt injection, stripping frontmatter."""
+        skill_path = Path(__file__).parent.parent / "skills" / "pm" / skill_name / "SKILL.md"
+        if not skill_path.exists():
+            logger.warning("Skill file not found: %s", skill_path)
+            return ""
+        content = skill_path.read_text(encoding="utf-8")
+        if content.startswith("---"):
+            end = content.find("---", 3)
+            if end > 0:
+                content = content[end + 3:].strip()
+        return content
+
     def _build_suffix(self, card: dict, comments: list[dict]) -> str:
         """Build role-specific instruction suffix based on card state."""
         role = self.role_config.role
@@ -148,17 +162,13 @@ class CommentAgent:
         if role == "pm" and status == "organizing":
             has_industry = any(c.get("author") == "行业顾问" for c in comments)
             if has_industry:
-                # Scenario A: evaluating industry research results
+                skill_content = self._load_skill("pm-research-audit")
                 return (
-                    "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑决策：\n\n"
-                    "- 如果材料充分（有具体数据、竞品对比、可落地方案）→ 评论开头写 [调研充分]\n"
-                    "  - 开发需求（type=dev）：整理最终验收标准\n"
-                    "  - 调研需求（type=research）：提炼结论要点，后续系统会自动归档\n"
-                    "- 如果材料不足（缺少关键数据、方案不具体、风险未量化）→ 评论开头写 [需要补充]，然后明确列出需要补充的具体内容和重点方向\n\n"
+                    "你正在评估行业顾问的调研结果。\n\n"
+                    f"{skill_content}\n\n"
                     "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
                 )
             else:
-                # Scenario B: new card from user, PM does triage/breakdown
                 return (
                     "这是一张新到达 organizing 列的卡片，你是 PM gatekeeper，负责拆解和分发。\n\n"
                     "请分析这张卡片的描述，做出以下判断：\n\n"

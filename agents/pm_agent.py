@@ -64,7 +64,7 @@ class PMAgent:
             for c in comments:
                 text = c.get('content', '')
                 if c.get('detail'):
-                    text += "\n\n_(有详细数据，可通过 read_comment_detail 工具查看)_"
+                    text += f"\n\n_(有详细数据，comment_id={c['id']}，可通过 read_comment_detail 工具查看)_"
                 card_context += f"**{c.get('author', 'unknown')}:** {text}\n\n"
 
         suffix = self._build_suffix(card, comments)

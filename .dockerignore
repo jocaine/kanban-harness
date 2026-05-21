@@ -14,7 +14,6 @@ venv
 outputs/
 node_modules/
 docs/
-scripts/
 decompiler/
 *.db
 *.sqlite

@@ -14,7 +14,7 @@ import aiosqlite
 from core.database import DB_PATH
 from agents.registry import registry
 
-logger = logging.getLogger("kh.hermes")
+logger = logging.getLogger("kh.web.hermes")
 
 HERMES_BIN = os.getenv("HERMES_BIN", "hermes")
 HERMES_MODEL = os.getenv("HERMES_MODEL", "")
@@ -404,6 +404,18 @@ def _build_hermes_env() -> dict:
         env["OPENAI_API_KEY"] = API_KEY
     if API_BASE_URL:
         env["OPENAI_BASE_URL"] = API_BASE_URL
+    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    if tavily_key:
+        env["TAVILY_API_KEY"] = tavily_key
+    searxng_url = os.getenv("SEARXNG_URL", "").strip()
+    if searxng_url:
+        env["SEARXNG_URL"] = searxng_url
+    firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
+    if firecrawl_key:
+        env["FIRECRAWL_API_KEY"] = firecrawl_key
+    firecrawl_url = os.getenv("FIRECRAWL_API_URL", "").strip()
+    if firecrawl_url:
+        env["FIRECRAWL_API_URL"] = firecrawl_url
     return env
 
 
@@ -452,6 +464,28 @@ async def ensure_hermes_config():
     # Always patch MCP server
     config.setdefault("mcp_servers", {})
     config["mcp_servers"]["kanban"] = local_mcp
+
+    # Auto-select search backend based on available credentials
+    # Priority: firecrawl (search+extract+crawl) > tavily > searxng > clear ddgs
+    config.setdefault("web", {})
+    firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
+    firecrawl_url = os.getenv("FIRECRAWL_API_URL", "").strip()
+    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    searxng_url = os.getenv("SEARXNG_URL", "").strip()
+    if firecrawl_key or firecrawl_url:
+        config["web"]["search_backend"] = "firecrawl"
+    elif tavily_key:
+        config["web"]["search_backend"] = "tavily"
+    elif searxng_url:
+        config["web"]["search_backend"] = "searxng"
+    elif config["web"].get("search_backend") == "ddgs":
+        config["web"]["search_backend"] = ""
+
+    # Fix SSRF false positive: local DNS proxy resolves all domains to 198.18.x.x
+    # (private range), causing web_extract to block all URLs. Allow private URLs
+    # when running behind such a proxy.
+    config.setdefault("security", {})
+    config["security"]["allow_private_urls"] = True
 
     with open(config_file, "w") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)

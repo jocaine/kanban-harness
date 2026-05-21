@@ -8,13 +8,11 @@ import logging
 import uvicorn
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
-
 load_dotenv(override=True)
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-    format="%(asctime)s %(message)s",
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
@@ -24,6 +22,25 @@ from web.hermes_chat import ensure_hermes_config, sync_claude_settings
 
 scheduler = SchedulerEngine()
 
+async def _recover_orphan_sessions():
+    """Mark any 'running' sessions as failed on startup — their subprocesses died with the old container."""
+    import aiosqlite
+    from core.database import DB_PATH
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM agent_sessions WHERE status='running'")
+        count = (await cursor.fetchone())[0]
+        if count:
+            await db.execute(
+                "UPDATE agent_sessions SET status='failed', error_message='orphan:restart', "
+                "completed_at=datetime('now','localtime') WHERE status='running'"
+            )
+            await db.commit()
+            logging.getLogger("kh.startup").warning(
+                "Recovered %d orphan sessions from previous run", count
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: sync API config from env to hermes and claude settings
@@ -31,8 +48,7 @@ async def lifespan(app: FastAPI):
     sync_claude_settings()
 
     await init_db()
-    from web.hermes_chat import ensure_hermes_config
-    await ensure_hermes_config()
+    await _recover_orphan_sessions()
     await scheduler.start()
     yield
     await scheduler.stop()

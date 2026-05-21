@@ -97,6 +97,10 @@ async def create_requirements(version_id: int, requirements: str) -> str:
         version_id: 目标版本 ID
         requirements: JSON 数组字符串，每条至少含 title。可选: description, priority, status
     """
+    from agents.registry import registry
+    if not registry.check_permission(AGENT_ROLE, "create", "requirements"):
+        return f"错误：角色 '{AGENT_ROLE}' 无权创建需求卡片"
+
     try:
         reqs = json.loads(requirements)
     except json.JSONDecodeError as e:
@@ -406,6 +410,27 @@ def _get_allowed_moves() -> str:
     if not perms:
         return "(无)"
     return ", ".join(perms.can_move)
+
+
+@mcp.tool()
+async def load_guideline(name: str) -> str:
+    """加载工作指南获取详细指令。可用指南: pm-research-audit, pm-conflict-resolution, pm-coupling
+
+    Args:
+        name: 指南名称
+    """
+    import pathlib
+    skills_base = pathlib.Path(__file__).parent.parent / "skills" / "pm"
+    skill_path = skills_base / name / "SKILL.md"
+    if not skill_path.exists():
+        available = [d.name for d in skills_base.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+        return f"错误：指南 '{name}' 不存在。可用: {', '.join(available)}"
+    content = skill_path.read_text(encoding="utf-8")
+    if content.startswith("---"):
+        end = content.find("---", 3)
+        if end > 0:
+            content = content[end + 3:].strip()
+    return content
 
 
 if __name__ == "__main__":

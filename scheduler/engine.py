@@ -494,6 +494,43 @@ class SchedulerEngine:
                                 parsed,
                             )
 
+            # Fallback: PM used MCP tools (add_comment + move_requirement) directly,
+            # so stdout was empty but the card may already be done. Check DB for memory write.
+            if role_name == "pm" and card.get("type") == "research" and card.get("status") == "organizing":
+                memory_written = False
+                if result.get("comment"):
+                    # Check if memory was already written in the main path above
+                    parsed_check = self._parse_pm_research_conclusion(result["comment"])
+                    if parsed_check:
+                        memory_written = True
+
+                if not memory_written:
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        db.row_factory = aiosqlite.Row
+                        cursor = await db.execute(
+                            "SELECT status FROM requirements WHERE id=?", (card["id"],)
+                        )
+                        current = await cursor.fetchone()
+                        if current and current["status"] == "done":
+                            cursor2 = await db.execute(
+                                "SELECT content FROM comments WHERE requirement_id=? "
+                                "AND author='产品经理' AND content LIKE '%[调研充分]%' "
+                                "AND content LIKE '%提炼结论%' "
+                                "ORDER BY created_at DESC LIMIT 1",
+                                (card["id"],),
+                            )
+                            latest_pm = await cursor2.fetchone()
+                            if latest_pm and latest_pm["content"]:
+                                parsed = self._parse_pm_research_conclusion(latest_pm["content"])
+                                if parsed:
+                                    await self._append_research_to_memory(
+                                        project_id, card.get("code", ""), parsed,
+                                    )
+                                    logger.info(
+                                        "[PRODUCT-MEMORY] fallback: appended from DB comment for [%s]",
+                                        card.get("code", ""),
+                                    )
+
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
         except Exception as e:
             logger.error(f"Comment agent {role_name} failed: {e}")

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.agent.registry")
 
 ROLES_DIR = Path(__file__).parent / "roles"
 
@@ -14,10 +14,11 @@ ROLES_DIR = Path(__file__).parent / "roles"
 @dataclass
 class ModelConfig:
     provider: str = "anthropic"
-    name: str = "claude-sonnet-4-6"
+    name: str = ""
     base_url: str = ""
     timeout: int = 600
     toolsets: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
 
 
 @dataclass

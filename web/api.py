@@ -179,6 +179,21 @@ async def update_version(vid: int, data: VersionUpdate, db: aiosqlite.Connection
 
 @router.delete("/versions/{vid}")
 async def delete_version(vid: int, db: aiosqlite.Connection = Depends(get_db)):
+    req_cursor = await db.execute("SELECT id FROM requirements WHERE version_id=?", (vid,))
+    req_ids = [r[0] for r in await req_cursor.fetchall()]
+    if req_ids:
+        placeholders = ",".join("?" * len(req_ids))
+        # Clean up attachment files from disk
+        att_cursor = await db.execute(
+            f"SELECT filepath FROM attachments WHERE requirement_id IN ({placeholders})", req_ids
+        )
+        for row in await att_cursor.fetchall():
+            if row[0] and os.path.exists(row[0]):
+                os.remove(row[0])
+        # Clean up agent_events (no FK CASCADE)
+        await db.execute(
+            f"DELETE FROM agent_events WHERE requirement_id IN ({placeholders})", req_ids
+        )
     await db.execute("DELETE FROM requirements WHERE version_id=?", (vid,))
     await db.execute("DELETE FROM versions WHERE id=?", (vid,))
     await db.commit()
@@ -451,20 +466,43 @@ def _classify_log_layer(msg: str) -> str:
     return 'web'
 
 
-def _fetch_docker_logs(lines: int = 300):
-    """Fetch container logs via Docker Unix socket. Returns list of decoded lines."""
-    import http.client, socket
+def _docker_unix_request(method: str, path: str) -> "http.client.HTTPResponse":
+    """Send a request to Docker Engine via Unix socket."""
+    import http.client, socket as _socket
     class _UnixConn(http.client.HTTPConnection):
         def connect(self):
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
             self.sock.settimeout(10)
             self.sock.connect("/var/run/docker.sock")
     conn = _UnixConn("localhost")
-    conn.request("GET", f"/containers/kanban-harness-web-1/logs?tail={lines}&stdout=true&stderr=true&timestamps=true")
-    resp = conn.getresponse()
+    conn.request(method, path)
+    return conn.getresponse()
+
+
+def _get_self_container_id() -> str:
+    """Detect own container ID via Docker API compose service label."""
+    import json, urllib.parse
+    try:
+        filters = urllib.parse.quote('{"label":["com.docker.compose.service=web"]}')
+        resp = _docker_unix_request("GET", f"/containers/json?filters={filters}")
+        if resp.status == 200:
+            containers = json.loads(resp.read())
+            if containers:
+                return containers[0]["Id"]
+    except Exception:
+        pass
+    return ""
+
+
+_SELF_CONTAINER_ID = _get_self_container_id()
+
+
+def _fetch_docker_logs(lines: int = 300):
+    """Fetch container logs via Docker Unix socket. Returns list of decoded lines."""
+    if not _SELF_CONTAINER_ID:
+        return ["(cannot detect container ID)"]
+    resp = _docker_unix_request("GET", f"/containers/{_SELF_CONTAINER_ID}/logs?tail={lines}&stdout=true&stderr=true&timestamps=true")
     raw = resp.read()
-    resp.close()
-    conn.close()
     lines_out = []
     i = 0
     while i + 8 <= len(raw):
@@ -527,7 +565,14 @@ async def dev_logs_layers(lines: int = 300):
 
 @router.delete("/projects/{pid}")
 async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    # Hard delete: remove all related data
+    # Clean up attachment files from disk
+    att_cursor = await db.execute(
+        "SELECT filepath FROM attachments WHERE requirement_id IN (SELECT id FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?))",
+        (pid,),
+    )
+    for row in await att_cursor.fetchall():
+        if row[0] and os.path.exists(row[0]):
+            os.remove(row[0])
     await db.execute(
         "DELETE FROM comments WHERE requirement_id IN (SELECT id FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?))",
         (pid,),
@@ -552,6 +597,12 @@ async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
 
 @router.delete("/requirements/{rid}")
 async def delete_requirement(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    # Clean up attachment files from disk
+    att_cursor = await db.execute("SELECT filepath FROM attachments WHERE requirement_id=?", (rid,))
+    for row in await att_cursor.fetchall():
+        if row[0] and os.path.exists(row[0]):
+            os.remove(row[0])
+    await db.execute("DELETE FROM agent_events WHERE requirement_id=?", (rid,))
     await db.execute("DELETE FROM comments WHERE requirement_id=?", (rid,))
     await db.execute("DELETE FROM requirement_commits WHERE requirement_id=?", (rid,))
     await db.execute("DELETE FROM requirements WHERE id=?", (rid,))

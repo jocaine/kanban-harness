@@ -13,7 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-logger = logging.getLogger("kh.mcp")
+logger = logging.getLogger("kh.mcp.server")
 logging.basicConfig(
     level=logging.DEBUG if os.getenv("MCP_DEBUG") else logging.INFO,
     format="%(asctime)s [MCP] %(levelname)s %(message)s",
@@ -307,6 +307,50 @@ async def kh_web_extract(url: str) -> str:
         text = text[:5000] + f"\n...(截断，共 {len(text)} 字符)"
 
     return text if text else "提取失败：页面内容为空"
+
+
+@mcp.tool()
+async def kh_load_guideline(name: str) -> str:
+    """加载 AI agent 工作指南。供 Industry/PM 等角色按需获取详细工作流程和模板。
+
+    可用指南:
+    - industry-advisor: 行业顾问输出格式、调研报告模板、耦合卡输出
+    - market-research: 搜索方法论、工具使用、信源优先级
+    - pm-research-audit: PM 调研评估标准、决策规则
+    - pm-conflict-resolution: 退回争议处理流程
+    - pm-coupling: 耦合卡技术判断流程
+
+    Args:
+        name: 指南名称
+    """
+    from pathlib import Path
+
+    logger.info("tool:kh_load_guideline name=%r", name)
+
+    # Search in both skill directories
+    base = Path(__file__).parent.parent / "skills"
+    search_paths = [
+        base / "pm" / name / "SKILL.md",
+        base / "research" / name / "SKILL.md",
+    ]
+
+    for skill_path in search_paths:
+        if skill_path.exists():
+            content = skill_path.read_text(encoding="utf-8")
+            if content.startswith("---"):
+                end = content.find("---", 3)
+                if end > 0:
+                    content = content[end + 3:].strip()
+            return content
+
+    # List available skills
+    available = []
+    for subdir in base.iterdir():
+        if subdir.is_dir():
+            for skill_dir in subdir.iterdir():
+                if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                    available.append(skill_dir.name)
+    return f"错误：指南 '{name}' 不存在。可用: {', '.join(sorted(available))}"
 
 
 if __name__ == "__main__":
