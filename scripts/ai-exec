@@ -1,0 +1,103 @@
+#!/bin/bash
+# ai-exec — AI-friendly command wrapper with timeout and output protection
+# Usage: ai-exec [--timeout SECONDS] [--max-output BYTES] COMMAND [ARGS...]
+
+set -o pipefail
+
+DEFAULT_TIMEOUT=120
+DEFAULT_MAX_OUTPUT=51200  # 50KB
+
+TIMEOUT=$DEFAULT_TIMEOUT
+MAX_OUTPUT=$DEFAULT_MAX_OUTPUT
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        --max-output)
+            MAX_OUTPUT="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: ai-exec [--timeout SECONDS] [--max-output BYTES] COMMAND [ARGS...]" >&2
+    exit 1
+fi
+
+TMPOUT=$(mktemp)
+TMPERR=$(mktemp)
+trap 'rm -f "$TMPOUT" "$TMPERR"' EXIT
+
+timeout --signal=KILL "$TIMEOUT" "$@" >"$TMPOUT" 2>"$TMPERR"
+EXIT_CODE=$?
+
+# Timeout: exit code 124 (TERM) or 137 (KILL)
+if [[ $EXIT_CODE -eq 124 || $EXIT_CODE -eq 137 ]]; then
+    echo "[TIMEOUT] Command killed after ${TIMEOUT}s: $*" >&2
+    # Still show partial output
+fi
+
+# Command not found enhancement
+if [[ $EXIT_CODE -eq 127 ]]; then
+    CMD_NAME="$1"
+    echo "[ERROR] Command not found: $CMD_NAME" >&2
+    echo "" >&2
+    # Suggest install
+    if command -v apt-cache >/dev/null 2>&1; then
+        SUGGESTION=$(apt-cache search --names-only "^${CMD_NAME}$" 2>/dev/null | head -3)
+        if [[ -n "$SUGGESTION" ]]; then
+            echo "[SUGGESTION] apt install candidates:" >&2
+            echo "$SUGGESTION" >&2
+        else
+            # Try partial match
+            SUGGESTION=$(apt-cache search --names-only "$CMD_NAME" 2>/dev/null | head -5)
+            if [[ -n "$SUGGESTION" ]]; then
+                echo "[SUGGESTION] Possible packages:" >&2
+                echo "$SUGGESTION" >&2
+            else
+                echo "[SUGGESTION] Try: apt-get update && apt-get install -y $CMD_NAME" >&2
+            fi
+        fi
+    fi
+fi
+
+# Output with truncation
+truncate_output() {
+    local file="$1"
+    local label="$2"
+    local size
+    size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+
+    if [[ $size -eq 0 ]]; then
+        return
+    fi
+
+    if [[ $size -le $MAX_OUTPUT ]]; then
+        cat "$file"
+    else
+        if [[ $MAX_OUTPUT -ge 1024 ]]; then
+            local max_display="$((MAX_OUTPUT / 1024))KB"
+        else
+            local max_display="${MAX_OUTPUT}B"
+        fi
+        if [[ $size -ge 1024 ]]; then
+            local size_display="$((size / 1024))KB"
+        else
+            local size_display="${size}B"
+        fi
+        echo "[TRUNCATED: showing last ${max_display} of ${size_display} total ${label}]"
+        tail -c "$MAX_OUTPUT" "$file"
+    fi
+}
+
+truncate_output "$TMPOUT" "stdout"
+truncate_output "$TMPERR" "stderr" >&2
+
+exit $EXIT_CODE

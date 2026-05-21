@@ -1,0 +1,56 @@
+{
+    "python": {
+        "detect": ["python", "django", "flask", "fastapi", "pip", "poetry", "pytest"],
+        "check": ["python3 --version"],
+        "apt": ["python3-dev", "python3-venv"],
+        "install_hint": "apt-get install -y python3-dev python3-venv"
+    },
+    "node": {
+        "detect": ["node.js", "nodejs", "npm", "pnpm", "typescript", "react", "vue", "next.js"],
+        "check": ["node --version", "npm --version"],
+        "apt": [],
+        "install_hint": "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs"
+    },
+    "rust": {
+        "detect": ["rust", "cargo", "rustc", "tokio", "actix"],
+        "check": ["cargo --version", "rustc --version"],
+        "apt": [],
+        "install_hint": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+    },
+    "go": {
+        "detect": ["golang", "go ", "gin", "fiber"],
+        "check": ["go version"],
+        "apt": ["golang"],
+        "install_hint": "apt-get install -y golang"
+    },
+    "java": {
+        "detect": ["java", "spring boot", "gradle", "maven", "kotlin"],
+        "check": ["java -version", "javac -version"],
+        "apt": ["openjdk-17-jdk", "maven"],
+        "install_hint": "apt-get install -y openjdk-17-jdk maven"
+    },
+    "cpp": {
+        "detect": ["c++", "cpp", "gcc", "cmake", "qt", "boost"],
+        "check": ["gcc --version", "cmake --version", "make --version"],
+        "apt": ["gcc", "g++", "make", "cmake"],
+        "install_hint": "apt-get install -y gcc g++ make cmake"
+    },
+    "php": {
+        "detect": ["php", "laravel", "composer", "symfony"],
+        "check": ["php --version"],
+        "apt": ["php-cli", "php-mbstring", "php-xml", "php-curl"],
+        "install_hint": "apt-get install -y php-cli php-mbstring php-xml php-curl"
+    },
+    "ruby": {
+        "detect": ["ruby", "rails", "gem", "bundler"],
+        "check": ["ruby --version"],
+        "apt": ["ruby-full"],
+        "install_hint": "apt-get install -y ruby-full"
+    },
+    "dotnet": {
+        "detect": [".net", "dotnet", "c#", "csharp", "aspnet"],
+        "check": ["dotnet --version"],
+        "apt": [],
+        "install_hint": "See https://learn.microsoft.com/dotnet/core/install/linux-debian"
+    }
+}
