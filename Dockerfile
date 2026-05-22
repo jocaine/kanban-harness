@@ -70,9 +70,9 @@ COPY . .
 
 RUN mkdir -p data
 
-EXPOSE 8000
+EXPOSE 8765
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/projects')" || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/projects')" || exit 1
 
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765", "--reload", "--no-access-log"]
