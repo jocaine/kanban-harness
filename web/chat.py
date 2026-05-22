@@ -4,25 +4,33 @@ import os
 import json
 import logging
 import time
+import asyncio
 from typing import AsyncGenerator
 
 import aiosqlite
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.database import DB_PATH
+from core.task_buffer import task_buffers
+from core.chat_task_manager import chat_task_manager
 
 logger = logging.getLogger("kh.web.chat")
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_AUTH_TOKEN", "") or os.getenv("API_KEY", "")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-opus-4-6")
+import re
+
+def _strip_model_suffix(model: str) -> str:
+    return re.sub(r'\[.*\]$', '', model)
+
+CHAT_MODEL = _strip_model_suffix(os.getenv("CHAT_MODEL", "claude-opus-4-6"))
 CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "openai")  # openai / anthropic / ollama
 
 
@@ -621,57 +629,141 @@ async def _stream_ollama(message: str, system_prompt: str, model: str) -> AsyncG
 
 @router.post("/stream")
 async def chat_stream(data: ChatMessage):
-    """SSE streaming chat endpoint — hermes primary, OpenAI fallback."""
+    """SSE streaming chat — backed by background task (v0.7).
+
+    Behavior unchanged for the client: POST, get SSE stream.
+    Internally creates a background task so AI survives disconnects.
+    """
+    await _save_message(data.project_id, "user", data.message)
+    model = _strip_model_suffix(data.model) or CHAT_MODEL
     provider = data.provider or CHAT_PROVIDER
 
-    # Save user message to history
-    await _save_message(data.project_id, "user", data.message)
-
-    # Wrap generators to capture and save assistant response
-    async def _wrap_and_save(gen, agent_role=""):
-        full_response = []
-        try:
-            async for event in gen:
-                yield event
-                if event.startswith("data: "):
-                    try:
-                        payload = json.loads(event[6:].strip())
-                        if payload.get("type") == "text":
-                            full_response.append(payload["content"])
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-        finally:
-            # Save whatever was collected, even if client disconnected mid-stream
-            text = "".join(full_response)
-            if text.strip():
-                try:
-                    await _save_message(data.project_id, "assistant", text, agent_role)
-                except Exception:
-                    pass
-
-    # PM engine is the primary backend (v0.6 architecture)
-    # Hermes only used when explicitly requested via provider="hermes"
-    if provider == "hermes":
-        from web.hermes_chat import stream_hermes, check_hermes_available
-        if await check_hermes_available():
-            generator = _wrap_and_save(stream_hermes(data.project_id, data.message), "pm")
-            return StreamingResponse(
-                generator,
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-
-    # Default: PM engine with streaming tool loop
-    system_prompt = await _build_pm_system_prompt(data.project_id)
-    model = data.model or CHAT_MODEL
-
-    generator = _wrap_and_save(_chat_with_tools(data.message, system_prompt, model, provider, data.project_id), "pm")
+    task_id = await chat_task_manager.create_task(data.project_id, data.message, model, provider)
+    asyncio.create_task(_execute_and_save(task_id, data))
 
     return StreamingResponse(
-        generator,
+        _stream_from_buffer(task_id, 0),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/tasks")
+async def create_chat_task(data: ChatMessage):
+    """Create a background chat task. Returns task_id immediately."""
+    await _save_message(data.project_id, "user", data.message)
+    model = _strip_model_suffix(data.model) or CHAT_MODEL
+    provider = data.provider or CHAT_PROVIDER
+
+    task_id = await chat_task_manager.create_task(data.project_id, data.message, model, provider)
+    asyncio.create_task(_execute_and_save(task_id, data))
+
+    return {"task_id": task_id, "status": "running"}
+
+
+@router.get("/tasks/active")
+async def get_active_task(project_id: int = Query(0)):
+    """Get the most recent running task for a project (for reconnection on page load)."""
+    task = await chat_task_manager.get_active_task(project_id)
+    return {"task": task}
+
+
+@router.get("/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """Get task status."""
+    task = await chat_task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    return task
+
+
+@router.get("/tasks/{task_id}/stream")
+async def stream_task(task_id: str, last_event_id: int = Query(0)):
+    """SSE observation endpoint — streams from buffer, supports reconnection."""
+    state = task_buffers.get(task_id)
+
+    if state:
+        return StreamingResponse(
+            _stream_from_buffer(task_id, last_event_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    row = await chat_task_manager.get_completed_response(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+
+    return StreamingResponse(
+        _stream_completed_task(row),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ==================== Task Execution (thin Layer 5 glue) ====================
+
+
+async def _execute_and_save(task_id: str, data: ChatMessage):
+    """Build generator, delegate execution to ChatTaskManager, save result."""
+    provider = data.provider or CHAT_PROVIDER
+    if provider == "hermes":
+        from web.hermes_chat import stream_hermes, check_hermes_available
+        if await check_hermes_available():
+            gen = stream_hermes(data.project_id, data.message)
+        else:
+            system_prompt = await _build_pm_system_prompt(data.project_id)
+            model = _strip_model_suffix(data.model) or CHAT_MODEL
+            gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
+    else:
+        system_prompt = await _build_pm_system_prompt(data.project_id)
+        model = _strip_model_suffix(data.model) or CHAT_MODEL
+        gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
+
+    text = await chat_task_manager.run_task(task_id, gen, data.project_id)
+    if text and text.strip():
+        await _save_message(data.project_id, "assistant", text, "pm")
+
+
+# ==================== SSE Formatting (Layer 5: HTTP presentation) ====================
+
+
+async def _stream_from_buffer(task_id: str, start_index: int) -> AsyncGenerator[str, None]:
+    """Yield SSE events from the live buffer, waiting for new ones."""
+    state = task_buffers.get(task_id)
+    if not state:
+        return
+
+    notify = task_buffers.subscribe(task_id)
+    if not notify:
+        return
+
+    try:
+        cursor = start_index
+        while True:
+            while cursor < len(state.chunks):
+                chunk = state.chunks[cursor]
+                yield f"id: {chunk.index}\n{chunk.data}"
+                cursor += 1
+
+            if state.done and cursor >= len(state.chunks):
+                break
+
+            notify.clear()
+            try:
+                await asyncio.wait_for(notify.wait(), timeout=30)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        task_buffers.unsubscribe(task_id, notify)
+
+
+async def _stream_completed_task(row: dict) -> AsyncGenerator[str, None]:
+    """Replay a completed task from DB as SSE events."""
+    if row["status"] == "failed":
+        yield f"data: {json.dumps({'type': 'error', 'content': row.get('error_message', 'unknown error')})}" + "\n\n"
+    elif row.get("response_text"):
+        yield f"data: {json.dumps({'type': 'text', 'content': row['response_text']})}" + "\n\n"
+    yield f"data: {json.dumps({'type': 'done'})}" + "\n\n"
 
 
 @router.post("")
@@ -694,7 +786,7 @@ async def chat_sync(data: ChatMessage):
 
     # Default: PM engine
     system_prompt = await _build_pm_system_prompt(data.project_id)
-    model = data.model or CHAT_MODEL
+    model = _strip_model_suffix(data.model) or CHAT_MODEL
 
     gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
 

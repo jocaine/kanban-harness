@@ -41,6 +41,12 @@ async def _recover_orphan_sessions():
             )
 
 
+async def _recover_orphan_tasks():
+    """Mark any 'running' chat_tasks as failed — delegated to ChatTaskManager (Layer 3)."""
+    from core.chat_task_manager import chat_task_manager
+    await chat_task_manager.recover_orphans()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: sync API config from env to hermes and claude settings
@@ -49,6 +55,7 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     await _recover_orphan_sessions()
+    await _recover_orphan_tasks()
     await scheduler.start()
     yield
     await scheduler.stop()

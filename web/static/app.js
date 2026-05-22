@@ -2161,17 +2161,13 @@ async function loadChatHistory() {
                     return `<div class="chat-msg assistant">${renderMarkdown(m.content)}</div>`;
                 }
             }).join('');
-            // 如果最后一条是 user 消息（AI 可能还在后台处理），显示提示
-            const last = data.messages[data.messages.length - 1];
-            if (last.role === 'user') {
-                messages.innerHTML += `<div class="chat-msg assistant"><div class="chat-thinking-hint">AI 可能仍在后台处理中，稍后刷新可查看回复</div></div>`;
-            }
             messages.scrollTop = messages.scrollHeight;
         } else {
             messages.innerHTML = '';
         }
         messages.dataset.loaded = String(currentProject.id);
     } catch(e) {}
+    reconnectActiveTask();
 }
 
 async function clearChatHistory() {
@@ -2201,6 +2197,25 @@ async function sendChat() {
     messages.appendChild(assistantDiv);
     messages.scrollTop = messages.scrollHeight;
 
+    try {
+        const taskResp = await api('/api/chat/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: msg, project_id: currentProject?.id || 0}),
+        });
+        const taskId = taskResp.task_id;
+        sessionStorage.setItem('kh_active_task', taskId);
+
+        await streamTask(taskId, assistantDiv, 0);
+    } catch(e) {
+        assistantDiv.innerHTML = `<span style="color:var(--danger)">连接失败: ${escapeHtml(e.message)}</span>`;
+    } finally {
+        sessionStorage.removeItem('kh_active_task');
+        refreshBoardAfterChat();
+    }
+}
+
+async function streamTask(taskId, assistantDiv, fromIndex) {
     const ROLE_AVATARS_CHAT = {
         pm: '/static/avatars/pm_avatar.png',
         coach_dev: '/static/avatars/coach_dev_avatar.png',
@@ -2232,16 +2247,14 @@ async function sendChat() {
         </div>`;
     }
 
+    const messages = document.getElementById('chat-messages');
+    let fullText = '';
+    let gotText = false;
+
     try {
-        const resp = await fetch(API + '/api/chat/stream', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({message: msg, project_id: currentProject?.id || 0}),
-        });
+        const resp = await fetch(API + `/api/chat/tasks/${taskId}/stream?last_event_id=${fromIndex}`);
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = '';
-        let gotText = false;
 
         while (true) {
             const {done, value} = await reader.read();
@@ -2296,13 +2309,32 @@ async function sendChat() {
             }
             messages.scrollTop = messages.scrollHeight;
         }
-    } catch(e) {
-        assistantDiv.innerHTML = `<span style="color:var(--danger)">连接失败: ${escapeHtml(e.message)}</span>`;
     } finally {
         if (thinkingTimer) clearInterval(thinkingTimer);
-        // AI 可能通过 MCP 工具修改了看板数据，自动刷新
-        refreshBoardAfterChat();
     }
+}
+
+async function reconnectActiveTask() {
+    if (!currentProject) return;
+    try {
+        const data = await api('/api/chat/tasks/active?project_id=' + currentProject.id);
+        if (data.task && data.task.status === 'running') {
+            const messages = document.getElementById('chat-messages');
+            const assistantDiv = document.createElement('div');
+            assistantDiv.className = 'chat-msg assistant';
+            assistantDiv.innerHTML = '<div class="chat-thinking"><div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-label">重新连接中...</span></div>';
+            messages.appendChild(assistantDiv);
+            messages.scrollTop = messages.scrollHeight;
+
+            sessionStorage.setItem('kh_active_task', data.task.id);
+            try {
+                await streamTask(data.task.id, assistantDiv, 0);
+            } finally {
+                sessionStorage.removeItem('kh_active_task');
+                refreshBoardAfterChat();
+            }
+        }
+    } catch(e) {}
 }
 
 async function refreshBoardAfterChat() {

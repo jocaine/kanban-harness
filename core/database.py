@@ -328,6 +328,27 @@ async def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_project
                 ON chat_messages(project_id, created_at DESC);
+
+            -- Background chat tasks (v0.7: AI execution decoupled from SSE)
+            CREATE TABLE IF NOT EXISTS chat_tasks (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed','cancelled')),
+                user_message TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                provider TEXT DEFAULT '',
+                response_text TEXT DEFAULT '',
+                error_message TEXT DEFAULT '',
+                chunk_count INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT (datetime('now','localtime')),
+                completed_at DATETIME,
+                expires_at DATETIME DEFAULT (datetime('now','localtime','+1 hour')),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_tasks_project
+                ON chat_tasks(project_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_tasks_status
+                ON chat_tasks(status) WHERE status='running';
         """)
         await db.commit()
 
