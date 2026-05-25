@@ -402,8 +402,10 @@ def _build_hermes_env() -> dict:
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
     if API_KEY:
         env["OPENAI_API_KEY"] = API_KEY
+        env["ANTHROPIC_API_KEY"] = API_KEY
     if API_BASE_URL:
         env["OPENAI_BASE_URL"] = API_BASE_URL
+        env["ANTHROPIC_BASE_URL"] = API_BASE_URL
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     if tavily_key:
         env["TAVILY_API_KEY"] = tavily_key
@@ -460,6 +462,7 @@ async def ensure_hermes_config():
     config["model"]["default"] = model
     if API_BASE_URL:
         config["model"]["base_url"] = API_BASE_URL
+        config["model"]["provider"] = "openai"
 
     # Always patch MCP server
     config.setdefault("mcp_servers", {})
