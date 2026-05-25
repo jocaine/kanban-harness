@@ -79,7 +79,7 @@ class TaskBufferManager:
                    if v.done and (now - v.created_at) > self._ttl]
         for k in expired:
             del self._tasks[k]
-        while len(self._tasks) > self._max_tasks:
+        while len(self._tasks) >= self._max_tasks:
             self._tasks.popitem(last=False)
 
 
