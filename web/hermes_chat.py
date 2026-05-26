@@ -21,11 +21,13 @@ HERMES_MODEL = os.getenv("HERMES_MODEL", "")
 HERMES_PROVIDER = os.getenv("HERMES_PROVIDER", "")
 HERMES_TOOLSETS = os.getenv("HERMES_TOOLSETS", "")
 
-# LLM API configuration — users set these in .env or docker-compose environment
-# Supports both OpenAI-compatible and Anthropic native APIs
-# hermes uses OpenAI SDK internally, so OPENAI_* vars are the primary path
-API_KEY = os.getenv("API_KEY", "") or os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
-API_BASE_URL = os.getenv("API_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("ANTHROPIC_BASE_URL", "")
+
+def _api_key() -> str:
+    return os.getenv("API_KEY", "") or os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
+
+
+def _api_base_url() -> str:
+    return os.getenv("API_BASE_URL", "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("ANTHROPIC_BASE_URL", "")
 
 
 CHAT_DIRECTIVES = """## 聊天专属指令
@@ -230,9 +232,12 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
         tmp.write(prompt)
         tmp.close()
 
-        flags = ""
-        if HERMES_MODEL:
-            flags += f" -m {HERMES_MODEL}"
+        # Always pass -m explicitly: hermes auto-detects provider from model name
+        # (claude-* → anthropic), bypassing "custom" provider's non-TTY output bug
+        import re as _re
+        effective_model = HERMES_MODEL or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+        effective_model = _re.sub(r'\[.*?\]', '', effective_model).strip()
+        flags = f" -m {effective_model}"
         if HERMES_PROVIDER:
             flags += f" --provider {HERMES_PROVIDER}"
         if HERMES_TOOLSETS:
@@ -400,12 +405,18 @@ def _build_hermes_env() -> dict:
     Users only need to set API_KEY + API_BASE_URL in .env or docker-compose.
     """
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
-    if API_KEY:
-        env["OPENAI_API_KEY"] = API_KEY
-        env["ANTHROPIC_API_KEY"] = API_KEY
-    if API_BASE_URL:
-        env["OPENAI_BASE_URL"] = API_BASE_URL
-        env["ANTHROPIC_BASE_URL"] = API_BASE_URL
+    key = _api_key()
+    base_url = _api_base_url()
+    if key:
+        env["OPENAI_API_KEY"] = key
+        env["ANTHROPIC_API_KEY"] = key
+    if base_url:
+        env["OPENAI_BASE_URL"] = base_url
+        # Anthropic SDK appends /v1/messages to base_url, so strip trailing /v1
+        anthropic_base = base_url.rstrip("/")
+        if anthropic_base.endswith("/v1"):
+            anthropic_base = anthropic_base[:-3]
+        env["ANTHROPIC_BASE_URL"] = anthropic_base
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     if tavily_key:
         env["TAVILY_API_KEY"] = tavily_key
@@ -444,7 +455,10 @@ async def ensure_hermes_config():
     }
 
     # Always read model/base_url from env
+    # Strip bracket suffixes like [1M] — context window hints not recognized by OpenAI-compat proxies
+    import re as _re
     model = HERMES_MODEL or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+    model = _re.sub(r'\[.*?\]', '', model).strip()
 
     if config_file.exists():
         with open(config_file, "r") as f:
@@ -460,27 +474,32 @@ async def ensure_hermes_config():
     # Always sync model settings from env
     config.setdefault("model", {})
     config["model"]["default"] = model
-    if API_BASE_URL:
-        config["model"]["base_url"] = API_BASE_URL
-        config["model"]["provider"] = "openai"
+    if _api_base_url():
+        # Custom provider uses OpenAI SDK which needs /v1 in base_url
+        base = _api_base_url().rstrip("/")
+        if not base.endswith("/v1"):
+            base += "/v1"
+        config["model"]["base_url"] = base
+        config["model"]["provider"] = "custom"
 
     # Always patch MCP server
     config.setdefault("mcp_servers", {})
     config["mcp_servers"]["kanban"] = local_mcp
 
-    # Auto-select search backend based on available credentials
-    # Priority: firecrawl (search+extract+crawl) > tavily > searxng > clear ddgs
+    # Auto-select search/extract backends based on available credentials
+    # firecrawl-lite only supports scrape (extract), NOT search.
+    # Search priority: searxng > tavily > clear ddgs
     config.setdefault("web", {})
     firecrawl_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
     firecrawl_url = os.getenv("FIRECRAWL_API_URL", "").strip()
     tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
     searxng_url = os.getenv("SEARXNG_URL", "").strip()
     if firecrawl_key or firecrawl_url:
-        config["web"]["search_backend"] = "firecrawl"
+        config["web"]["extract_backend"] = "firecrawl"
+    if searxng_url:
+        config["web"]["search_backend"] = "searxng"
     elif tavily_key:
         config["web"]["search_backend"] = "tavily"
-    elif searxng_url:
-        config["web"]["search_backend"] = "searxng"
     elif config["web"].get("search_backend") == "ddgs":
         config["web"]["search_backend"] = ""
 

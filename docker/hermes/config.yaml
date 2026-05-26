@@ -27,6 +27,7 @@ memory:
 model:
   base_url: http://192.168.3.15:8317/v1
   default: claude-opus-4-6
+  provider: custom
 platform_toolsets:
   cli:
   - browser
@@ -41,4 +42,4 @@ toolsets:
 - hermes-cli
 web:
   extract_backend: firecrawl
-  search_backend: firecrawl
+  search_backend: searxng
