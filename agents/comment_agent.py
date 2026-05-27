@@ -27,19 +27,33 @@ class CommentAgent:
             raise ValueError(f"Unknown role: {role_name}")
         self.project_id = project_id
 
-    async def execute(self, card: dict, existing_comments: list[dict] | None = None) -> dict:
+    async def execute(self, card: dict, existing_comments: list[dict] | None = None,
+                      on_heartbeat=None) -> dict:
         """Generate a review comment for the given card.
+
+        Args:
+            on_heartbeat: Optional callback invoked when agent produces output (for stall detection).
 
         Returns: {"success": bool, "comment": str, "detail": str, "summary": str}
         """
         prompt = await self._build_prompt(card, existing_comments or [])
         try:
-            # agent_timeout is for long-running research (hermes); other roles use their own default
             if self.role_config.model.provider == "hermes":
                 effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
             else:
                 effective_timeout = self.role_config.model.timeout
-            response = await self._call_model(prompt, timeout=effective_timeout)
+            response = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat)
+
+            # PM uses tools directly (add_comment + move_requirement);
+            # stdout is irrelevant — harness checks DB for actual results.
+            if self.role_config.role == "pm" and self.role_config.model.provider == "claude_cli":
+                return {
+                    "success": True,
+                    "comment": "",
+                    "detail": "",
+                    "summary": f"{self.role_config.display_name} reviewed [{card.get('code', '')}]",
+                }
+
             comment, detail = self._split_detail(response)
             return {
                 "success": bool(comment),
@@ -235,18 +249,18 @@ class CommentAgent:
 
         return "\n".join(sections)
 
-    async def _call_model(self, prompt: str, timeout: int | None = None) -> str:
+    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None) -> str:
         cfg = self.role_config.model
         effective_timeout = timeout or cfg.timeout
 
         if cfg.provider == "hermes":
-            return await self._call_hermes(prompt, cfg, effective_timeout)
+            return await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat)
         elif cfg.provider == "claude_cli":
-            return await self._call_claude_cli(prompt, effective_timeout)
+            return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat)
         else:
             raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
-    async def _call_hermes(self, prompt: str, cfg, timeout: int) -> str:
+    async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None) -> str:
         """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
         import time as _time
 
@@ -260,8 +274,12 @@ class CommentAgent:
             cmd.extend(["-t", ",".join(toolsets)])
         if skills:
             cmd.extend(["--skills", ",".join(skills)])
-        if cfg.name:
-            cmd.extend(["--model", cfg.name])
+        # Always pass -m explicitly: hermes auto-detects provider from model name
+        # (claude-* → anthropic), bypassing "custom" provider's non-TTY output bug
+        model_name = cfg.name or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+        import re as _re
+        model_name = _re.sub(r'\[.*?\]', '', model_name).strip()
+        cmd.extend(["-m", model_name])
 
         logger.info(f"Calling hermes: {' '.join(cmd[:4])}...")
         proc = await asyncio.create_subprocess_exec(
@@ -282,6 +300,8 @@ class CommentAgent:
                     if not chunk:
                         break
                     chunks.append(chunk)
+                    if on_heartbeat:
+                        on_heartbeat()
                 except asyncio.TimeoutError:
                     break
             return b"".join(chunks)
@@ -323,7 +343,7 @@ class CommentAgent:
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
-    async def _call_claude_cli(self, prompt: str, timeout: int) -> str:
+    async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None) -> str:
         """Call Claude CLI subprocess with kanban MCP tools."""
         import time as _time
 
@@ -361,6 +381,9 @@ class CommentAgent:
             env=env,
         )
 
+        if on_heartbeat:
+            on_heartbeat()
+
         start = _time.monotonic()
         heartbeat_interval = 60
 
@@ -374,12 +397,16 @@ class CommentAgent:
                     stdout, stderr = await asyncio.wait_for(
                         proc.communicate(), timeout=wait_time
                     )
+                    if on_heartbeat:
+                        on_heartbeat()
                     break
                 except asyncio.TimeoutError:
                     if proc.returncode is not None:
                         stdout, stderr = await proc.communicate()
                         break
                     elapsed = int(_time.monotonic() - start)
+                    if on_heartbeat:
+                        on_heartbeat()
                     if elapsed < timeout:
                         logger.info(
                             "CommentAgent(%s) still running... %ds/%ds",

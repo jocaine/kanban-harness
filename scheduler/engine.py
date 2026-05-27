@@ -77,6 +77,8 @@ class SchedulerEngine:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _tick(self):
+        await self._reconcile_running_sessions()
+
         cards = await self._find_actionable_cards()
         events = await self._peek_pending_events()
         if cards or events:
@@ -94,6 +96,78 @@ class SchedulerEngine:
 
         await self._process_events()
         await self._recover_stuck_cards()
+
+    # ==================== Reconciliation ====================
+
+    TERMINAL_STATUSES = {"done", "archived"}
+    AGENT_EXPECTED_STATUS = {
+        "coach_dev": {"dev"},
+        "industry": {"research"},
+        "pm": {"organizing"},
+        "coach_review": {"testing"},
+    }
+
+    async def _reconcile_running_sessions(self):
+        """Check all running agents — cancel those whose cards no longer need them."""
+        running = await self.session_manager.get_running_sessions()
+        if not running:
+            return
+
+        for session in running:
+            req_id = self._extract_requirement_id(session.get("input_context", ""))
+            if not req_id:
+                continue
+
+            card_status = await self._get_card_status(req_id)
+            if card_status is None:
+                continue  # DB query failed — don't kill, retry next tick
+
+            role = session["agent_role"]
+            sid = session["id"]
+
+            if card_status in self.TERMINAL_STATUSES:
+                logger.info(
+                    "[RECONCILE] session %d (%s): card %d is '%s' → cancelling",
+                    sid, role, req_id, card_status,
+                )
+                await self.session_manager.cancel_session(sid, f"card_status:{card_status}")
+                continue
+
+            expected = self.AGENT_EXPECTED_STATUS.get(role)
+            if expected and card_status not in expected:
+                logger.info(
+                    "[RECONCILE] session %d (%s): card %d moved to '%s' (expected %s) → cancelling",
+                    sid, role, req_id, card_status, expected,
+                )
+                await self.session_manager.cancel_session(sid, f"card_moved:{card_status}")
+
+    def _extract_requirement_id(self, input_context: str) -> int | None:
+        """Extract requirement_id from session's input_context JSON."""
+        if not input_context:
+            return None
+        try:
+            data = json.loads(input_context)
+            return data.get("requirement_id")
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    async def _get_card_status(self, requirement_id: int) -> str | None:
+        """Get current card status from DB. Returns None on failure (safe default)."""
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                cursor = await db.execute(
+                    "SELECT status, archived FROM requirements WHERE id=?",
+                    (requirement_id,),
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return "archived"  # card deleted = treat as terminal
+                if row[1]:  # archived flag
+                    return "archived"
+                return row[0]
+        except Exception as e:
+            logger.error("[RECONCILE] failed to query card %d: %s", requirement_id, e)
+            return None  # safe: don't kill on query failure
 
     async def _find_actionable_cards(self) -> list[dict]:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -220,11 +294,14 @@ class SchedulerEngine:
     async def _run_agent(self, session_id: int, card: dict, repo_path: str):
         try:
             from agents.coach_dev import CoachDev
-            agent = CoachDev(repo_path=repo_path, project_id=card["project_id"])
+
+            heartbeat_cb = lambda: self.session_manager.heartbeat(session_id)
+            agent = CoachDev(repo_path=repo_path, project_id=card["project_id"], on_heartbeat=heartbeat_cb)
             result = await agent.execute(card)
-            await self.session_manager.complete_session(session_id, result.get("summary", ""))
+            self.session_manager.unregister_process(session_id)
 
             if result.get("success"):
+                await self.session_manager.complete_session(session_id, result.get("summary", ""))
                 is_scaffold = result.get("is_scaffold", False)
                 commit_hash = result.get("commit", "")
                 commit_msg = result.get("commit_message", "")
@@ -267,8 +344,14 @@ class SchedulerEngine:
                         )
                         logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
                     await db.commit()
+            else:
+                # Agent exited normally but produced no commits — continuation retry
+                logger.info(f"[{card['code']}] no commits produced, scheduling continuation")
+                await self.session_manager.continuation_retry(session_id)
+
         except Exception as e:
             logger.error(f"Agent execution failed for [{card['code']}]: {e}")
+            self.session_manager.unregister_process(session_id)
             await self.session_manager.fail_session(session_id, str(e))
 
     # ==================== Event-driven comment agents ====================
@@ -385,12 +468,20 @@ class SchedulerEngine:
                 1 for c in comments if c.get("author") == "行业顾问"
             )
 
+            heartbeat_cb = lambda: self.session_manager.heartbeat(session_id)
+
             agent = CommentAgent(role_name, project_id=project_id)
             logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s, research_rounds=%d)",
                         role_name, card.get("code", ""), card.get("status", ""), research_rounds)
-            result = await agent.execute(card, comments)
+            result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb)
+            self.session_manager.unregister_process(session_id)
             logger.info("[SCHED] comment_agent '%s' result: success=%s, has_comment=%s",
                         role_name, result.get("success"), bool(result.get("comment")))
+
+            # PM uses tools directly — harness verifies DB state instead of posting stdout
+            if role_name == "pm":
+                await self._handle_pm_tool_mode(session_id, card, project_id, comments)
+                return
 
             if result["success"] and result["comment"]:
                 role_config = registry.get(role_name)
@@ -494,47 +585,95 @@ class SchedulerEngine:
                                 parsed,
                             )
 
-            # Fallback: PM used MCP tools (add_comment + move_requirement) directly,
-            # so stdout was empty but the card may already be done. Check DB for memory write.
-            if role_name == "pm" and card.get("type") == "research" and card.get("status") == "organizing":
-                memory_written = False
-                if result.get("comment"):
-                    # Check if memory was already written in the main path above
-                    parsed_check = self._parse_pm_research_conclusion(result["comment"])
-                    if parsed_check:
-                        memory_written = True
-
-                if not memory_written:
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        db.row_factory = aiosqlite.Row
-                        cursor = await db.execute(
-                            "SELECT status FROM requirements WHERE id=?", (card["id"],)
-                        )
-                        current = await cursor.fetchone()
-                        if current and current["status"] == "done":
-                            cursor2 = await db.execute(
-                                "SELECT content FROM comments WHERE requirement_id=? "
-                                "AND author='产品经理' AND content LIKE '%[调研充分]%' "
-                                "AND content LIKE '%提炼结论%' "
-                                "ORDER BY created_at DESC LIMIT 1",
-                                (card["id"],),
-                            )
-                            latest_pm = await cursor2.fetchone()
-                            if latest_pm and latest_pm["content"]:
-                                parsed = self._parse_pm_research_conclusion(latest_pm["content"])
-                                if parsed:
-                                    await self._append_research_to_memory(
-                                        project_id, card.get("code", ""), parsed,
-                                    )
-                                    logger.info(
-                                        "[PRODUCT-MEMORY] fallback: appended from DB comment for [%s]",
-                                        card.get("code", ""),
-                                    )
-
             await self.session_manager.complete_session(session_id, result.get("summary", ""))
         except Exception as e:
             logger.error(f"Comment agent {role_name} failed: {e}")
+            self.session_manager.unregister_process(session_id)
             await self.session_manager.fail_session(session_id, str(e))
+
+    async def _handle_pm_tool_mode(self, session_id: int, card: dict, project_id: int, pre_comments: list[dict]):
+        """Handle PM agent result by checking DB state (PM writes via MCP tools directly).
+
+        Success: PM wrote a new comment and/or moved the card.
+        Failure: No new comment detected → move card to pending, notify CEO.
+        """
+        req_id = card["id"]
+        old_status = card.get("status", "")
+        req_type = card.get("type", "dev")
+        pre_comment_count = len([c for c in pre_comments if c.get("author") == "产品经理"])
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Check if PM wrote a new comment
+            cursor = await db.execute(
+                "SELECT content FROM comments WHERE requirement_id=? AND author='产品经理' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (req_id,),
+            )
+            latest_pm = await cursor.fetchone()
+
+            # Check current card status (PM may have moved it via move_requirement tool)
+            cursor = await db.execute(
+                "SELECT status FROM requirements WHERE id=?", (req_id,),
+            )
+            current_card = await cursor.fetchone()
+            current_status = current_card["status"] if current_card else old_status
+
+        # Count PM comments now vs before
+        new_comment_count = 0
+        if latest_pm:
+            async with aiosqlite.connect(DB_PATH) as db:
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='产品经理'",
+                    (req_id,),
+                )
+                row = await cursor.fetchone()
+                new_comment_count = row[0] if row else 0
+
+        has_new_comment = new_comment_count > pre_comment_count
+        status_changed = current_status != old_status
+
+        if has_new_comment or status_changed:
+            # Success: PM did its job via tools
+            logger.info(
+                "[PM-TOOL-MODE] success for [%s]: new_comment=%s, status %s→%s",
+                card.get("code", ""), has_new_comment, old_status, current_status,
+            )
+
+            # Handle product memory for research cards that moved to done
+            if req_type == "research" and current_status == "done" and latest_pm:
+                parsed = self._parse_pm_research_conclusion(latest_pm["content"])
+                if parsed:
+                    await self._append_research_to_memory(
+                        project_id, card.get("code", ""), parsed,
+                    )
+                    logger.info("[PRODUCT-MEMORY] appended for [%s]", card.get("code", ""))
+
+            await self.session_manager.complete_session(session_id, f"PM completed [{card.get('code', '')}]")
+        else:
+            # Failure: PM didn't write comment or move card
+            logger.warning(
+                "[PM-TOOL-MODE] FAILED for [%s]: no new comment, no status change. Moving to pending.",
+                card.get("code", ""),
+            )
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute(
+                    "UPDATE requirements SET status='pending', assignee='', "
+                    "queue_reason='PM 执行异常，等待 CEO 处理', "
+                    "updated_at=datetime('now','localtime') WHERE id=?",
+                    (req_id,),
+                )
+                await db.execute(
+                    "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                    (req_id, "系统",
+                     "⚠️ PM agent 执行未完成（未检测到新评论或状态变更）。卡片已移回 pending，请 CEO 检查。"),
+                )
+                await db.commit()
+
+            await self.session_manager.fail_session(
+                session_id, "PM produced no comment and no status change"
+            )
 
     def _parse_pm_research_decision(self, comment: str, research_rounds: int, req_type: str = "dev") -> str:
         """Parse PM's evaluation of research completeness.
