@@ -48,6 +48,8 @@ class CommentAgent:
             # stdout is irrelevant — harness checks DB for actual results.
             if self.role_config.role == "pm" and self.role_config.model.provider == "claude_cli":
                 return {
+                    "task_done": True,
+                    "signal": "",
                     "success": True,
                     "comment": "",
                     "detail": "",
@@ -56,6 +58,8 @@ class CommentAgent:
 
             comment, detail = self._split_detail(response)
             return {
+                "task_done": bool(comment),
+                "signal": "",
                 "success": bool(comment),
                 "comment": comment,
                 "detail": detail,
@@ -63,7 +67,7 @@ class CommentAgent:
             }
         except Exception as e:
             logger.error(f"CommentAgent({self.role_config.role}) failed: {e}")
-            return {"success": False, "comment": "", "detail": "", "summary": str(e)}
+            return {"task_done": False, "signal": "", "success": False, "comment": "", "detail": "", "summary": str(e)}
 
     DETAIL_SEPARATOR = "---DETAIL---"
     _SUMMARY_MIN_LEN = 150
@@ -178,21 +182,28 @@ class CommentAgent:
             if has_industry:
                 skill_content = self._load_skill("pm-research-audit")
                 return (
-                    "你正在评估行业顾问的调研结果。\n\n"
+                    "## 你的任务\n\n"
+                    "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策。\n\n"
                     f"{skill_content}\n\n"
-                    "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
+                    "**操作步骤：**\n"
+                    "1. 用 `add_comment` 工具发表评审意见，评论开头必须写 [调研充分] 或 [需要补充]\n"
+                    "2. 用 `move_requirement` 工具移动卡片：\n"
+                    "   - 材料充分 → 移到 `dev`\n"
+                    "   - 材料不足 → 移到 `research`\n\n"
+                    "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
             else:
                 return (
+                    "## 你的任务\n\n"
                     "这是一张新到达 organizing 列的卡片，你是 PM gatekeeper，负责拆解和分发。\n\n"
                     "请分析这张卡片的描述，做出以下判断：\n\n"
-                    "1. 如果需求描述清晰、验收标准明确、无需额外调研 → 评论开头写 [调研充分]\n"
-                    "   然后补充验收标准和技术要点，系统会将卡片推进到 dev 列\n\n"
-                    "2. 如果需求涉及不确定因素（市场数据、竞品情况、技术可行性未知）→ 评论开头写 [需要补充]\n"
-                    "   然后明确列出需要行业顾问调研的具体问题，系统会将卡片移到 research 列\n\n"
-                    "3. 如果需求太大需要拆分 → 评论开头写 [需要补充]\n"
-                    "   说明拆分建议，等 CEO 确认后再建子卡\n\n"
-                    "必须以 [调研充分] 或 [需要补充] 开头，这是系统解析你决策的唯一方式。"
+                    "1. 需求描述清晰、验收标准明确、无需额外调研 → 移到 `dev`\n"
+                    "2. 需求涉及不确定因素（市场数据、竞品情况、技术可行性未知）→ 移到 `research`\n"
+                    "3. 需求太大需要拆分 → 移到 `research`，评论中说明拆分建议\n\n"
+                    "**操作步骤：**\n"
+                    "1. 用 `add_comment` 工具发表评审意见（评论开头写 [调研充分] 或 [需要补充]）\n"
+                    "2. 用 `move_requirement` 工具移动卡片到对应状态\n\n"
+                    "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
 
         # Industry absolute boundary reinforcement
