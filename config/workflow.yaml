@@ -1,0 +1,10 @@
+polling:
+  interval_seconds: 30
+  stuck_cooldown_seconds: 30
+
+agent:
+  max_concurrent_sessions: 5
+  default_timeout_seconds: 600
+  max_research_rounds: 10
+  stall_timeout_seconds: 120
+  escalation_threshold_seconds: 600

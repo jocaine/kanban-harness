@@ -30,7 +30,7 @@
         </div>
         <div class="sidebar-footer">
             <div class="stats-mini" id="sidebar-stats"></div>
-            <div class="app-version" id="app-version">v0.6</div>
+            <div class="app-version" id="app-version"></div>
         </div>
     </aside>
 
@@ -108,6 +108,7 @@
             </div>
             <div class="team-view" id="team-view">
                 <div class="team-workflow" id="team-workflow"></div>
+                <div class="token-cost-card" id="token-cost-card"></div>
                 <div class="team-memory-section">
                     <div class="section-title" style="padding:16px 0 8px;font-size:13px;font-weight:600;color:var(--text2)">
                         📋 产品记忆摘要
@@ -358,7 +359,7 @@
             <button class="btn-primary btn-sm" id="chat-send-btn" onclick="sendChat()">发送</button>
         </div>
     </div>
-    <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话">💬</button>
+    <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话" style="display:none">💬</button>
 
     <!-- Reigns-style CEO Decision Overlay -->
     <div class="decision-overlay" id="decision-overlay">
@@ -401,6 +402,10 @@
                 </div>
             </div>
             <div class="log-filters" id="log-filters"></div>
+            <div class="log-card-filter" id="log-card-filter">
+                <input type="text" id="log-card-input" placeholder="按卡片编号筛选 (如 KH-086)" oninput="filterLogByCard(this.value)">
+                <button class="btn-icon" onclick="clearCardFilter()" title="清除">&times;</button>
+            </div>
             <pre class="log-content" id="log-content">加载中...</pre>
         </div>
     </div>

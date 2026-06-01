@@ -15,6 +15,8 @@ ENV LANG=C.UTF-8
 ENV PYTHONIOENCODING=utf-8
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL=1
 ENV DISABLE_AUTOUPDATER=1
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 
 # 使用国内镜像源加速
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \

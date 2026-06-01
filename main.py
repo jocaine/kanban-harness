@@ -7,14 +7,46 @@ import os
 import logging
 import uvicorn
 from dotenv import load_dotenv
+from collections import deque
+import threading
 
 load_dotenv(override=True)
+
+
+class RingBufferHandler(logging.Handler):
+    """In-memory ring buffer log handler — captures last N lines for /dev/logs."""
+
+    def __init__(self, capacity: int = 1000):
+        super().__init__()
+        self.capacity = capacity
+        self.buffer = deque(maxlen=capacity)
+        self._lock = threading.Lock()
+
+    def emit(self, record: logging.LogRecord):
+        msg = self.format(record)
+        with self._lock:
+            self.buffer.append(msg)
+
+    def get_all(self) -> list[str]:
+        with self._lock:
+            return list(self.buffer)
+
+
+LOG_BUFFER = RingBufferHandler(1000)
+LOG_BUFFER.setFormatter(logging.Formatter(
+    "%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+))
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logging.getLogger().addHandler(LOG_BUFFER)
+
+from core.secret_filter import install_secret_filter
+install_secret_filter()
 
 from core.database import init_db
 from scheduler import SchedulerEngine

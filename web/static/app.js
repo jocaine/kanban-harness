@@ -213,6 +213,7 @@ async function selectProject(pid) {
     currentProject = projects.find(p => p.id === pid);
     currentVersion = null;
     requirements = [];
+    document.getElementById('chat-fab').style.display = '';
     renderProjects();
     await loadVersions(pid);
     document.getElementById('version-section').style.display = '';
@@ -396,6 +397,8 @@ async function deleteProject(pid) {
         currentVersion = null;
         document.getElementById('version-section').style.display = 'none';
         document.getElementById('board-view').style.display = 'none';
+        document.getElementById('chat-fab').style.display = 'none';
+        document.getElementById('chat-panel').style.display = 'none';
         renderWelcomeDefault();
     }
     await loadProjects();
@@ -537,10 +540,10 @@ async function loadRequirements(vid) {
 }
 
 const COL_ROLE_MAP = {
-    research: {role: 'Industry', avatar: '/static/avatars/industry_avatar.png'},
-    organizing: {role: 'PM', avatar: '/static/avatars/pm_avatar.png'},
-    dev: {role: 'Coach-Dev', avatar: '/static/avatars/coach_dev_avatar.png'},
-    testing: {role: 'Coach-Review', avatar: '/static/avatars/coach_review_avatar.png'},
+    research: {role: 'Industry', avatar: '/static/avatars/industry_avatar.png', agentKey: 'industry'},
+    organizing: {role: 'PM', avatar: '/static/avatars/pm_avatar.png', agentKey: 'pm'},
+    dev: {role: 'Coach-Dev', avatar: '/static/avatars/coach_dev_avatar.png', agentKey: 'coach_dev'},
+    testing: {role: 'Coach-Review', avatar: '/static/avatars/coach_review_avatar.png', agentKey: 'coach_review'},
 };
 
 function renderRequirements() {
@@ -563,12 +566,29 @@ function renderRequirements() {
         wrapper.className = 'col-wrapper';
 
         if (roleInfo) {
+            const avatarWrap = document.createElement('div');
+            avatarWrap.className = 'col-avatar-wrap';
             const avatar = document.createElement('img');
             avatar.className = 'col-avatar';
             avatar.src = roleInfo.avatar;
             avatar.alt = roleInfo.role;
             avatar.title = roleInfo.role;
-            wrapper.appendChild(avatar);
+            avatarWrap.appendChild(avatar);
+
+            const runningSessions = (lastSchedulerState && lastSchedulerState.running) || [];
+            const session = runningSessions.find(s => s.agent_role === roleInfo.agentKey);
+            if (session) {
+                const silent = session.silent_seconds;
+                const stallTimeout = session.stall_timeout || 120;
+                const ratio = silent / stallTimeout;
+                const hbClass = ratio < 0.5 ? 'heartbeat-ok' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
+                const badge = document.createElement('span');
+                badge.className = `col-heartbeat ${hbClass}`;
+                badge.textContent = `${silent}s`;
+                badge.title = `心跳 ${silent}s 前 · ${session.card_code || ''}`;
+                avatarWrap.appendChild(badge);
+            }
+            wrapper.appendChild(avatarWrap);
         }
 
         const col = document.createElement('div');
@@ -1231,10 +1251,17 @@ function showDocView(tab) {
         document.getElementById('arch-content').style.display = 'none';
         document.getElementById('arch-actions').style.display = 'none';
         loadTeamView();
+        if (!window._teamPollInterval) {
+            window._teamPollInterval = setInterval(loadTeamView, 5000);
+        }
     } else {
         document.getElementById('team-view').style.display = 'none';
         document.getElementById('arch-content').style.display = '';
         document.getElementById('arch-actions').style.display = '';
+        if (window._teamPollInterval) {
+            clearInterval(window._teamPollInterval);
+            window._teamPollInterval = null;
+        }
         loadDoc();
     }
 }
@@ -1560,6 +1587,7 @@ let _logFilters = new Set(['poll', 'api', 'dim', 'info', 'highlight', 'chat', 'e
 let _logViewMode = 'type'; // 'type' | 'layer'
 let _layerData = null;
 let _lastLogLines = [];
+let _logCardFilter = ''; // card code filter (e.g. "KH-086")
 
 async function toggleLogViewer() {
     const overlay = document.getElementById('log-overlay');
@@ -1656,6 +1684,7 @@ function renderLogLines() {
     const el = document.getElementById('log-content');
     el.innerHTML = _lastLogLines.map(g => {
         if (!_logFilters.has(g.filterKey)) return '';
+        if (_logCardFilter && !g.raw.includes(_logCardFilter)) return '';
         if (g.pollKey) {
             const label = { 'scheduler/status': '调度器状态', 'agents/sessions': 'Agent 会话', 'decisions/pending': '待决策' }[g.pollKey] || g.pollKey;
             return `<div class="log-line log-poll">`
@@ -1671,8 +1700,20 @@ function renderLogLines() {
             + `<span class="log-msg">${a.display || escapeHtml(g.msg)}</span></div>`;
     }).join('');
     if (!el.innerHTML.trim()) {
-        el.innerHTML = '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">所有过滤器已关闭，点击上方按钮显示日志</div>';
+        const hint = _logCardFilter ? `没有找到包含 "${escapeHtml(_logCardFilter)}" 的日志` : '所有过滤器已关闭，点击上方按钮显示日志';
+        el.innerHTML = '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">' + hint + '</div>';
     }
+}
+
+function filterLogByCard(value) {
+    _logCardFilter = value.trim().toUpperCase();
+    renderLogLines();
+}
+
+function clearCardFilter() {
+    _logCardFilter = '';
+    document.getElementById('log-card-input').value = '';
+    renderLogLines();
 }
 
 function annotateLog(msg) {
@@ -1959,6 +2000,13 @@ async function navigateToRequirement(req) {
 }
 
 async function initApp() {
+    // Load app version
+    try {
+        const ver = await api('/api/version');
+        document.getElementById('app-version').textContent = ver.version || '';
+    } catch(e) {
+        document.getElementById('app-version').textContent = '';
+    }
     await loadProjects();
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
@@ -2010,15 +2058,18 @@ let schedulerMode = 'running';
 let activityInterval = null;
 let timerInterval = null;
 let activitySessionStart = null;
+let lastSchedulerState = null;
 
 async function pollActivity() {
     try {
-        const [status, sessions] = await Promise.all([
+        const [status, schedState] = await Promise.all([
             api('/api/scheduler/status'),
-            api('/api/agents/sessions'),
+            api('/api/scheduler/state'),
         ]);
+        lastSchedulerState = schedState;
         updateSchedulerToggle(status.mode);
-        updateActivityInfo(sessions, status);
+        updateActivityInfo(schedState, status);
+        updateBoardHeartbeats();
     } catch(e) {}
 }
 
@@ -2037,26 +2088,32 @@ function updateSchedulerToggle(mode) {
     }
 }
 
-function updateActivityInfo(sessions, status) {
+function updateActivityInfo(schedState, status) {
     const info = document.getElementById('activity-info');
-    const running = sessions.find(s => s.status === 'running');
+    const runningSessions = (schedState && schedState.running) || [];
+    const running = runningSessions[0];
 
     if (running) {
         const startTime = new Date(running.started_at.replace(' ', 'T'));
         activitySessionStart = startTime;
-        const timeout = running.timeout_seconds || 600;
-        let ctx = {};
-        try { ctx = JSON.parse(running.input_context || '{}'); } catch(e) {}
-        const taskTitle = ctx.title || ctx.code || running.agent_role;
-        const role = running.agent_role === 'coach_dev' ? 'Coach-Dev' : running.agent_role;
+        const stallTimeout = running.stall_timeout || 120;
+        const taskTitle = running.card_code || running.agent_role;
+        const ROLE_LABELS = {coach_dev: 'Coach-Dev', coach_review: 'Coach-Review', pm: 'PM', industry: '行业顾问'};
+        const role = ROLE_LABELS[running.agent_role] || running.agent_role;
+
+        const silent = running.silent_seconds;
+        const ratio = silent / stallTimeout;
+        const hbClass = ratio < 0.5 ? 'heartbeat-ok' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
 
         info.innerHTML = `
             <div class="activity-running">
                 <span class="activity-role">${esc(role)}</span>
                 <span class="activity-task">${esc(taskTitle)}</span>
                 <span class="activity-timer" id="activity-timer"></span>
+                <span class="activity-heartbeat ${hbClass}">心跳 ${silent}s</span>
                 <div class="activity-progress"><div class="activity-progress-fill" id="activity-progress-fill"></div></div>
             </div>`;
+        const timeout = schedState.scheduler?.poll_interval ? running.elapsed_seconds + stallTimeout : 600;
         updateTimer(timeout);
         if (!timerInterval) {
             timerInterval = setInterval(() => updateTimer(timeout), 1000);
@@ -2064,13 +2121,14 @@ function updateActivityInfo(sessions, status) {
     } else {
         activitySessionStart = null;
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        const recent = sessions.find(s => s.status === 'completed' || s.status === 'failed');
+        // Show morecent completed/failed from stale or blocked
+        const stale = (schedState && schedState.stale) || [];
+        const blocked = (schedState && schedState.blocked) || [];
+        const recent = blocked[0] || stale[0];
         if (recent) {
-            let ctx = {};
-            try { ctx = JSON.parse(recent.input_context || '{}'); } catch(e) {}
-            const label = ctx.code || recent.agent_role;
-            const ago = timeAgo(recent.completed_at);
-            const icon = recent.status === 'completed' ? '✓' : '✗';
+            const label = recent.card_code || recent.agent_role;
+            const ago = timeAgo(recent.failed_at || recent.started_at);
+            const icon = recent.error ? '✗' : '✓';
             info.innerHTML = `<span class="activity-idle">AI 团队空闲</span><span class="activity-history">${icon} ${esc(label)} ${ago}</span>`;
         } else {
             info.innerHTML = '<span class="activity-idle">AI 团队空闲</span>';
@@ -2091,6 +2149,36 @@ function updateTimer(timeout) {
         progressEl.style.width = pct + '%';
         progressEl.classList.toggle('warning', pct > 80);
     }
+}
+
+function updateBoardHeartbeats() {
+    const runningSessions = (lastSchedulerState && lastSchedulerState.running) || [];
+    document.querySelectorAll('.col-avatar-wrap').forEach(wrap => {
+        const avatar = wrap.querySelector('.col-avatar');
+        if (!avatar) return;
+        const role = avatar.alt;
+        const ROLE_TO_AGENT = {'Industry': 'industry', 'PM': 'pm', 'Coach-Dev': 'coach_dev', 'Coach-Review': 'coach_review'};
+        const agentKey = ROLE_TO_AGENT[role];
+        const session = agentKey ? runningSessions.find(s => s.agent_role === agentKey) : null;
+
+        let badge = wrap.querySelector('.col-heartbeat');
+        if (session) {
+            const silent = session.silent_seconds;
+            const stallTimeout = session.stall_timeout || 120;
+            const ratio = silent / stallTimeout;
+            const hbClass = ratio < 0.5 ? 'heartbeat-ok' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'col-heartbeat';
+                wrap.appendChild(badge);
+            }
+            badge.className = `col-heartbeat ${hbClass}`;
+            badge.textContent = `${silent}s`;
+            badge.title = `心跳 ${silent}s 前 · ${session.card_code || ''}`;
+        } else if (badge) {
+            badge.remove();
+        }
+    });
 }
 
 function timeAgo(dateStr) {
@@ -2130,6 +2218,8 @@ function toggleChat() {
 }
 
 function restoreChatPanel() {
+    if (!currentProject) return;
+    document.getElementById('chat-fab').style.display = '';
     if (localStorage.getItem('kh_chat_open') === '1') {
         const panel = document.getElementById('chat-panel');
         panel.style.display = 'flex';
@@ -2200,8 +2290,7 @@ async function sendChat() {
     try {
         const taskResp = await api('/api/chat/tasks', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({message: msg, project_id: currentProject?.id || 0}),
+            body: {message: msg, project_id: currentProject?.id || 0},
         });
         const taskId = taskResp.task_id;
         sessionStorage.setItem('kh_active_task', taskId);
@@ -2364,14 +2453,82 @@ let teamDataCache = null;
 
 async function loadTeamView() {
     try {
-        const data = await api('/api/agents/status');
+        const [data, schedState] = await Promise.all([
+            api('/api/agents/status'),
+            api('/api/scheduler/state'),
+        ]);
         teamDataCache = data.agents;
         renderTeamWorkflow();
-        renderTeamGrid(data.agents);
+        renderTokenCostCard();
+        renderTeamGrid(data.agents, schedState);
         loadProductMemorySummary();
     } catch(e) {
         document.getElementById('team-grid').innerHTML = '<div class="arch-empty">无法加载团队状态</div>';
     }
+}
+
+async function renderTokenCostCard() {
+    const el = document.getElementById('token-cost-card');
+    if (!el) return;
+    try {
+        const params = currentProject ? `?project_id=${currentProject.id}` : '';
+        const data = await api('/api/stats/tokens' + params);
+        const today = data.today || {};
+        const week = data.this_week || {};
+        const byRole = data.by_role || [];
+
+        const todayTotal = today.total_tokens || 0;
+        const weekTotal = week.total_tokens || 0;
+        const totalSessions = byRole.reduce((s, r) => s + (r.session_count || 0), 0);
+
+        const ROLE_LABELS = {pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-Review'};
+        const ROLE_COLORS = {pm: '#6366f1', industry: '#f59e0b', coach_dev: '#22c55e', coach_review: '#06b6d4'};
+
+        // If no token data yet, show session counts instead
+        const hasTokenData = todayTotal > 0 || weekTotal > 0;
+
+        const maxTokens = Math.max(...byRole.map(r => r.total_tokens || 0), 1);
+        const maxSessions = Math.max(...byRole.map(r => r.session_count || 0), 1);
+        const barsHtml = byRole.filter(r => (r.total_tokens > 0) || (r.session_count > 0)).map(r => {
+            const pct = hasTokenData
+                ? Math.round((r.total_tokens / maxTokens) * 100)
+                : Math.round((r.session_count / maxSessions) * 100);
+            const label = ROLE_LABELS[r.agent_role] || r.agent_role;
+            const color = ROLE_COLORS[r.agent_role] || '#94a3b8';
+            const value = hasTokenData ? formatTokens(r.total_tokens) : `${r.session_count} 次`;
+            return `<div class="token-bar-row">
+                <span class="token-bar-label">${esc(label)}</span>
+                <div class="token-bar-track"><div class="token-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+                <span class="token-bar-value">${value}</span>
+            </div>`;
+        }).join('');
+
+        el.innerHTML = `
+            <div class="token-card-header">
+                <span class="token-card-title">💰 ${hasTokenData ? 'Token 消耗' : 'AI 调用统计'}</span>
+            </div>
+            <div class="token-card-stats">
+                <div class="token-stat">
+                    <span class="token-stat-value">${hasTokenData ? formatTokens(todayTotal) : totalSessions}</span>
+                    <span class="token-stat-label">${hasTokenData ? '今日' : '总调用'}</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-stat-value">${hasTokenData ? formatTokens(weekTotal) : byRole.length}</span>
+                    <span class="token-stat-label">${hasTokenData ? '本周' : '活跃角色'}</span>
+                </div>
+            </div>
+            ${barsHtml ? '<div class="token-bars">' + barsHtml + '</div>' : ''}
+        `;
+    } catch(e) {
+        el.innerHTML = '';
+    }
+}
+
+function formatTokens(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
 }
 
 async function loadProductMemorySummary() {
@@ -2449,7 +2606,7 @@ function renderTeamWorkflow() {
     </div>`;
 }
 
-function renderTeamGrid(agents) {
+function renderTeamGrid(agents, schedulerState) {
     const grid = document.getElementById('team-grid');
     const AVATAR_MAP = {
         pm: '/static/avatars/pm_avatar.png',
@@ -2457,12 +2614,25 @@ function renderTeamGrid(agents) {
         coach_dev: '/static/avatars/coach_dev_avatar.png',
         coach_review: '/static/avatars/coach_review_avatar.png',
     };
+    const runningSessions = (schedulerState && schedulerState.running) || [];
     let html = '';
     for (const [role, info] of Object.entries(agents)) {
-        const statusClass = info.status === 'running' ? 'working' : 'idle';
-        const statusLabel = info.status === 'running' ? '工作中' : '空闲';
+        const runningSession = runningSessions.find(s => s.agent_role === role);
+        const statusClass = runningSession ? 'working' : 'idle';
         const avatarSrc = AVATAR_MAP[role] || info.avatar || '';
         const lastActivity = info.last_run ? timeAgo(info.last_run) : '暂无活动';
+
+        let activityHtml;
+        if (runningSession) {
+            const silent = runningSession.silent_seconds;
+            const stallTimeout = runningSession.stall_timeout || 120;
+            const ratio = silent / stallTimeout;
+            const hbClass = ratio < 0.5 ? 'heartbeat-ok' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
+            const cardLabel = runningSession.card_code ? ` · ${esc(runningSession.card_code)}` : '';
+            activityHtml = `<span class="${hbClass}">工作中 · 心跳 ${silent}s 前${cardLabel}</span>`;
+        } else {
+            activityHtml = `空闲 · ${lastActivity}`;
+        }
         const TOOL_LABELS = {
             'kanban_get_requirement': '读卡片',
             'kanban_list_requirements': '列需求',
@@ -2546,7 +2716,7 @@ function renderTeamGrid(agents) {
                     <summary class="agent-moves-summary">流转权限</summary>
                     <div class="agent-moves">${movesHtml}</div>
                 </details>
-                <span class="agent-persona-activity">${statusLabel} · ${lastActivity}</span>
+                <span class="agent-persona-activity">${activityHtml}</span>
             </div>
         </div>`;
     }
@@ -2663,6 +2833,18 @@ async function openDecision(decision) {
 }
 
 function buildSpeech(decision) {
+    // For system-escalated decisions (stuck/timeout), show the message directly
+    if (decision.reason === 'stuck_timeout' && decision.message) {
+        let chat = decision.message + '\n\n';
+        if (decision.pm_summary && decision.pm_summary !== decision.message) {
+            chat += '最近的上下文：\n\n' + decision.pm_summary.slice(0, 300);
+        }
+        if (typeof marked !== 'undefined') {
+            return DOMPurify.sanitize(marked.parse(chat));
+        }
+        return chat.replace(/\n/g, '<br>');
+    }
+
     let summary = decision.pm_summary || '';
     // Strip any role prefix
     summary = summary.replace(/^\*\*\[?[^\]]*\]?\s*[：:]\s*\*\*/m, '');
@@ -2751,6 +2933,14 @@ function buildActionButtons(decision) {
         </button>`;
     }
 
+    // "Retry" — for stuck/timeout escalations
+    if (decision.reason === 'stuck_timeout' || (decision.actions && decision.actions.includes('retry'))) {
+        html += `<button class="decision-btn" onclick="submitDecision('retry')">
+            <span class="decision-btn-icon">🔄</span>
+            <div class="decision-btn-text">重试<div class="decision-btn-hint">让 AI 重新尝试处理</div></div>
+        </button>`;
+    }
+
     return html;
 }
 
@@ -2824,8 +3014,7 @@ async function submitDecision(decision, optionComment) {
     try {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision, comment, asking_role: _currentDecision.asking_role || 'pm' }),
+            body: { decision, comment, asking_role: _currentDecision.asking_role || 'pm' },
         });
         if (!resp.ok) throw new Error('submit failed');
         const result = await resp.json();
@@ -2857,8 +3046,7 @@ async function submitCustomDecision() {
     try {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' }),
+            body: { decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' },
         });
         if (!resp.ok) throw new Error('submit failed');
         const result = await resp.json();

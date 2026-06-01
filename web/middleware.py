@@ -77,7 +77,7 @@ class RequestLogger(BaseHTTPMiddleware):
     """Logs every API request with caller identity, path, status, and duration."""
 
     SKIP_PREFIXES = ("/static/", "/favicon.ico")
-    QUIET_PATHS = ("/api/scheduler/status", "/api/agents/sessions", "/api/agents/status")
+    QUIET_PATHS = ("/api/scheduler/status", "/api/scheduler/state", "/api/agents/sessions", "/api/agents/status")
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path

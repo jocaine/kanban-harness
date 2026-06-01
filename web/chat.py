@@ -20,18 +20,38 @@ logger = logging.getLogger("kh.web.chat")
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_AUTH_TOKEN", "") or os.getenv("API_KEY", "")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 import re
 
 def _strip_model_suffix(model: str) -> str:
     return re.sub(r'\[.*\]$', '', model)
 
-CHAT_MODEL = _strip_model_suffix(os.getenv("CHAT_MODEL", "claude-opus-4-6"))
-CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "openai")  # openai / anthropic / ollama
+
+def _chat_api_key() -> str:
+    return os.getenv("ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_AUTH_TOKEN", "") or os.getenv("API_KEY", "")
+
+
+def _anthropic_base_url() -> str:
+    return os.getenv("ANTHROPIC_BASE_URL", "") or os.getenv("API_BASE_URL", "")
+
+
+def _openai_api_key() -> str:
+    return os.getenv("OPENAI_API_KEY", "") or os.getenv("API_KEY", "")
+
+
+def _openai_base_url() -> str:
+    return os.getenv("OPENAI_BASE_URL", "") or os.getenv("API_BASE_URL", "")
+
+
+def _ollama_base_url() -> str:
+    return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def _chat_model() -> str:
+    return _strip_model_suffix(os.getenv("CHAT_MODEL", "claude-opus-4-6"))
+
+
+def _chat_provider() -> str:
+    return os.getenv("CHAT_PROVIDER", "openai")
 
 
 TOOLS = [
@@ -43,7 +63,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done"], "description": "Filter by status"},
+                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done", "blocked"], "description": "Filter by status"},
                     "limit": {"type": "integer", "description": "Max results", "default": 20},
                 },
             },
@@ -61,7 +81,7 @@ TOOLS = [
                     "description": {"type": "string", "description": "Markdown description with goals and acceptance criteria"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
                     "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
-                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. Default 1800 (30min). Set 3600+ for deep investigation."},
+                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. System default is 600 (10min). Recommended: 3600 for deep investigation."},
                 },
                 "required": ["title"],
             },
@@ -79,7 +99,7 @@ TOOLS = [
                     "description": {"type": "string", "description": "What to investigate, key questions to answer"},
                     "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
                     "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
-                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. Default 1800 (30min). Set 3600+ for deep investigation."},
+                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. System default is 600 (10min). Recommended: 3600 for deep investigation."},
                 },
                 "required": ["title"],
             },
@@ -94,7 +114,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "code": {"type": "string", "description": "Requirement code like KH-001"},
-                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done"]},
+                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done", "blocked"]},
                 },
                 "required": ["code", "status"],
             },
@@ -106,6 +126,20 @@ TOOLS = [
             "name": "get_scheduler_status",
             "description": "Get the current scheduler/AI team status",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_requirement",
+            "description": "Get full details of a specific requirement card by code (e.g. KH-001). Returns all fields including agent_timeout, estimated_hours, deadline, status, priority, description, notes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Requirement code like KH-001"},
+                },
+                "required": ["code"],
+            },
         },
     },
     {
@@ -159,7 +193,7 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 limit = args.get("limit", 20)
                 if project_id:
                     query = (
-                        "SELECT r.code, r.title, r.status, r.priority, r.assignee "
+                        "SELECT r.code, r.title, r.status, r.priority, r.assignee, r.agent_timeout, r.type "
                         "FROM requirements r JOIN versions v ON r.version_id=v.id "
                         "WHERE v.project_id=? AND r.archived=0"
                     )
@@ -271,6 +305,21 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 from main import scheduler
                 return json.dumps(scheduler.status, ensure_ascii=False)
 
+            elif name == "get_requirement":
+                code = args.get("code", "")
+                if not code:
+                    return json.dumps({"error": "code is required"})
+                cursor = await db.execute(
+                    "SELECT r.*, v.name as version_name, v.project_id "
+                    "FROM requirements r JOIN versions v ON r.version_id=v.id "
+                    "WHERE r.code=? AND r.archived=0",
+                    (code,),
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return json.dumps({"error": f"requirement {code} not found"})
+                return json.dumps(dict(row), ensure_ascii=False, default=str)
+
             elif name == "update_project":
                 if not project_id:
                     return json.dumps({"error": "no project selected"})
@@ -377,6 +426,8 @@ async def _build_pm_system_prompt(project_id: int) -> str:
     sections.append("""
 ## 聊天专属指令
 
+你正在和 CEO 直接对话。CEO 是最终决策者，不需要追问确认，直接执行。
+
 仅用于聊天界面（不改变 pm.yaml 中的角色边界）：
 - 用户描述需求/想法 → 调用 create_requirement 建卡（status=organizing, type=dev）
 - 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research，PM先拆解再交给行业顾问）
@@ -389,15 +440,9 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 2. 需要调研的内容不要自己做，建 research 卡让 PM 拆解后交给行业顾问
 3. 每张卡片包含：title、description（功能目标+验收标准）、priority
 4. 建卡后告知用户创建了什么
+5. 用 get_requirement 查卡片详情，不要凭记忆回答（如 agent_timeout、description 等字段）
+6. 不确定的系统行为不要猜，用 get_scheduler_status 查实时状态
 """)
-
-    # Inject recent conversation history
-    history = await _get_recent_history(project_id)
-    if history:
-        sections.append("\n## 近期对话\n")
-        for msg in history[-10:]:
-            prefix = "用户" if msg["role"] == "user" else "PM"
-            sections.append(f"**{prefix}:** {msg['content'][:500]}")
 
     return "\n".join(sections)
 
@@ -408,15 +453,17 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
 
     logger.info("[CHAT] user message: \"%s\" (project=%d, provider=%s, model=%s)", message[:80], project_id, provider or "default", model or "default")
 
-    base_url = (OPENAI_BASE_URL or ANTHROPIC_BASE_URL).rstrip("/")
+    base_url = (_openai_base_url() or _anthropic_base_url()).rstrip("/")
     # Strip trailing /v1 if present — we add it ourselves in the URL
     if base_url.endswith("/v1"):
         base_url = base_url[:-3]
-    api_key = OPENAI_API_KEY or ANTHROPIC_API_KEY
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": message},
-    ]
+    api_key = _openai_api_key() or _chat_api_key()
+
+    # Build messages with proper multi-turn history
+    history_msgs = await _build_history_messages(project_id)
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history_msgs)
+    messages.append({"role": "user", "content": message})
 
     yield f"data: {json.dumps({'type': 'thinking', 'stage': 'init'})}\n\n"
 
@@ -429,7 +476,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                     f"{base_url}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={
-                        "model": model or CHAT_MODEL,
+                        "model": model or _chat_model(),
                         "messages": messages,
                         "tools": TOOLS,
                         "stream": True,
@@ -520,7 +567,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
 
 async def _stream_simple(message: str, system_prompt: str, model: str, provider: str) -> AsyncGenerator[str, None]:
     """Simple streaming without tool use (fallback for ollama/anthropic native)."""
-    p = provider or CHAT_PROVIDER
+    p = provider or _chat_provider()
     if p == "anthropic":
         async for chunk in _stream_anthropic(message, system_prompt, model):
             yield chunk
@@ -536,15 +583,15 @@ async def _stream_openai_simple(message: str, system_prompt: str, model: str) ->
     """Stream without tools via OpenAI-compatible API."""
     try:
         import httpx
-        base_url = (OPENAI_BASE_URL or ANTHROPIC_BASE_URL).rstrip("/")
-        api_key = OPENAI_API_KEY or ANTHROPIC_API_KEY
+        base_url = (_openai_base_url() or _anthropic_base_url()).rstrip("/")
+        api_key = _openai_api_key() or _chat_api_key()
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{base_url}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": model or CHAT_MODEL,
+                    "model": model or _chat_model(),
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": message},
@@ -578,13 +625,13 @@ async def _stream_anthropic(message: str, system_prompt: str, model: str) -> Asy
     """Stream response from Anthropic native API."""
     try:
         import anthropic
-        kwargs = {"api_key": ANTHROPIC_API_KEY}
-        if ANTHROPIC_BASE_URL:
-            kwargs["base_url"] = ANTHROPIC_BASE_URL
+        kwargs = {"api_key": _chat_api_key()}
+        if _anthropic_base_url():
+            kwargs["base_url"] = _anthropic_base_url()
         client = anthropic.AsyncAnthropic(**kwargs)
 
         async with client.messages.stream(
-            model=model or CHAT_MODEL,
+            model=model or _chat_model(),
             max_tokens=2048,
             system=system_prompt,
             messages=[{"role": "user", "content": message}],
@@ -603,7 +650,7 @@ async def _stream_ollama(message: str, system_prompt: str, model: str) -> AsyncG
         import httpx
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
+                f"{_ollama_base_url()}/api/chat",
                 json={
                     "model": model or "hermes3",
                     "messages": [
@@ -635,8 +682,8 @@ async def chat_stream(data: ChatMessage):
     Internally creates a background task so AI survives disconnects.
     """
     await _save_message(data.project_id, "user", data.message)
-    model = _strip_model_suffix(data.model) or CHAT_MODEL
-    provider = data.provider or CHAT_PROVIDER
+    model = _strip_model_suffix(data.model) or _chat_model()
+    provider = data.provider or _chat_provider()
 
     task_id = await chat_task_manager.create_task(data.project_id, data.message, model, provider)
     asyncio.create_task(_execute_and_save(task_id, data))
@@ -652,8 +699,8 @@ async def chat_stream(data: ChatMessage):
 async def create_chat_task(data: ChatMessage):
     """Create a background chat task. Returns task_id immediately."""
     await _save_message(data.project_id, "user", data.message)
-    model = _strip_model_suffix(data.model) or CHAT_MODEL
-    provider = data.provider or CHAT_PROVIDER
+    model = _strip_model_suffix(data.model) or _chat_model()
+    provider = data.provider or _chat_provider()
 
     task_id = await chat_task_manager.create_task(data.project_id, data.message, model, provider)
     asyncio.create_task(_execute_and_save(task_id, data))
@@ -705,18 +752,18 @@ async def stream_task(task_id: str, last_event_id: int = Query(0)):
 
 async def _execute_and_save(task_id: str, data: ChatMessage):
     """Build generator, delegate execution to ChatTaskManager, save result."""
-    provider = data.provider or CHAT_PROVIDER
+    provider = data.provider or _chat_provider()
     if provider == "hermes":
         from web.hermes_chat import stream_hermes, check_hermes_available
         if await check_hermes_available():
             gen = stream_hermes(data.project_id, data.message)
         else:
             system_prompt = await _build_pm_system_prompt(data.project_id)
-            model = _strip_model_suffix(data.model) or CHAT_MODEL
+            model = _strip_model_suffix(data.model) or _chat_model()
             gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
     else:
         system_prompt = await _build_pm_system_prompt(data.project_id)
-        model = _strip_model_suffix(data.model) or CHAT_MODEL
+        model = _strip_model_suffix(data.model) or _chat_model()
         gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
 
     text = await chat_task_manager.run_task(task_id, gen, data.project_id)
@@ -769,7 +816,7 @@ async def _stream_completed_task(row: dict) -> AsyncGenerator[str, None]:
 @router.post("")
 async def chat_sync(data: ChatMessage):
     """Non-streaming chat (collects full response)."""
-    provider = data.provider or CHAT_PROVIDER
+    provider = data.provider or _chat_provider()
 
     # Hermes only when explicitly requested
     if provider == "hermes":
@@ -786,7 +833,7 @@ async def chat_sync(data: ChatMessage):
 
     # Default: PM engine
     system_prompt = await _build_pm_system_prompt(data.project_id)
-    model = _strip_model_suffix(data.model) or CHAT_MODEL
+    model = _strip_model_suffix(data.model) or _chat_model()
 
     gen = _chat_with_tools(data.message, system_prompt, model, provider, data.project_id)
 
@@ -836,6 +883,45 @@ async def _get_recent_history(project_id: int, limit: int = 10) -> list[dict]:
         rows = [dict(r) for r in await cursor.fetchall()]
     rows.reverse()
     return rows
+
+
+async def _build_history_messages(project_id: int, limit: int = 20) -> list[dict]:
+    """Build proper message turns from chat history for multi-turn conversation."""
+    if not project_id:
+        return []
+
+    messages = []
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Include conversation summary as context if available
+        cursor = await db.execute(
+            "SELECT content FROM chat_messages "
+            "WHERE project_id=? AND role='summary' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (project_id,),
+        )
+        summary_row = await cursor.fetchone()
+        if summary_row and summary_row["content"]:
+            messages.append({"role": "user", "content": f"[对话摘要] {summary_row['content']}"})
+            messages.append({"role": "assistant", "content": "好的，我已了解之前的对话背景。"})
+
+        # Get recent user/assistant messages as proper turns
+        cursor = await db.execute(
+            "SELECT role, content FROM chat_messages "
+            "WHERE project_id=? AND role IN ('user','assistant') "
+            "ORDER BY created_at DESC LIMIT ?",
+            (project_id, limit),
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+
+    rows.reverse()  # oldest first
+
+    for row in rows:
+        messages.append({"role": row["role"], "content": row["content"]})
+
+    return messages
 
 
 async def _get_conversation_summary(project_id: int) -> str:

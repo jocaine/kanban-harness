@@ -6,6 +6,8 @@ import os
 import shutil
 from datetime import datetime
 
+from core.config import WORKSPACE_BASE, validate_path_within_workspace
+
 logger = logging.getLogger("kh.agent.coach_dev")
 
 DEFAULT_TIMEOUT = 600  # 10 minutes
@@ -13,10 +15,11 @@ WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")
 
 
 class CoachDev:
-    def __init__(self, repo_path: str, project_id: int = 0):
+    def __init__(self, repo_path: str, project_id: int = 0, on_heartbeat=None):
         self.repo_path = repo_path
         self.project_id = project_id
         self.timeout = DEFAULT_TIMEOUT
+        self._on_heartbeat = on_heartbeat
 
     def _worktree_dir(self, code: str) -> str:
         """Per-project isolated worktree path: /tmp/kh-worktrees/project_{id}/{code}"""
@@ -30,6 +33,14 @@ class CoachDev:
         description = card.get("description", "")
         branch_name = f"feature/{code.lower()}"
         worktree_path = self._worktree_dir(code)
+
+        # KH-109: Validate cwd before launching subprocess
+        if not os.path.isdir(self.repo_path):
+            raise RuntimeError(f"repo_path does not exist: {self.repo_path}")
+        real_repo = os.path.realpath(self.repo_path)
+        real_workspace = os.path.realpath(WORKSPACE_BASE)
+        if not real_repo.startswith(real_workspace + os.sep) and real_repo != real_workspace:
+            raise RuntimeError(f"repo_path outside workspace: {real_repo} (workspace: {real_workspace})")
 
         logger.info(f"Coach-Dev starting: [{code}] {title}")
 
@@ -69,6 +80,8 @@ class CoachDev:
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
                 logger.info(f"Coach-Dev completed: [{code}] {summary}")
                 return {
+                    "task_done": True,
+                    "signal": "to_testing",
                     "success": True, "summary": summary,
                     "branch": branch_name, "commit": commit_hash,
                     "commit_message": commit_message,
@@ -76,13 +89,13 @@ class CoachDev:
                 }
             else:
                 logger.warning(f"Coach-Dev produced no commits for [{code}]")
-                return {"success": False, "summary": "No commits produced", "output": output}
+                return {"task_done": False, "signal": "", "success": False, "summary": "No commits produced", "output": output}
 
         except asyncio.TimeoutError:
-            logger.error(f"Coach-Dev timed out for [{code}]")
+            logger.error("[FAULT:AGENT] coach_dev timed out for [%s]", code)
             raise
         except Exception as e:
-            logger.error(f"Coach-Dev failed for [{code}]: {e}")
+            logger.error("[FAULT:AGENT] coach_dev failed for [%s]: %s", code, e)
             raise
         finally:
             if is_scaffold:
@@ -151,7 +164,7 @@ class CoachDev:
             if os.path.exists(worktree_path):
                 await self._run_git("worktree", "remove", "--force", worktree_path)
         except Exception as e:
-            logger.warning(f"Worktree cleanup failed: {e}")
+            logger.warning("[FAULT:WORKSPACE] worktree cleanup failed: %s", e)
             # Fallback: just delete the directory
             if os.path.exists(worktree_path):
                 shutil.rmtree(worktree_path, ignore_errors=True)
@@ -185,11 +198,35 @@ class CoachDev:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        if self._on_heartbeat:
+            self._on_heartbeat()
+
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout
-            )
-            return stdout.decode(errors="replace")
+            import time as _time
+            start = _time.monotonic()
+            heartbeat_interval = 60
+
+            while True:
+                remaining = self.timeout - (_time.monotonic() - start)
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                wait_time = min(remaining, heartbeat_interval)
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=wait_time
+                    )
+                    if self._on_heartbeat:
+                        self._on_heartbeat()
+                    return stdout.decode(errors="replace")
+                except asyncio.TimeoutError:
+                    if proc.returncode is not None:
+                        stdout, stderr = await proc.communicate()
+                        return stdout.decode(errors="replace")
+                    if self._on_heartbeat:
+                        self._on_heartbeat()
+                    if _time.monotonic() - start >= self.timeout:
+                        raise
+
         except asyncio.TimeoutError:
             proc.kill()
             raise

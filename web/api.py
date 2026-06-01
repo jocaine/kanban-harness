@@ -85,6 +85,33 @@ class CommentCreate(BaseModel):
     author: str = ""
     content: str
 
+# ==================== 0. App Version ====================
+
+
+def _get_app_version() -> str:
+    """Read APP_VERSION from env, fallback to git describe or 'dev'."""
+    ver = os.getenv("APP_VERSION", "")
+    if ver:
+        return ver
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            capture_output=True, text=True, timeout=3,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return "dev"
+
+
+@router.get("/version")
+async def get_version():
+    return {"version": _get_app_version()}
+
+
 # ==================== 1. Kanban Data API ====================
 
 @router.get("/projects")
@@ -333,7 +360,8 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     }
     new_assignee = STATUS_ASSIGNEE_MAP.get(data.status, "")
     await db.execute(
-        "UPDATE requirements SET status=?, assignee=?, position=?, queue_reason='', updated_at=datetime('now','localtime') WHERE id=?",
+        "UPDATE requirements SET status=?, assignee=?, position=?, queue_reason='', "
+        "ceo_decision=NULL, updated_at=datetime('now','localtime'), progressed_at=datetime('now','localtime') WHERE id=?",
         (data.status, new_assignee, data.position, rid)
     )
 
@@ -518,11 +546,18 @@ def _fetch_docker_logs(lines: int = 300):
 
 @router.get("/dev/logs")
 async def dev_logs(lines: int = 200):
-    """Return container logs for development debugging."""
+    """Return logs from in-memory buffer (current process), fallback to Docker logs."""
     try:
-        return {"logs": _fetch_docker_logs(lines)}
+        from main import LOG_BUFFER
+        buf = LOG_BUFFER.get_all()
+        if buf:
+            return {"logs": buf[-lines:], "source": "memory"}
+    except Exception:
+        pass
+    try:
+        return {"logs": _fetch_docker_logs(lines), "source": "docker"}
     except Exception as e:
-        return {"logs": [f"Error fetching logs: {e}"]}
+        return {"logs": [f"Error fetching logs: {e}"], "source": "error"}
 
 
 LAYER_META = {
@@ -536,31 +571,46 @@ LAYER_META = {
 
 @router.get("/dev/logs/layers")
 async def dev_logs_layers(lines: int = 300):
-    """Return container logs grouped by architecture layer."""
+    """Return logs grouped by architecture layer — from in-memory buffer or Docker."""
+    raw_lines = []
+    source = "unknown"
     try:
-        raw_lines = _fetch_docker_logs(lines)
-        layers = {}
-        for raw in raw_lines:
-            # Parse timestamp + message
-            pm = re.match(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+Z\s+(.*)', raw)
-            ts = pm.group(1).replace('T', ' ') if pm else ''
-            msg = pm.group(2) if pm else raw
-            layer = _classify_log_layer(msg)
-            if layer not in layers:
-                layers[layer] = []
-            layers[layer].append({'ts': ts, 'msg': msg, 'raw': raw})
-        # Build response with layer metadata
-        result = {}
-        for key, meta in LAYER_META.items():
-            lines_in_layer = layers.get(key, [])
-            result[key] = {
-                'meta': meta,
-                'count': len(lines_in_layer),
-                'lines': lines_in_layer,
-            }
-        return {'layers': result, 'total': len(raw_lines)}
-    except Exception as e:
-        return {'layers': {}, 'total': 0, 'error': str(e)}
+        from main import LOG_BUFFER
+        buf = LOG_BUFFER.get_all()
+        if buf:
+            raw_lines = buf[-lines:]
+            source = "memory"
+        else:
+            raw_lines = _fetch_docker_logs(lines)
+            source = "docker"
+    except Exception:
+        try:
+            raw_lines = _fetch_docker_logs(lines)
+            source = "docker"
+        except Exception as e:
+            return {'layers': {}, 'total': 0, 'error': str(e), 'source': 'error'}
+
+    layers = {}
+    for raw in raw_lines:
+        # Memory format: "2026-05-26 09:00:00 [name] LEVEL: message"
+        # Docker format: "2026-05-26T09:00:00.123456Z [name] LEVEL: message"
+        pm = re.match(r'^(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}:\d{2}', raw)
+        ts = pm.group(1) + ' ' + raw[pm.end() - 8:pm.end()] if pm else ''
+        msg = re.sub(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+Z)?\s+', '', raw)
+        layer = _classify_log_layer(msg)
+        if layer not in layers:
+            layers[layer] = []
+        layers[layer].append({'ts': ts, 'msg': msg, 'raw': raw})
+
+    result = {}
+    for key, meta in LAYER_META.items():
+        lines_in_layer = layers.get(key, [])
+        result[key] = {
+            'meta': meta,
+            'count': len(lines_in_layer),
+            'lines': lines_in_layer,
+        }
+    return {'layers': result, 'total': len(raw_lines), 'source': source}
 
 
 @router.delete("/projects/{pid}")
@@ -1008,6 +1058,265 @@ async def trigger_task(task_type: str):
         "hint": "Manual trigger — will execute on next tick"
     }
 
+
+# ==================== 2b. Card Debug Endpoint (KH-107) ====================
+
+@router.get("/cards/{code}/debug")
+async def card_debug(code: str, db: aiosqlite.Connection = Depends(get_db)):
+    """Aggregate all runtime info for a card by its code (e.g. KH-086)."""
+    import json as _json
+    from core.config import WORKSPACE_BASE
+
+    cursor = await db.execute(
+        "SELECT r.*, v.project_id FROM requirements r "
+        "JOIN versions v ON r.version_id=v.id WHERE r.code=? AND r.archived=0",
+        (code.upper(),),
+    )
+    card = await cursor.fetchone()
+    if not card:
+        raise HTTPException(404, f"card {code} not found")
+    card = dict(card)
+    req_id = card["id"]
+    project_id = card["project_id"]
+
+    workspace_path = os.path.join(WORKSPACE_BASE, f"project_{project_id}")
+
+    cursor = await db.execute(
+        "SELECT id, agent_role, status, trigger_type, error_message, retry_count, "
+        "input_tokens, output_tokens, total_tokens, started_at, completed_at "
+        "FROM agent_sessions WHERE input_context LIKE ? ORDER BY created_at DESC LIMIT 20",
+        (f'%"requirement_id": {req_id}%',),
+    )
+    sessions = [dict(row) for row in await cursor.fetchall()]
+
+    cursor = await db.execute(
+        "SELECT author, content, created_at FROM comments "
+        "WHERE requirement_id=? ORDER BY created_at DESC LIMIT 10",
+        (req_id,),
+    )
+    recent_comments = [dict(row) for row in await cursor.fetchall()]
+
+    cursor = await db.execute(
+        "SELECT commit_hash, message, committed_at FROM requirement_commits "
+        "WHERE requirement_id=? ORDER BY created_at DESC",
+        (req_id,),
+    )
+    commits = [dict(row) for row in await cursor.fetchall()]
+
+    total_attempts = len(sessions)
+    last_error = ""
+    for s in sessions:
+        if s["error_message"]:
+            last_error = s["error_message"]
+            break
+
+    return {
+        "card": {
+            "code": card["code"],
+            "title": card["title"],
+            "status": card["status"],
+            "assignee": card["assignee"],
+            "priority": card["priority"],
+            "type": card.get("type", "dev"),
+        },
+        "workspace_path": workspace_path,
+        "sessions": sessions,
+        "recent_comments": recent_comments,
+        "commits": commits,
+        "stats": {
+            "total_attempts": total_attempts,
+            "last_error": last_error,
+        },
+    }
+
+
+# ==================== 2c. Token Stats Endpoint (KH-108) ====================
+
+@router.get("/stats/tokens")
+async def token_stats(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
+    """Token consumption statistics — by role and time period."""
+    base_where = "WHERE 1=1"
+    params = []
+    if project_id:
+        base_where += " AND project_id=?"
+        params.append(project_id)
+
+    # By role
+    cursor = await db.execute(
+        f"SELECT agent_role, "
+        f"SUM(input_tokens) as input_tokens, "
+        f"SUM(output_tokens) as output_tokens, "
+        f"SUM(total_tokens) as total_tokens, "
+        f"COUNT(*) as session_count "
+        f"FROM agent_sessions {base_where} AND status='completed' "
+        f"GROUP BY agent_role",
+        params,
+    )
+    by_role = [dict(row) for row in await cursor.fetchall()]
+
+    # Today
+    cursor = await db.execute(
+        f"SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, "
+        f"SUM(total_tokens) as total_tokens "
+        f"FROM agent_sessions {base_where} AND status='completed' "
+        f"AND started_at >= date('now', 'localtime')",
+        params,
+    )
+    today = dict(await cursor.fetchone())
+
+    # This week
+    cursor = await db.execute(
+        f"SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, "
+        f"SUM(total_tokens) as total_tokens "
+        f"FROM agent_sessions {base_where} AND status='completed' "
+        f"AND started_at >= date('now', 'localtime', '-7 days')",
+        params,
+    )
+    this_week = dict(await cursor.fetchone())
+
+    # Total
+    cursor = await db.execute(
+        f"SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, "
+        f"SUM(total_tokens) as total_tokens "
+        f"FROM agent_sessions {base_where} AND status='completed'",
+        params,
+    )
+    total = dict(await cursor.fetchone())
+
+    return {
+        "by_role": by_role,
+        "today": today,
+        "this_week": this_week,
+        "total": total,
+    }
+
+
+@router.get("/scheduler/state")
+async def scheduler_state(db: aiosqlite.Connection = Depends(get_db)):
+    """Aggregated scheduler snapshot — one request for full runtime state."""
+    import json as _json
+    import time as _time
+    from datetime import datetime
+    from core.session_manager import DEFAULT_STALL_TIMEOUT
+
+    scheduler = _get_scheduler()
+    sched = scheduler.status
+    heartbeats = scheduler.session_manager._heartbeats
+    now_mono = _time.monotonic()
+
+    # Running sessions
+    cursor = await db.execute(
+        "SELECT id, agent_role, input_context, started_at, retry_count "
+        "FROM agent_sessions WHERE status='running' ORDER BY started_at"
+    )
+    running_rows = [dict(row) for row in await cursor.fetchall()]
+
+    now = datetime.now()
+    running = []
+    stale = []
+    for r in running_rows:
+        card_code = ""
+        try:
+            ctx = _json.loads(r["input_context"] or "{}")
+            card_code = ctx.get("code", "")
+        except (ValueError, TypeError):
+            pass
+        elapsed = 0
+        if r["started_at"]:
+            try:
+                started = datetime.strptime(r["started_at"], "%Y-%m-%d %H:%M:%S")
+                elapsed = int((now - started).total_seconds())
+            except ValueError:
+                pass
+
+        # Heartbeat / stall info — only treat as truly running if heartbeat exists
+        sid = r["id"]
+        last_beat = heartbeats.get(sid)
+        if last_beat is not None:
+            silent_seconds = int(now_mono - last_beat)
+            running.append({
+                "session_id": sid,
+                "card_code": card_code,
+                "agent_role": r["agent_role"],
+                "started_at": r["started_at"],
+                "elapsed_seconds": elapsed,
+                "silent_seconds": silent_seconds,
+                "stall_timeout": DEFAULT_STALL_TIMEOUT,
+                "retry_count": r["retry_count"],
+            })
+        else:
+            # No heartbeat → stale session (process gone, DB not cleaned up)
+            stale.append({
+                "session_id": sid,
+                "card_code": card_code,
+                "agent_role": r["agent_role"],
+                "started_at": r["started_at"],
+                "elapsed_seconds": elapsed,
+            })
+
+    # Blocked sessions
+    cursor = await db.execute(
+        "SELECT id, agent_role, input_context, error_message, completed_at, retry_count "
+        "FROM agent_sessions WHERE status='blocked' ORDER BY completed_at DESC LIMIT 10"
+    )
+    blocked_rows = [dict(row) for row in await cursor.fetchall()]
+
+    blocked = []
+    for r in blocked_rows:
+        card_code = ""
+        try:
+            ctx = _json.loads(r["input_context"] or "{}")
+            card_code = ctx.get("code", "")
+        except (ValueError, TypeError):
+            pass
+        blocked.append({
+            "session_id": r["id"],
+            "card_code": card_code,
+            "agent_role": r["agent_role"],
+            "error": r["error_message"],
+            "failed_at": r["completed_at"],
+            "retry_count": r["retry_count"],
+        })
+
+    # Pending actionable cards (dev cards waiting for dispatch)
+    cursor = await db.execute(
+        "SELECT r.id, r.code, r.title, r.status, r.priority "
+        "FROM requirements r "
+        "JOIN versions v ON r.version_id = v.id "
+        "WHERE r.status = 'dev' AND r.type = 'dev' AND r.archived = 0 "
+        "ORDER BY r.priority, r.position"
+    )
+    pending_rows = [dict(row) for row in await cursor.fetchall()]
+
+    pending = [{
+        "card_id": r["id"],
+        "card_code": r["code"],
+        "title": r["title"],
+        "status": r["status"],
+        "priority": r["priority"],
+    } for r in pending_rows]
+
+    return {
+        "generated_at": now.isoformat(),
+        "scheduler": {
+            "mode": sched["mode"],
+            "tick_count": sched["tick_count"],
+            "poll_interval": sched["poll_interval"],
+            "started_at": sched["started_at"],
+        },
+        "counts": {
+            "running": len(running),
+            "stale": len(stale),
+            "blocked": len(blocked),
+            "pending": len(pending),
+        },
+        "running": running,
+        "stale": stale,
+        "blocked": blocked,
+        "pending": pending,
+    }
+
+
 # ==================== 3. AI Activity API ====================
 
 @router.get("/agents/sessions")
@@ -1078,59 +1387,17 @@ DECISION_MARKERS = ("[调研充分]", "[READY]", "[需要补充]", "[NEED_MORE]"
 
 @router.get("/decisions/pending")
 async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
-    """List cards waiting for CEO/human decision.
+    """List cards waiting for CEO decision — unified via ceo_decision field."""
+    import json as _json
 
-    Only shows cards where an agent EXPLICITLY asked for CEO input:
-    - organizing: PM wrote [需要补充] (evaluated research, needs CEO guidance)
-    - research: Industry wrote [需要补充] (needs CEO to provide info)
-    - testing: Coach-Review posted results (CEO decides accept/reject)
-
-    Does NOT show cards merely transiting through a status (e.g. PM still processing).
-    Excludes cards with a running agent session.
-    """
     query = """
         SELECT r.id, r.code, r.title, r.priority, r.status, r.description,
-               r.updated_at, r.type, v.project_id, p.name as project_name, p.prefix
+               r.updated_at, r.type, r.ceo_decision, v.project_id,
+               p.name as project_name, p.prefix
         FROM requirements r
         JOIN versions v ON r.version_id = v.id
         JOIN projects p ON v.project_id = p.id
-        WHERE r.archived = 0
-        AND NOT EXISTS (
-            SELECT 1 FROM agent_sessions s
-            WHERE s.status = 'running'
-            AND s.input_context LIKE '%' || r.id || '%'
-        )
-        AND (
-            (r.status = 'organizing' AND r.id IN (
-                SELECT c.requirement_id FROM comments c
-                WHERE c.author IN ('产品经理', 'PM')
-                AND c.content LIKE '%[需要补充]%'
-                AND c.id = (
-                    SELECT MAX(c2.id) FROM comments c2
-                    WHERE c2.requirement_id = c.requirement_id
-                    AND c2.author IN ('产品经理', 'PM')
-                )
-            ))
-            OR (r.status = 'research' AND r.id IN (
-                SELECT c.requirement_id FROM comments c
-                WHERE c.author IN ('行业顾问', 'Industry')
-                AND c.content LIKE '%[需要补充]%'
-                AND c.id = (
-                    SELECT MAX(c2.id) FROM comments c2
-                    WHERE c2.requirement_id = c.requirement_id
-                )
-            ))
-            OR (r.status = 'testing' AND r.id IN (
-                SELECT c.requirement_id FROM comments c
-                WHERE c.author IN ('Coach-Review', 'Coach-QA')
-                AND c.id = (
-                    SELECT MAX(c2.id) FROM comments c2
-                    WHERE c2.requirement_id = c.requirement_id
-                    AND c2.author IN ('Coach-Review', 'Coach-QA', '产品经理', 'PM',
-                                      '行业顾问', 'Industry', 'Coach-Dev')
-                )
-            ))
-        )
+        WHERE r.ceo_decision IS NOT NULL AND r.archived = 0
     """
     params = []
     if project_id:
@@ -1143,35 +1410,28 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
 
     results = []
     for card in cards:
-        if card["status"] == "research":
-            asking_role = "industry"
-            cursor2 = await db.execute(
-                "SELECT content, author, created_at FROM comments "
-                "WHERE requirement_id=? AND author IN ('行业顾问', 'Industry') "
-                "ORDER BY created_at DESC LIMIT 1",
-                (card["id"],),
-            )
-        elif card["status"] == "organizing":
-            asking_role = "pm"
-            cursor2 = await db.execute(
-                "SELECT content, author, created_at FROM comments "
-                "WHERE requirement_id=? AND author IN ('产品经理', 'PM') "
-                "ORDER BY created_at DESC LIMIT 1",
-                (card["id"],),
-            )
-        else:
-            asking_role = "coach_review"
-            cursor2 = await db.execute(
-                "SELECT content, author, created_at FROM comments "
-                "WHERE requirement_id=? AND author IN ('Coach-Review', 'Coach-QA') "
-                "ORDER BY created_at DESC LIMIT 1",
-                (card["id"],),
-            )
-        last_comment = await cursor2.fetchone()
-        if not last_comment:
-            continue
+        decision_data = {}
+        try:
+            decision_data = _json.loads(card["ceo_decision"])
+        except (ValueError, TypeError):
+            pass
 
-        comment_text = last_comment["content"] or ""
+        asking_role = decision_data.get("role", "pm")
+        author_map = {
+            "industry": ("行业顾问", "Industry"),
+            "pm": ("产品经理", "PM"),
+            "coach_review": ("Coach-Review", "Coach-QA"),
+            "coach_dev": ("Coach-Dev",),
+        }
+        authors = author_map.get(asking_role, ("产品经理", "PM"))
+        placeholders = ",".join("?" * len(authors))
+        cursor2 = await db.execute(
+            f"SELECT content, created_at FROM comments "
+            f"WHERE requirement_id=? AND author IN ({placeholders}) "
+            f"ORDER BY created_at DESC LIMIT 1",
+            (card["id"], *authors),
+        )
+        last_comment = await cursor2.fetchone()
 
         cursor3 = await db.execute(
             "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='行业顾问'",
@@ -1189,16 +1449,18 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
             "project_id": card["project_id"],
             "project_name": card["project_name"],
             "asking_role": asking_role,
-            "pm_summary": comment_text[:500],
+            "reason": decision_data.get("reason", ""),
+            "message": decision_data.get("message", ""),
+            "actions": decision_data.get("actions", []),
+            "pm_summary": (last_comment["content"][:500] if last_comment else decision_data.get("message", "")),
             "research_rounds": research_count,
-            "waiting_since": last_comment["created_at"],
+            "waiting_since": decision_data.get("since", card["updated_at"]),
         })
 
     return {"decisions": results}
 
-
 class CEODecisionInput(BaseModel):
-    decision: str  # "approve_dev" | "request_more_research" | "reply_to_role" | "custom"
+    decision: str  # "approve_dev" | "request_more_research" | "reply_to_role" | "retry" | "custom"
     comment: str = ""
     asking_role: str = ""
 
@@ -1212,9 +1474,14 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "requirement not found")
-    if row["status"] not in ("organizing", "research", "testing"):
-        raise HTTPException(400, "card must be in organizing, research, or testing status")
     req_type = row["type"]
+
+    # Clear ceo_decision — CEO has responded
+    await db.execute(
+        "UPDATE requirements SET ceo_decision=NULL, queue_reason='', "
+        "updated_at=datetime('now','localtime'), progressed_at=datetime('now','localtime') WHERE id=?",
+        (rid,),
+    )
 
     # Determine target status
     ROLE_WORK_STATUS = {
@@ -1228,8 +1495,9 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     elif data.decision == "request_more_research":
         new_status = "research"
     elif data.decision == "reply_to_role":
-        # Return card to the asking role's working column
         new_status = ROLE_WORK_STATUS.get(data.asking_role, "organizing")
+    elif data.decision == "retry":
+        new_status = ""
     else:
         new_status = ""
 
@@ -1253,13 +1521,14 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     # Move card if decision implies a status change
     if new_status:
         await db.execute(
-            "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
+            "UPDATE requirements SET status=?, progressed_at=datetime('now','localtime'), "
+            "updated_at=datetime('now','localtime') WHERE id=?",
             (new_status, rid),
         )
 
-    # Emit event: always for reply_to_role (agent needs to see CEO's reply),
+    # Emit event: always for reply_to_role/retry (agent needs to re-engage),
     # or when status actually changed
-    if new_status != old_status or data.decision == "reply_to_role":
+    if new_status != old_status or data.decision in ("reply_to_role", "retry"):
         vcursor = await db.execute(
             "SELECT v.project_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
             (rid,),
@@ -1277,3 +1546,25 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
 
     await db.commit()
     return {"ok": True, "new_status": new_status or "organizing"}
+
+
+# ==================== 4. Config Reload ====================
+
+
+@router.post("/config/reload")
+async def reload_config():
+    """Re-read .env and re-sync hermes config without restarting the server."""
+    from dotenv import load_dotenv
+    # Re-read .env with override
+    load_dotenv(override=True)
+    logger.info("Reloaded .env file")
+
+    try:
+        from web.hermes_chat import ensure_hermes_config
+        await ensure_hermes_config()
+        logger.info("Re-synced hermes config")
+    except Exception as e:
+        logger.error("Failed to sync hermes config: %s", e)
+        return {"ok": True, "dotenv": "reloaded", "hermes_sync": f"failed: {e}"}
+
+    return {"ok": True, "dotenv": "reloaded", "hermes_sync": "ok"}

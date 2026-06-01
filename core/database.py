@@ -166,6 +166,34 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
+    # Migration 6: Add token tracking columns to agent_sessions (KH-108)
+    cursor = await db.execute("PRAGMA table_info(agent_sessions)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "input_tokens" not in columns:
+        logger.info("Migrating agent_sessions: adding token tracking columns")
+        await db.execute("ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0")
+        await db.execute("ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0")
+        await db.execute("ALTER TABLE agent_sessions ADD COLUMN total_tokens INTEGER DEFAULT 0")
+    await db.commit()
+
+    # Migration 7: Add ceo_decision and progressed_at columns (王权问答重构)
+    cursor = await db.execute("PRAGMA table_info(requirements)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "ceo_decision" not in columns:
+        logger.info("Migrating requirements table: adding ceo_decision column")
+        await db.execute(
+            "ALTER TABLE requirements ADD COLUMN ceo_decision TEXT DEFAULT NULL"
+        )
+    if "progressed_at" not in columns:
+        logger.info("Migrating requirements table: adding progressed_at column")
+        await db.execute(
+            "ALTER TABLE requirements ADD COLUMN progressed_at DATETIME DEFAULT NULL"
+        )
+        await db.execute(
+            "UPDATE requirements SET progressed_at = updated_at WHERE progressed_at IS NULL"
+        )
+    await db.commit()
+
 
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
@@ -351,6 +379,14 @@ async def init_db():
                 ON chat_tasks(status) WHERE status='running';
         """)
         await db.commit()
+
+    # Migration: Fix prefix unique index to exclude archived projects
+    async with aiosqlite.connect(DB_PATH) as db_idx:
+        await db_idx.executescript("""
+            DROP INDEX IF EXISTS idx_projects_prefix;
+            CREATE UNIQUE INDEX idx_projects_prefix ON projects(prefix) WHERE prefix != '' AND archived=0;
+        """)
+        await db_idx.commit()
 
     # Migration 2: Add 'type' column to requirements
     async with aiosqlite.connect(DB_PATH) as db2:

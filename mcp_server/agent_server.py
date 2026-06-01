@@ -126,7 +126,7 @@ async def create_requirements(version_id: int, requirements: str) -> str:
                     title,
                     req.get("description", ""),
                     req.get("priority", "P2"),
-                    req.get("status", "pending"),
+                    req.get("status", "organizing"),
                     code,
                     version_id,
                 ),
@@ -196,9 +196,9 @@ async def move_requirement(requirement_id: int, status: str) -> str:
 
     Args:
         requirement_id: 需求 ID
-        status: 目标状态 (research/pending/dev/testing/done/blocked)
+        status: 目标状态 (research/organizing/dev/testing/done/blocked)
     """
-    valid_statuses = ("research", "pending", "dev", "testing", "done", "blocked")
+    valid_statuses = ("research", "organizing", "dev", "testing", "done", "blocked")
     if status not in valid_statuses:
         return f"错误：无效状态 '{status}'，必须是 {valid_statuses} 之一"
 

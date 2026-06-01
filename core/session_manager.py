@@ -1,7 +1,8 @@
-"""Agent Session lifecycle management — timeout, retry, blocked states."""
+"""Agent Session lifecycle management — timeout, retry, blocked states, stall detection."""
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 import aiosqlite
@@ -12,11 +13,16 @@ logger = logging.getLogger("kh.core.session")
 
 MAX_RETRIES = 2
 DEFAULT_TIMEOUT = 600  # 10 minutes
+DEFAULT_STALL_TIMEOUT = 120  # 2 minutes without output → stalled
+BACKOFF_BASE_SECONDS = 10  # exponential backoff base for crash retries
+BACKOFF_MAX_SECONDS = 300  # cap at 5 minutes
 
 
 class SessionManager:
     def __init__(self):
         self._timeout_task: asyncio.Task | None = None
+        self._heartbeats: dict[int, float] = {}  # session_id → monotonic timestamp
+        self._processes: dict[int, asyncio.subprocess.Process] = {}  # session_id → process
 
     async def start_timeout_checker(self, interval: int = 30):
         self._timeout_task = asyncio.create_task(self._timeout_loop(interval))
@@ -28,6 +34,22 @@ class SessionManager:
                 await self._timeout_task
             except asyncio.CancelledError:
                 pass
+        self._heartbeats.clear()
+        self._processes.clear()
+
+    def heartbeat(self, session_id: int):
+        """Update heartbeat timestamp — call whenever agent produces output."""
+        self._heartbeats[session_id] = time.monotonic()
+
+    def register_process(self, session_id: int, proc: asyncio.subprocess.Process):
+        """Track a subprocess so stall detection can kill it."""
+        self._processes[session_id] = proc
+        self._heartbeats[session_id] = time.monotonic()
+
+    def unregister_process(self, session_id: int):
+        """Remove process tracking after session ends."""
+        self._processes.pop(session_id, None)
+        self._heartbeats.pop(session_id, None)
 
     async def create_session(
         self,
@@ -54,13 +76,22 @@ class SessionManager:
             logger.info(f"Session {session_id} created: {agent_role} for project {project_id}")
             return session_id
 
-    async def complete_session(self, session_id: int, output_summary: str = "") -> dict:
+    async def complete_session(self, session_id: int, output_summary: str = "", tokens: dict | None = None) -> dict:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
+            token_sql = ""
+            token_params = []
+            if tokens:
+                token_sql = ", input_tokens=?, output_tokens=?, total_tokens=?"
+                token_params = [
+                    tokens.get("input", 0),
+                    tokens.get("output", 0),
+                    tokens.get("total", tokens.get("input", 0) + tokens.get("output", 0)),
+                ]
             await db.execute(
-                "UPDATE agent_sessions SET status='completed', output_summary=?, "
-                "completed_at=datetime('now','localtime') WHERE id=?",
-                (output_summary, session_id),
+                f"UPDATE agent_sessions SET status='completed', output_summary=?, "
+                f"completed_at=datetime('now','localtime'){token_sql} WHERE id=?",
+                (output_summary, *token_params, session_id),
             )
             await db.commit()
             row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
@@ -69,29 +100,32 @@ class SessionManager:
             return result
 
     async def fail_session(self, session_id: int, error: str = "") -> dict:
+        """Fail a session with exponential backoff retry.
+
+        Backoff: 10s → 20s → 40s → ... → 300s max.
+        """
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
             session = dict(await row.fetchone())
 
             if session["retry_count"] < MAX_RETRIES:
+                delay = min(
+                    BACKOFF_BASE_SECONDS * (2 ** session["retry_count"]),
+                    BACKOFF_MAX_SECONDS,
+                )
                 await db.execute(
                     "UPDATE agent_sessions SET status='failed', error_message=?, "
                     "completed_at=datetime('now','localtime') WHERE id=?",
                     (error, session_id),
                 )
                 await db.commit()
-                logger.info(f"Session {session_id} failed, scheduling retry")
-                retry_id = await self.create_session(
-                    project_id=session["project_id"],
-                    agent_role=session["agent_role"],
-                    trigger_type=f"retry:{session_id}",
-                    input_context=session["input_context"],
-                    timeout_seconds=session["timeout_seconds"],
-                    parent_session_id=session_id,
-                    retry_count=session["retry_count"] + 1,
+                logger.info(
+                    "Session %d failed (attempt %d/%d), retry in %ds: %s",
+                    session_id, session["retry_count"] + 1, MAX_RETRIES, delay, error,
                 )
-                return {"status": "retrying", "new_session_id": retry_id}
+                retry_id = await self._schedule_retry(session, delay)
+                return {"status": "retrying", "new_session_id": retry_id, "retry_delay": delay}
             else:
                 await db.execute(
                     "UPDATE agent_sessions SET status='blocked', error_message=?, "
@@ -99,9 +133,56 @@ class SessionManager:
                     (error, session_id),
                 )
                 await db.commit()
-                logger.warning(f"Session {session_id} blocked after {MAX_RETRIES} retries")
+                logger.warning("[FAULT:AGENT] session %d blocked after %d retries", session_id, MAX_RETRIES)
                 row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
                 return dict(await row.fetchone())
+
+    async def continuation_retry(self, session_id: int) -> dict:
+        """Immediate requeue — agent exited normally but work isn't done.
+
+        No backoff, no retry_count increment. Creates a new session immediately.
+        """
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
+            session = dict(await row.fetchone())
+
+            await db.execute(
+                "UPDATE agent_sessions SET status='completed', output_summary=?, "
+                "completed_at=datetime('now','localtime') WHERE id=?",
+                ("continuation:incomplete", session_id),
+            )
+            await db.commit()
+
+        logger.info("Session %d completed (incomplete work), scheduling continuation", session_id)
+        continuation_id = await self.create_session(
+            project_id=session["project_id"],
+            agent_role=session["agent_role"],
+            trigger_type=f"continuation:{session_id}",
+            input_context=session["input_context"],
+            timeout_seconds=session["timeout_seconds"],
+            parent_session_id=session_id,
+            retry_count=0,  # continuation resets retry count
+        )
+        return {"status": "continuation", "new_session_id": continuation_id}
+
+    async def _schedule_retry(self, session: dict, delay: int) -> int:
+        """Schedule a retry after delay seconds."""
+        async def _delayed_create():
+            await asyncio.sleep(delay)
+            await self.create_session(
+                project_id=session["project_id"],
+                agent_role=session["agent_role"],
+                trigger_type=f"retry:{session['id']}",
+                input_context=session["input_context"],
+                timeout_seconds=session["timeout_seconds"],
+                parent_session_id=session["id"],
+                retry_count=session["retry_count"] + 1,
+            )
+
+        asyncio.create_task(_delayed_create())
+        # Return a placeholder — the actual session_id is created after delay
+        return -1
 
     async def get_session(self, session_id: int) -> dict | None:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -132,23 +213,77 @@ class SessionManager:
             )
             sessions = [dict(row) for row in await cursor.fetchall()]
 
-        now = datetime.now()
+        now_dt = datetime.now()
+        now_mono = time.monotonic()
+
         for session in sessions:
+            sid = session["id"]
             started = datetime.strptime(session["started_at"], "%Y-%m-%d %H:%M:%S")
             timeout = timedelta(seconds=session["timeout_seconds"])
-            elapsed = now - started
+            elapsed = now_dt - started
+
+            # Hard timeout — total elapsed time exceeded
             if elapsed > timeout:
                 logger.warning(
                     "Session %d timed out: agent=%s, project=%d, ran %ds (limit %ds)",
-                    session["id"], session["agent_role"], session["project_id"],
+                    sid, session["agent_role"], session["project_id"],
                     int(elapsed.total_seconds()), session["timeout_seconds"],
                 )
-                await self.fail_session(session["id"], error="timeout")
+                await self._kill_and_fail(sid, "timeout")
+                continue
+
+            # Stall detection — no heartbeat for STALL_TIMEOUT seconds
+            last_beat = self._heartbeats.get(sid)
+            if last_beat is not None:
+                silent_seconds = now_mono - last_beat
+                if silent_seconds > DEFAULT_STALL_TIMEOUT:
+                    logger.warning(
+                        "Session %d stalled: agent=%s, no output for %ds (limit %ds)",
+                        sid, session["agent_role"],
+                        int(silent_seconds), DEFAULT_STALL_TIMEOUT,
+                    )
+                    await self._kill_and_fail(sid, f"stall:{int(silent_seconds)}s_no_output")
+
+    async def cancel_session(self, session_id: int, reason: str = "reconciliation") -> dict:
+        """Cancel a running session — kill process, mark cancelled. No retry."""
+        proc = self._processes.get(session_id)
+        if proc and proc.returncode is None:
+            try:
+                proc.kill()
+                logger.info("Cancelled session %d: killed process (pid=%d)", session_id, proc.pid)
+            except ProcessLookupError:
+                pass
+        self.unregister_process(session_id)
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                "UPDATE agent_sessions SET status='failed', error_message=?, "
+                "completed_at=datetime('now','localtime') WHERE id=? AND status='running'",
+                (f"cancelled:{reason}", session_id),
+            )
+            await db.commit()
+            row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
+            result = await row.fetchone()
+            logger.info("Session %d cancelled: %s", session_id, reason)
+            return dict(result) if result else {}
+
+    async def _kill_and_fail(self, session_id: int, error: str):
+        """Kill the tracked process (if any) and fail the session."""
+        proc = self._processes.get(session_id)
+        if proc and proc.returncode is None:
+            try:
+                proc.kill()
+                logger.info("Killed process for session %d (pid=%d)", session_id, proc.pid)
+            except ProcessLookupError:
+                pass
+        self.unregister_process(session_id)
+        await self.fail_session(session_id, error=error)
 
     async def _timeout_loop(self, interval: int):
         while True:
             try:
                 await self.check_timeouts()
             except Exception as e:
-                logger.error(f"Timeout checker error: {e}")
+                logger.error("[FAULT:OBSERVE] timeout checker error: %s", e)
             await asyncio.sleep(interval)
