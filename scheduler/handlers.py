@@ -25,7 +25,7 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
         session_manager.unregister_process(session_id)
 
         if result.get("task_done", result.get("success")):
-            await session_manager.complete_session(session_id, result.get("summary", ""))
+            await session_manager.complete_session(session_id, result.get("summary", ""), tokens=result.get("tokens"))
             is_scaffold = result.get("is_scaffold", False)
             commit_hash = result.get("commit", "")
             commit_msg = result.get("commit_message", "")
@@ -75,11 +75,12 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
         session_manager.unregister_process(session_id)
         await session_manager.fail_session(session_id, str(e))
 
-
 async def handle_comment_agent_result(session_manager, session_id: int, role_name: str, card: dict, project_id: int = 0):
-    """Execute a comment agent and post its output.
+    """Execute a comment agent and validate its decision via DB state.
 
-    Workflow principle: 评论后必移动，移动后 emit event 触发下一个角色。
+    With atomic decision tools, agents call a single tool (e.g. pm_approve,
+    industry_complete) that combines comment + state transition. The harness
+    just validates the final invariant: did the card move or get escalated?
     """
     try:
         from agents.comment_agent import CommentAgent
@@ -92,208 +93,95 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
             )
             comments = [dict(row) for row in await cursor.fetchall()]
 
-        research_rounds = sum(1 for c in comments if c.get("author") == "行业顾问")
-
         heartbeat_cb = lambda: session_manager.heartbeat(session_id)
 
         agent = CommentAgent(role_name, project_id=project_id)
-        logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s, research_rounds=%d)",
-                    role_name, card.get("code", ""), card.get("status", ""), research_rounds)
+        logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s)",
+                    role_name, card.get("code", ""), card.get("status", ""))
         result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb)
         session_manager.unregister_process(session_id)
-        logger.info("[SCHED] comment_agent '%s' result: success=%s, has_comment=%s",
-                    role_name, result.get("success"), bool(result.get("comment")))
 
-        if role_name == "pm":
-            await handle_pm_tool_mode(session_manager, session_id, card, project_id, comments)
-            return
+        await _validate_agent_decision(session_manager, session_id, card, role_name, project_id, tokens=result.get("tokens"))
 
-        if result["success"] and result["comment"]:
-            role_config = registry.get(role_name)
-            author = role_config.display_name if role_config else role_name
-            comment_text = result["comment"]
-
-            old_status = card.get("status", "")
-            req_type = card.get("type", "dev")
-            if role_name == "pm" and old_status == "organizing":
-                new_status = parse_pm_research_decision(comment_text, research_rounds, req_type)
-            elif role_name == "industry" and old_status == "research":
-                new_status = parse_industry_decision(comment_text)
-            else:
-                new_status = next_status_for_role(role_name, old_status)
-
-            _log_move_decision(role_name, card, old_status, new_status, comment_text)
-
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT INTO comments (requirement_id, author, content, detail) VALUES (?,?,?,?)",
-                    (card["id"], author, comment_text, result.get("detail", "")),
-                )
-
-                if new_status and new_status != old_status:
-                    COL_ASSIGNEE = {
-                        "research": "Industry",
-                        "organizing": "PM",
-                        "dev": "Coach-Dev",
-                        "testing": "Coach-Review",
-                    }
-                    col_assignee = COL_ASSIGNEE.get(new_status, "")
-                    await db.execute(
-                        "UPDATE requirements SET status=?, assignee=?, "
-                        "updated_at=datetime('now','localtime'), progressed_at=datetime('now','localtime') WHERE id=?",
-                        (new_status, col_assignee, card["id"]),
-                    )
-                    logger.info("[STATUS-CHANGE] card=[%s] status %s → %s by %s",
-                                card.get("code", ""), old_status, new_status, role_name)
-
-                    if new_status == "organizing":
-                        if role_name == "industry" and "[转给PM]" in comment_text:
-                            await db.execute(
-                                "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                                (project_id, "status_changed", card["id"],
-                                 json.dumps({"old_status": old_status, "new_status": "organizing", "moved_by": "industry"})),
-                            )
-                            logger.info("[EVENT-EMIT] status_changed card=[%s] %s→organizing moved_by=industry → triggers PM",
-                                        card.get("code", ""), old_status)
-                        else:
-                            logger.info("[EVENT-EMIT] card=[%s] moved to organizing by %s → PM will pick up for evaluation",
-                                        card.get("code", ""), role_name)
-                    else:
-                        await db.execute(
-                            "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                            (project_id, "status_changed", card["id"],
-                             json.dumps({"old_status": old_status, "new_status": new_status, "moved_by": role_name})),
-                        )
-                        logger.info("[EVENT-EMIT] status_changed card=[%s] %s→%s moved_by=%s",
-                                    card.get("code", ""), old_status, new_status, role_name)
-
-                if role_name == "industry" and "[需要补充]" in comment_text:
-                    ceo_dec = json.dumps({
-                        "role": "industry",
-                        "reason": "agent_d",
-                        "message": "行业顾问需要 CEO 补充信息",
-                        "actions": ["reply_to_role", "approve_dev", "request_more_research"],
-                        "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    }, ensure_ascii=False)
-                    await db.execute(
-                        "UPDATE requirements SET assignee='', queue_reason='等待 CEO 补充信息', "
-                        "ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
-                        (ceo_dec, card["id"]),
-                    )
-                    logger.info("[QUEUE] card=[%s] queued in research (assignee cleared), waiting for CEO reply",
-                                card.get("code", ""))
-
-                await db.commit()
-
-                if role_name == "pm" and new_status == "done" and req_type == "research":
-                    parsed = parse_pm_research_conclusion(comment_text)
-                    if parsed:
-                        await append_research_to_memory(project_id, card.get("code", ""), parsed)
-
-        await session_manager.complete_session(session_id, result.get("summary", ""))
     except Exception as e:
         logger.error("[FAULT:AGENT] comment_agent '%s' failed: %s", role_name, e)
         session_manager.unregister_process(session_id)
         await session_manager.fail_session(session_id, str(e))
 
 
-async def handle_pm_tool_mode(session_manager, session_id: int, card: dict, project_id: int, pre_comments: list[dict]):
-    """Handle PM agent result by checking DB state (PM writes via MCP tools directly)."""
+async def _validate_agent_decision(session_manager, session_id: int, card: dict, role_name: str, project_id: int, tokens: dict | None = None):
+    """Unified post-agent validation: did the agent make a decision?
+
+    Checks the DB for either a status change or a ceo_decision being set.
+    If neither happened, the agent failed to decide - escalate immediately.
+    """
     req_id = card["id"]
     old_status = card.get("status", "")
-    req_type = card.get("type", "dev")
-    pre_comment_count = len([c for c in pre_comments if c.get("author") == "产品经理"])
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            "SELECT content FROM comments WHERE requirement_id=? AND author='产品经理' "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT status, ceo_decision, type FROM requirements WHERE id=?",
             (req_id,),
         )
-        latest_pm = await cursor.fetchone()
-        cursor = await db.execute(
-            "SELECT status FROM requirements WHERE id=?", (req_id,),
-        )
-        current_card = await cursor.fetchone()
-        current_status = current_card["status"] if current_card else old_status
+        current = await cursor.fetchone()
 
-    new_comment_count = 0
-    if latest_pm:
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM comments WHERE requirement_id=? AND author='产品经理'",
-                (req_id,),
-            )
-            row = await cursor.fetchone()
-            new_comment_count = row[0] if row else 0
+    if not current:
+        logger.error("[DECISION-FAIL] card %d not found in DB", req_id)
+        await session_manager.fail_session(session_id, f"Card {req_id} not found")
+        return
 
-    has_new_comment = new_comment_count > pre_comment_count
+    current_status = current["status"]
+    has_ceo_decision = bool(current["ceo_decision"])
     status_changed = current_status != old_status
+    req_type = current["type"] or "dev"
 
-    if has_new_comment or status_changed:
-        logger.info(
-            "[PM-TOOL-MODE] success for [%s]: new_comment=%s, status %s→%s",
-            card.get("code", ""), has_new_comment, old_status, current_status,
-        )
-        if req_type == "research" and current_status == "done" and latest_pm:
-            parsed = parse_pm_research_conclusion(latest_pm["content"])
-            if parsed:
-                await append_research_to_memory(project_id, card.get("code", ""), parsed)
-                logger.info("[PRODUCT-MEMORY] appended for [%s]", card.get("code", ""))
-        await session_manager.complete_session(session_id, f"PM completed [{card.get('code', '')}]")
+    if status_changed or has_ceo_decision:
+        logger.info("[DECISION-OK] %s completed [%s]: status %s->%s, ceo_escalated=%s",
+                    role_name, card.get("code"), old_status, current_status, has_ceo_decision)
+
+        # Handle research conclusion archival
+        if role_name == "pm" and current_status == "done" and req_type == "research":
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT content FROM comments WHERE requirement_id=? AND author='产品经理' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (req_id,),
+                )
+                latest_pm = await cursor.fetchone()
+            if latest_pm:
+                parsed = parse_pm_research_conclusion(latest_pm["content"])
+                if parsed:
+                    await append_research_to_memory(project_id, card.get("code", ""), parsed)
+                    logger.info("[PRODUCT-MEMORY] appended for [%s]", card.get("code", ""))
+
+        await session_manager.complete_session(session_id, f"{role_name} decided [{card.get('code', '')}]", tokens=tokens)
     else:
-        logger.warning(
-            "[PM-TOOL-MODE] FAILED for [%s]: no new comment, no status change. "
-            "Card stays in %s — will escalate via ceo_decision after threshold.",
-            card.get("code", ""), old_status,
-        )
+        # Agent did NOT make a decision - immediate escalation
+        logger.warning("[DECISION-FAIL] %s did NOT decide for [%s]. Escalating to CEO.",
+                       role_name, card.get("code"))
+        ceo_dec = json.dumps({
+            "role": role_name,
+            "reason": "agent_no_decision",
+            "message": f"{role_name} 执行完毕但未做出决策（未调用决策工具）",
+            "actions": ["retry", "reply_to_role", "move_to_dev", "archive"],
+            "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }, ensure_ascii=False)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
-                "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
-                (req_id, "系统",
-                 "⚠️ PM agent 执行未完成（未检测到新评论或状态变更）。等待自动重试或 CEO 介入。"),
+                "UPDATE requirements SET ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (ceo_dec, req_id),
             )
             await db.commit()
-        await session_manager.fail_session(session_id, "PM produced no comment and no status change")
+        await session_manager.fail_session(session_id, f"{role_name} made no decision")
 
 
-def parse_pm_research_decision(comment: str, research_rounds: int, req_type: str = "dev") -> str:
-    """Parse PM's evaluation of research completeness."""
-    ready_target = "done" if req_type == "research" else "dev"
-
-    if research_rounds >= workflow_config.max_research_rounds:
-        logger.warning("[SCHED] research loop hit max %d rounds, forcing to %s",
-                       workflow_config.max_research_rounds, ready_target)
-        return ready_target
-
-    if "[需要补充]" in comment or "[NEED_MORE]" in comment:
-        logger.info("[SCHED-DECISION] PM → [需要补充] → sending back to research")
-        return "research"
-    if "[调研充分]" in comment or "[READY]" in comment:
-        logger.info("[SCHED-DECISION] PM → [调研充分] → %s", ready_target)
-        return ready_target
-
-    if any(kw in comment for kw in ("移回调研", "退回调研", "补充调研", "继续调研", "需要进一步")):
-        logger.info("[SCHED-DECISION] PM → heuristic 'need more research'")
-        return "research"
-    if any(kw in comment for kw in ("推进开发", "进入开发", "可以开发", "调研完成", "材料充分")):
-        logger.info("[SCHED-DECISION] PM → heuristic 'ready' → %s", ready_target)
-        return ready_target
-
-    if research_rounds == 0:
-        logger.info("[SCHED-DECISION] PM created card with no decision signal → defaulting to research")
-        return "research"
-
-    logger.info("[SCHED-DECISION] PM comment has no clear decision signal → staying in organizing")
-    return ""
+# ==================== Research conclusion extraction ====================
 
 
 def parse_pm_research_conclusion(comment: str) -> dict | None:
     """Extract structured research conclusions from PM's evaluation comment."""
-    if "[调研充分]" not in comment:
-        return None
-
     reliability = ""
     conclusions = []
     archive_target = ""
@@ -331,33 +219,6 @@ def parse_pm_research_conclusion(comment: str) -> dict | None:
     }
 
 
-def parse_industry_decision(comment: str) -> str:
-    """Parse Industry's decision after reading CEO reply or completing research."""
-    if "[转给PM]" in comment:
-        logger.info("[SCHED-DECISION] industry → [转给PM] → moving to organizing")
-        return "organizing"
-    if "[需要补充]" in comment:
-        logger.info("[SCHED-DECISION] industry → [需要补充] → staying in research")
-        return "research"
-    logger.info("[SCHED-DECISION] industry → no decision marker → staying in research")
-    return "research"
-
-
-def next_status_for_role(role_name: str, current_status: str) -> str:
-    """Determine what status a role should move the card to after commenting."""
-    if role_name == "pm" and current_status == "organizing":
-        return ""
-    if role_name == "pm" and current_status in ("", "research"):
-        return "research"
-    if role_name == "industry" and current_status == "research":
-        return "organizing"
-    if role_name == "coach_dev" and current_status == "dev":
-        return "organizing"
-    if role_name == "coach_review" and current_status == "testing":
-        return ""
-    return ""
-
-
 async def append_research_to_memory(project_id: int, card_code: str, parsed: dict) -> None:
     """Append PM's research conclusions to project product memory."""
     entry = f"- **{card_code}** ({date.today().isoformat()}):\n"
@@ -377,7 +238,7 @@ async def append_research_to_memory(project_id: int, card_code: str, parsed: dic
         current = row[0] if row else ""
 
         section_pattern = re.compile(
-            r"(### 调研结论.*?)(?=\n### |\n## |\Z)", re.DOTALL,
+            r"(### 调结论.*?)(?=\n### |\n## |\Z)", re.DOTALL,
         )
         match = section_pattern.search(current)
         if match:
@@ -394,25 +255,3 @@ async def append_research_to_memory(project_id: int, card_code: str, parsed: dic
 
     logger.info("[PRODUCT-MEMORY] research conclusions appended for card=[%s] project=%d",
                 card_code, project_id)
-
-
-def _log_move_decision(role_name: str, card: dict, old_status: str, new_status: str, comment_text: str):
-    """Log the move decision for debugging."""
-    code = card.get("code", "")
-    if new_status and new_status != old_status:
-        logger.info("[MOVE] role=%s card=[%s] %s → %s | signals=[转给PM]=%s [需要补充]=%s [调研充分]=%s",
-                    role_name, code, old_status, new_status,
-                    "[转给PM]" in comment_text, "[需要补充]" in comment_text, "[调研充分]" in comment_text)
-    elif role_name == "pm" and old_status == "organizing" and new_status == "":
-        logger.info("[MOVE] role=%s card=[%s] %s → (stay) | PM evaluated → awaiting CEO via Reigns",
-                    role_name, code, old_status)
-    elif role_name == "industry" and old_status == "research" and new_status == "research":
-        if "[需要补充]" in comment_text:
-            logger.info("[CEO-ASK] role=%s card=[%s] | industry marked [需要补充] → CEO decides via Reigns",
-                        role_name, code)
-        else:
-            logger.info("[MOVE] role=%s card=[%s] %s → (stay) | industry working",
-                        role_name, code, old_status)
-    else:
-        logger.info("[MOVE] role=%s card=[%s] %s → %s",
-                    role_name, code, old_status, new_status or "(stay)")

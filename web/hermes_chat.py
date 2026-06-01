@@ -432,11 +432,15 @@ def _build_hermes_env() -> dict:
     return env
 
 
-async def ensure_hermes_config():
+async def ensure_hermes_config(mode: str = "chat"):
     """Ensure hermes config exists and MCP points to local KH server.
 
     Called on KH startup. Always syncs model/base_url from env vars,
     and patches mcp_servers.kanban to point to the local MCP server.
+
+    Args:
+        mode: "chat" uses server.py (high-level intent tools for CEO interaction),
+              "agent" uses agent_server.py (granular atomic tools for agent roles).
     """
     import yaml
 
@@ -445,14 +449,27 @@ async def ensure_hermes_config():
     config_dir.mkdir(parents=True, exist_ok=True)
 
     import sys
-    mcp_server_path = str(Path(__file__).resolve().parent.parent / "mcp_server" / "server.py")
-    port = os.getenv("PORT", "8000")
-    local_mcp = {
-        "type": "stdio",
-        "command": sys.executable,
-        "args": [mcp_server_path],
-        "env": {"KH_BASE_URL": f"http://localhost:{port}"},
-    }
+    if mode == "agent":
+        mcp_server_path = str(Path(__file__).resolve().parent.parent / "mcp_server" / "agent_server.py")
+        local_mcp = {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": [mcp_server_path],
+            "env": {
+                "DB_PATH": os.getenv("DB_PATH", "data/kanban.db"),
+                "KH_AGENT_ROLE": "industry",
+                "KH_PROJECT_ID": str(os.getenv("KH_PROJECT_ID", "0")),
+            },
+        }
+    else:
+        mcp_server_path = str(Path(__file__).resolve().parent.parent / "mcp_server" / "server.py")
+        port = os.getenv("PORT", "8000")
+        local_mcp = {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": [mcp_server_path],
+            "env": {"KH_BASE_URL": f"http://localhost:{port}"},
+        }
 
     # Always read model/base_url from env
     # Strip bracket suffixes like [1M] — context window hints not recognized by OpenAI-compat proxies

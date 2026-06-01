@@ -433,6 +433,295 @@ async def load_guideline(name: str) -> str:
     return content
 
 
+# ==================== Atomic Decision Tools ====================
+# These combine comment + state transition into a single tool call,
+# making "commented but didn't move" impossible by design.
+
+
+async def _atomic_decision(
+    requirement_id: int,
+    comment: str,
+    detail: str,
+    new_status: str | None,
+    ceo_question: str | None,
+    expected_current_status: str,
+    role: str,
+) -> str:
+    """Shared implementation for all atomic decision tools.
+
+    Either moves the card (new_status) or sets ceo_decision (ceo_question), never both.
+    """
+    from datetime import datetime
+    from agents.registry import registry
+
+    if not comment.strip():
+        return "错误：评论内容不能为空"
+
+    role_config = registry.get(role)
+    author = role_config.display_name if role_config else role
+
+    db = await _get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT r.status, r.code, r.title, v.project_id "
+            "FROM requirements r JOIN versions v ON r.version_id=v.id "
+            "WHERE r.id=?",
+            (requirement_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return f"错误：需求 {requirement_id} 不存在"
+
+        current_status = row["status"]
+        code = row["code"]
+        project_id = row["project_id"]
+
+        if current_status != expected_current_status:
+            return (
+                f"错误：卡片 [{code}] 当前状态是 {current_status}，"
+                f"预期 {expected_current_status}。无法执行此操作。"
+            )
+
+        if new_status and new_status != current_status:
+            if not _check_move_permission(current_status, new_status):
+                return (
+                    f"权限拒绝：角色 '{AGENT_ROLE}' 不能将卡片从 "
+                    f"{current_status} 移到 {new_status}。"
+                    f"允许的流转: {_get_allowed_moves()}"
+                )
+
+        await db.execute(
+            "INSERT INTO comments (requirement_id, author, content, detail) VALUES (?,?,?,?)",
+            (requirement_id, author, comment.strip(), detail.strip() if detail else ""),
+        )
+
+        COL_ASSIGNEE = {
+            "research": "Industry",
+            "organizing": "PM",
+            "dev": "Coach-Dev",
+            "testing": "Coach-Review",
+            "done": "",
+        }
+
+        if ceo_question:
+            ceo_dec = json.dumps({
+                "role": role,
+                "reason": "agent_d",
+                "message": ceo_question,
+                "actions": ["reply_to_role", "approve_dev", "request_more_research"],
+                "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }, ensure_ascii=False)
+            await db.execute(
+                "UPDATE requirements SET assignee='', queue_reason=?, "
+                "ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (f"等待 CEO: {ceo_question[:50]}", ceo_dec, requirement_id),
+            )
+            logger.info("CEO-ASK [%s] by %s: %s", code, role, ceo_question[:80])
+
+        elif new_status and new_status != current_status:
+            col_assignee = COL_ASSIGNEE.get(new_status, "")
+            await db.execute(
+                "UPDATE requirements SET status=?, assignee=?, "
+                "updated_at=datetime('now','localtime'), "
+                "progressed_at=datetime('now','localtime') WHERE id=?",
+                (new_status, col_assignee, requirement_id),
+            )
+            await db.execute(
+                "INSERT INTO agent_events "
+                "(project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                (project_id, "status_changed", requirement_id,
+                 json.dumps({"old_status": current_status, "new_status": new_status,
+                             "moved_by": role})),
+            )
+            logger.info("ATOMIC-MOVE [%s] %s → %s by %s", code, current_status, new_status, role)
+
+        await db.commit()
+
+        if ceo_question:
+            return f"已评论并请求 CEO 决策 [{code}]（问题: {ceo_question[:60]}）"
+        elif new_status and new_status != current_status:
+            return f"已评论并移动 [{code}] {current_status} → {new_status}"
+        else:
+            return f"已评论 [{code}]（状态不变）"
+    finally:
+        await db.close()
+
+
+# --- PM Decision Tools (organizing column) ---
+
+@mcp.tool()
+async def pm_approve(requirement_id: int, comment: str, target: str = "dev", detail: str = "") -> str:
+    """PM 审批通过：发表评论并将卡片推进到下一阶段。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 评审意见（Markdown，200-500字摘要）
+        target: 目标状态，"dev"（进入开发）或 "done"（调研类需求完成）
+        detail: 可选的详细支撑数据
+    """
+    if target not in ("dev", "done"):
+        return "错误：target 必须是 'dev' 或 'done'"
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail=detail,
+        new_status=target,
+        ceo_question=None,
+        expected_current_status="organizing",
+        role="pm",
+    )
+
+
+@mcp.tool()
+async def pm_send_to_research(requirement_id: int, comment: str, detail: str = "") -> str:
+    """PM 退回调研：发表评论并将卡片移回 research 列，由行业顾问补充调研。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 退回原因和补充调研方向（Markdown）
+        detail: 可选的详细说明
+    """
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail=detail,
+        new_status="research",
+        ceo_question=None,
+        expected_current_status="organizing",
+        role="pm",
+    )
+
+
+@mcp.tool()
+async def pm_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+    """PM 请求 CEO 决策：发表评论并设置等待 CEO 决策。卡片留在 organizing 列。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 当前分析和需要 CEO 决策的背景说明
+        question: 需要 CEO 回答的具体问题（简洁明确）
+    """
+    if not question.strip():
+        return "错误：question 不能为空"
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail="",
+        new_status=None,
+        ceo_question=question.strip(),
+        expected_current_status="organizing",
+        role="pm",
+    )
+
+
+# --- Industry Decision Tools (research column) ---
+
+@mcp.tool()
+async def industry_complete(requirement_id: int, comment: str, detail: str = "") -> str:
+    """行业顾问调研完成：发表结论并将卡片转给 PM（research → organizing）。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 调研结论摘要（200-500字）
+        detail: 详细调研数据（表格、来源链接、搜索记录等）
+    """
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail=detail,
+        new_status="organizing",
+        ceo_question=None,
+        expected_current_status="research",
+        role="industry",
+    )
+
+
+@mcp.tool()
+async def industry_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+    """行业顾问请求 CEO 补充信息：发表评论并设置等待 CEO。卡片留在 research 列。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 当前调研进展和缺失信息说明
+        question: 需要 CEO 补充的具体信息（简洁明确）
+    """
+    if not question.strip():
+        return "错误：question 不能为空"
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail="",
+        new_status=None,
+        ceo_question=question.strip(),
+        expected_current_status="research",
+        role="industry",
+    )
+
+
+# --- Coach-Review Decision Tools (testing column) ---
+
+@mcp.tool()
+async def review_pass(requirement_id: int, comment: str, detail: str = "") -> str:
+    """QA 审查通过：发表评论并将卡片移到 done。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 审查通过结论
+        detail: 可选的逐条验收详情
+    """
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail=detail,
+        new_status="done",
+        ceo_question=None,
+        expected_current_status="testing",
+        role="coach_review",
+    )
+
+
+@mcp.tool()
+async def review_reject(requirement_id: int, comment: str, detail: str = "") -> str:
+    """QA 审查不通过：发表评论并将卡片打回 dev 列。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 问题概述和打回原因
+        detail: 可选的详细问题列表和复现步骤
+    """
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail=detail,
+        new_status="dev",
+        ceo_question=None,
+        expected_current_status="testing",
+        role="coach_review",
+    )
+
+
+@mcp.tool()
+async def review_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+    """QA 请求 CEO 决策：发表评论并设置等待 CEO。卡片留在 testing 列。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 审查中遇到的无法自行判断的问题
+        question: 需要 CEO 裁决的具体问题（简洁明确）
+    """
+    if not question.strip():
+        return "错误：question 不能为空"
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail="",
+        new_status=None,
+        ceo_question=question.strip(),
+        expected_current_status="testing",
+        role="coach_review",
+    )
+
+
 if __name__ == "__main__":
     logger.info("Agent MCP server starting (role=%s, project=%d, db=%s)", AGENT_ROLE, PROJECT_ID, DB_PATH)
     mcp.run()
