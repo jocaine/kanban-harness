@@ -12,6 +12,13 @@ from agents.mcp_config import ensure_agent_mcp_config
 logger = logging.getLogger("kh.agent.comment")
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~2 chars/token for CJK, ~4 for Latin."""
+    cjk = sum(1 for c in text if '一' <= c <= '鿿')
+    other = len(text) - cjk
+    return cjk // 2 + other // 4 + 1
+
+
 class CommentAgent:
     """Agent that reads requirement context and produces a review comment.
 
@@ -34,7 +41,7 @@ class CommentAgent:
         Args:
             on_heartbeat: Optional callback invoked when agent produces output (for stall detection).
 
-        Returns: {"success": bool, "comment": str, "detail": str, "summary": str}
+        Returns: {"success": bool, "comment": str, "detail": str, "summary": str, "tokens": dict}
         """
         prompt = await self._build_prompt(card, existing_comments or [])
         try:
@@ -43,6 +50,10 @@ class CommentAgent:
             else:
                 effective_timeout = self.role_config.model.timeout
             response = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat)
+
+            input_tokens = _estimate_tokens(prompt)
+            output_tokens = _estimate_tokens(response)
+            tokens = {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens}
 
             # PM uses tools directly (add_comment + move_requirement);
             # stdout is irrelevant — harness checks DB for actual results.
@@ -54,6 +65,7 @@ class CommentAgent:
                     "comment": "",
                     "detail": "",
                     "summary": f"{self.role_config.display_name} reviewed [{card.get('code', '')}]",
+                    "tokens": tokens,
                 }
 
             comment, detail = self._split_detail(response)
@@ -64,6 +76,7 @@ class CommentAgent:
                 "comment": comment,
                 "detail": detail,
                 "summary": f"{self.role_config.display_name} reviewed [{card.get('code', '')}]",
+                "tokens": tokens,
             }
         except Exception as e:
             logger.error(f"CommentAgent({self.role_config.role}) failed: {e}")
@@ -186,10 +199,10 @@ class CommentAgent:
                     "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策。\n\n"
                     f"{skill_content}\n\n"
                     "**操作步骤：**\n"
-                    "1. 用 `add_comment` 工具发表评审意见，评论开头必须写 [调研充分] 或 [需要补充]\n"
-                    "2. 用 `move_requirement` 工具移动卡片：\n"
-                    "   - 材料充分 → 移到 `dev`\n"
-                    "   - 材料不足 → 移到 `research`\n\n"
+                    "调用决策工具: pm_approve(通过) 或 pm_send_to_research(退回) 或 pm_ask_ceo(问CEO)\n"
+                    "（决策工具会自动移动卡片，无需单独调用 move_requirement）\n"
+                    "\n"
+                    "\n\n"
                     "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
             else:
@@ -201,8 +214,8 @@ class CommentAgent:
                     "2. 需求涉及不确定因素（市场数据、竞品情况、技术可行性未知）→ 移到 `research`\n"
                     "3. 需求太大需要拆分 → 移到 `research`，评论中说明拆分建议\n\n"
                     "**操作步骤：**\n"
-                    "1. 用 `add_comment` 工具发表评审意见（评论开头写 [调研充分] 或 [需要补充]）\n"
-                    "2. 用 `move_requirement` 工具移动卡片到对应状态\n\n"
+                    "调用决策工具: pm_approve(通过) 或 pm_send_to_research(退回) 或 pm_ask_ceo(问CEO)\n"
+                    "（决策工具会自动移动卡片）\n\n"
                     "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
 
@@ -217,8 +230,8 @@ class CommentAgent:
                 "- 不能教其他角色怎么做\n\n"
                 "✅ 你只能说以下三种之一：\n"
                 "1. 直接输出调研结果（数据、分析、对比表）\n"
-                "2. 评论开头写 [需要补充] + 简短说明缺什么\n"
-                "3. 评论开头写 [转给PM] + 调研结论\n\n"
+                "2. 调用 industry_ask_ceo(requirement_id, comment, question)\n"
+                "3. 调用 industry_complete(requirement_id, comment, detail)\n\n"
                 "记住：你不需要 PM 告诉你做什么，你是行业专家。如果信息不足，用 [需要补充] 找 CEO。"
             )
 
@@ -272,11 +285,10 @@ class CommentAgent:
             raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
     async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None) -> str:
-        """Call hermes CLI as subprocess. Hermes manages its own tool loop."""
-        import time as _time
+        """Call hermes CLI as subprocess. Timeout managed by reconcile_sessions."""
 
         from web.hermes_chat import ensure_hermes_config, _build_hermes_env
-        await ensure_hermes_config()
+        await ensure_hermes_config(mode="agent")
 
         toolsets = cfg.toolsets if hasattr(cfg, "toolsets") and cfg.toolsets else []
         skills = cfg.skills if hasattr(cfg, "skills") and cfg.skills else []
@@ -300,49 +312,43 @@ class CommentAgent:
             env=_build_hermes_env(),
         )
 
-        async def _read_until(stream, deadline):
+        async def _read_stream(stream):
             chunks = []
             while True:
-                remaining = deadline - _time.monotonic()
-                if remaining <= 0:
-                    break
                 try:
-                    chunk = await asyncio.wait_for(stream.read(4096), timeout=max(remaining, 1))
+                    chunk = await stream.read(4096)
                     if not chunk:
                         break
                     chunks.append(chunk)
                     if on_heartbeat:
                         on_heartbeat()
-                except asyncio.TimeoutError:
+                except Exception:
                     break
             return b"".join(chunks)
 
-        deadline = _time.monotonic() + timeout
-        stdout_task = asyncio.create_task(_read_until(proc.stdout, deadline))
-        stderr_task = asyncio.create_task(_read_until(proc.stderr, deadline))
+        stdout_task = asyncio.create_task(_read_stream(proc.stdout))
+        stderr_task = asyncio.create_task(_read_stream(proc.stderr))
         stdout_data, stderr_data = await asyncio.gather(stdout_task, stderr_task)
 
-        timed_out = proc.returncode is None
-        if timed_out:
-            proc.kill()
-
+        # Process ends naturally or killed by reconcile_sessions
         await proc.wait()
 
         output = stdout_data.decode(errors="replace").strip()
-        if timed_out:
+        if proc.returncode in (-9, -15):
             import re
             output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
             output = re.sub(r'<HermesTool:[^>]*/>', '', output)
             output = re.sub(r'<HermesTool:[^>]*>.*$', '', output, flags=re.DOTALL)
-            timeout_min = timeout // 60
-            logger.warning(f"hermes timed out after {timeout}s, partial output: {output[:200]}")
-            return (
-                f"[转给PM]\n\n"
-                f"[调研超时] 调研在 {timeout_min} 分钟时限内未完成。部分进展如下：\n\n"
-                f"{output[:2000]}\n\n"
-                f"---\n"
-                f"⚠️ 以上为超时前部分结果。PM 请评估：1) 加时重试 2) 基于部分信息推进 3) 缩减调研范围"
-            )
+            logger.warning(f"hermes killed (rc={proc.returncode}), partial: {output[:200]}")
+            if output.strip():
+                return (
+                    f"[转给PM]\n\n"
+                    f"[调研中断] 进程被终止，部分进展如下：\n\n"
+                    f"{output[:2000]}\n\n"
+                    f"---\n"
+                    f"PM 请评估：1) 重试 2) 基于部分信息推进 3) 缩减范围"
+                )
+            raise RuntimeError("hermes killed with no output")
 
         if proc.returncode != 0:
             err = stderr_data.decode(errors="replace").strip()

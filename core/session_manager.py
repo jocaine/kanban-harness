@@ -25,7 +25,7 @@ class SessionManager:
         self._processes: dict[int, asyncio.subprocess.Process] = {}  # session_id → process
 
     async def start_timeout_checker(self, interval: int = 30):
-        self._timeout_task = asyncio.create_task(self._timeout_loop(interval))
+        self._timeout_task = asyncio.create_task(self._reconcile_loop(interval))
 
     async def stop(self):
         if self._timeout_task:
@@ -205,7 +205,7 @@ class SessionManager:
                 )
             return [dict(row) for row in await cursor.fetchall()]
 
-    async def check_timeouts(self):
+    async def reconcile_sessions(self):
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -218,31 +218,50 @@ class SessionManager:
 
         for session in sessions:
             sid = session["id"]
-            started = datetime.strptime(session["started_at"], "%Y-%m-%d %H:%M:%S")
-            timeout = timedelta(seconds=session["timeout_seconds"])
-            elapsed = now_dt - started
+            proc = self._processes.get(sid)
 
-            # Hard timeout — total elapsed time exceeded
-            if elapsed > timeout:
+            # 1. Process crashed or was killed externally
+            if proc is not None and proc.returncode is not None:
                 logger.warning(
-                    "Session %d timed out: agent=%s, project=%d, ran %ds (limit %ds)",
-                    sid, session["agent_role"], session["project_id"],
-                    int(elapsed.total_seconds()), session["timeout_seconds"],
+                    "[RECONCILE] session %d: process gone (rc=%s), agent=%s",
+                    sid, proc.returncode, session["agent_role"],
                 )
-                await self._kill_and_fail(sid, "timeout")
+                await self._kill_and_fail(sid, f"process_gone:rc={proc.returncode}")
                 continue
 
-            # Stall detection — no heartbeat for STALL_TIMEOUT seconds
+            # 2. Orphaned - no process, no heartbeat (scheduler restarted)
+            if proc is None and sid not in self._heartbeats:
+                logger.warning(
+                    "[RECONCILE] session %d: orphaned, agent=%s",
+                    sid, session["agent_role"],
+                )
+                await self.fail_session(sid, error="orphaned")
+                continue
+
+            # 3. Budget exhausted - total elapsed time exceeded
+            try:
+                started = datetime.strptime(session["started_at"], "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                continue
+            elapsed = (now_dt - started).total_seconds()
+            if elapsed > session["timeout_seconds"]:
+                logger.warning(
+                    "[RECONCILE] session %d: budget exhausted (%ds > %ds), agent=%s",
+                    sid, int(elapsed), session["timeout_seconds"], session["agent_role"],
+                )
+                await self._kill_and_fail(sid, "budget_exhausted")
+                continue
+
+            # 4. Stall - has heartbeat but too long since last output
             last_beat = self._heartbeats.get(sid)
             if last_beat is not None:
-                silent_seconds = now_mono - last_beat
-                if silent_seconds > DEFAULT_STALL_TIMEOUT:
+                silent = now_mono - last_beat
+                if silent > DEFAULT_STALL_TIMEOUT:
                     logger.warning(
-                        "Session %d stalled: agent=%s, no output for %ds (limit %ds)",
-                        sid, session["agent_role"],
-                        int(silent_seconds), DEFAULT_STALL_TIMEOUT,
+                        "[RECONCILE] session %d: stall (%ds no output), agent=%s",
+                        sid, int(silent), session["agent_role"],
                     )
-                    await self._kill_and_fail(sid, f"stall:{int(silent_seconds)}s_no_output")
+                    await self._kill_and_fail(sid, f"stall:{int(silent)}s")
 
     async def cancel_session(self, session_id: int, reason: str = "reconciliation") -> dict:
         """Cancel a running session — kill process, mark cancelled. No retry."""
@@ -280,10 +299,10 @@ class SessionManager:
         self.unregister_process(session_id)
         await self.fail_session(session_id, error=error)
 
-    async def _timeout_loop(self, interval: int):
+    async def _reconcile_loop(self, interval: int):
         while True:
             try:
-                await self.check_timeouts()
+                await self.reconcile_sessions()
             except Exception as e:
-                logger.error("[FAULT:OBSERVE] timeout checker error: %s", e)
+                logger.error("[FAULT:OBSERVE] reconcile error: %s", e)
             await asyncio.sleep(interval)

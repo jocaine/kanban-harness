@@ -2161,22 +2161,48 @@ function updateBoardHeartbeats() {
         const agentKey = ROLE_TO_AGENT[role];
         const session = agentKey ? runningSessions.find(s => s.agent_role === agentKey) : null;
 
+        let ecgEl = wrap.querySelector('.col-ecg');
         let badge = wrap.querySelector('.col-heartbeat');
+
         if (session) {
             const silent = session.silent_seconds;
             const stallTimeout = session.stall_timeout || 120;
             const ratio = silent / stallTimeout;
-            const hbClass = ratio < 0.5 ? 'heartbeat-ok' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
-            if (!badge) {
-                badge = document.createElement('span');
-                badge.className = 'col-heartbeat';
-                wrap.appendChild(badge);
+            const colorClass = ratio < 0.5 ? '' : ratio < 0.75 ? 'warn' : 'danger';
+            const avatarClass = ratio < 0.5 ? 'heartbeat-active' : ratio < 0.75 ? 'heartbeat-warn' : 'heartbeat-danger';
+
+            avatar.classList.remove('heartbeat-active', 'heartbeat-warn', 'heartbeat-danger');
+            avatar.classList.add(avatarClass);
+
+            if (!ecgEl) {
+                ecgEl = document.createElement('div');
+                ecgEl.className = 'col-ecg active';
+                ecgEl.innerHTML = '<svg viewBox="0 0 48 16" preserveAspectRatio="none"><polyline class="col-ecg-line" points="0,8 6,8 9,8 12,2 15,14 18,8 21,8 24,8 30,8 33,8 36,2 39,14 42,8 45,8 48,8" stroke-dasharray="48" stroke-dashoffset="0"/></svg>';
+                wrap.appendChild(ecgEl);
             }
-            badge.className = `col-heartbeat ${hbClass}`;
-            badge.textContent = `${silent}s`;
-            badge.title = `心跳 ${silent}s 前 · ${session.card_code || ''}`;
-        } else if (badge) {
-            badge.remove();
+            ecgEl.className = 'col-ecg active';
+            const line = ecgEl.querySelector('.col-ecg-line');
+            if (line) {
+                line.classList.remove('warn', 'danger');
+                if (colorClass) line.classList.add(colorClass);
+            }
+
+            if (session.card_code) {
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'col-heartbeat';
+                    wrap.appendChild(badge);
+                }
+                badge.className = 'col-heartbeat heartbeat-ok';
+                badge.textContent = session.card_code;
+                badge.title = '正在处理 ' + session.card_code + ' · 已运行 ' + session.elapsed_seconds + 's';
+            } else if (badge) {
+                badge.remove();
+            }
+        } else {
+            avatar.classList.remove('heartbeat-active', 'heartbeat-warn', 'heartbeat-danger');
+            if (ecgEl) ecgEl.remove();
+            if (badge) badge.remove();
         }
     });
 }

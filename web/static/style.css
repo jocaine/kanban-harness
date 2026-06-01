@@ -100,12 +100,21 @@ details.desc-collapsible[open] .desc-toggle::before{transform:rotate(90deg)}
 .board-columns{flex-shrink:0;display:flex;gap:16px;padding:20px 24px;overflow-x:auto;align-items:flex-start}
 .col-wrapper{display:flex;flex-direction:row;align-items:flex-start;gap:12px}
 .col-avatar{width:72px;height:72px;border-radius:50%;object-fit:cover;cursor:pointer;border:3px solid var(--border);transition:var(--transition);box-shadow:0 2px 8px rgba(0,0,0,.12);flex-shrink:0;margin-top:40px}
+.col-avatar.heartbeat-active{border-color:var(--success);box-shadow:0 0 8px rgba(34,197,94,.4)}
+.col-avatar.heartbeat-warn{border-color:var(--warning);box-shadow:0 0 8px rgba(245,158,11,.4)}
+.col-avatar.heartbeat-danger{border-color:var(--danger);box-shadow:0 0 8px rgba(239,68,68,.4)}
 .col-avatar:hover{border-color:var(--primary);transform:scale(1.05)}
 .col-avatar-wrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px}
+.col-ecg{width:48px;height:16px;overflow:hidden;margin-top:2px}
+.col-ecg svg{width:100%;height:100%}
+.col-ecg-line{fill:none;stroke:var(--success);stroke-width:1.5;stroke-linecap:round}
+.col-ecg-line.warn{stroke:var(--warning)}
+.col-ecg-line.danger{stroke:var(--danger)}
+.col-ecg.active .col-ecg-line{animation:ecg-scroll 1.5s linear infinite}
+@keyframes ecg-scroll{0%{stroke-dashoffset:0}100%{stroke-dashoffset:-48}}
 .col-heartbeat{font-size:10px;font-family:monospace;padding:1px 5px;border-radius:8px;background:var(--bg3);white-space:nowrap}
 .col-heartbeat.heartbeat-ok{color:var(--success);background:var(--success-bg)}
-.col-heartbeat.heartbeat-warn{color:var(--warning);background:var(--warning-bg)}
-.col-heartbeat.heartbeat-danger{color:var(--danger);background:var(--danger-bg)}
+.col-heartbeat.er{color:var(--danger);background:var(--danger-bg)}
 .board-col{background:var(--bg2);border-radius:var(--radius-lg);min-width:280px;max-width:280px;display:flex;flex-direction:column;max-height:calc(100vh - 200px);border:1px solid var(--border)}
 .board-col.drag-over{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
 .col-header{padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)}

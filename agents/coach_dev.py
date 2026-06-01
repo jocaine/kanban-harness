@@ -10,6 +10,12 @@ from core.config import WORKSPACE_BASE, validate_path_within_workspace
 
 logger = logging.getLogger("kh.agent.coach_dev")
 
+
+def _estimate_tokens(text: str) -> int:
+    cjk = sum(1 for c in text if '一' <= c <= '鿿')
+    other = len(text) - cjk
+    return cjk // 2 + other // 4 + 1
+
 DEFAULT_TIMEOUT = 600  # 10 minutes
 WORKTREE_BASE = os.getenv("KH_WORKTREE_BASE", "/tmp/kh-worktrees")
 
@@ -79,6 +85,8 @@ class CoachDev:
                 commit_message = await self._get_commit_message(work_path)
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
                 logger.info(f"Coach-Dev completed: [{code}] {summary}")
+                input_tokens = _estimate_tokens(prompt)
+                output_tokens = _estimate_tokens(output)
                 return {
                     "task_done": True,
                     "signal": "to_testing",
@@ -86,10 +94,17 @@ class CoachDev:
                     "branch": branch_name, "commit": commit_hash,
                     "commit_message": commit_message,
                     "is_scaffold": is_scaffold,
+                    "tokens": {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens},
                 }
             else:
                 logger.warning(f"Coach-Dev produced no commits for [{code}]")
-                return {"task_done": False, "signal": "", "success": False, "summary": "No commits produced", "output": output}
+                input_tokens = _estimate_tokens(prompt)
+                output_tokens = _estimate_tokens(output)
+                return {
+                    "task_done": False, "signal": "", "success": False,
+                    "summary": "No commits produced", "output": output,
+                    "tokens": {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens},
+                }
 
         except asyncio.TimeoutError:
             logger.error("[FAULT:AGENT] coach_dev timed out for [%s]", code)
@@ -202,33 +217,13 @@ class CoachDev:
             self._on_heartbeat()
 
         try:
-            import time as _time
-            start = _time.monotonic()
-            heartbeat_interval = 60
-
-            while True:
-                remaining = self.timeout - (_time.monotonic() - start)
-                if remaining <= 0:
-                    raise asyncio.TimeoutError()
-                wait_time = min(remaining, heartbeat_interval)
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=wait_time
-                    )
-                    if self._on_heartbeat:
-                        self._on_heartbeat()
-                    return stdout.decode(errors="replace")
-                except asyncio.TimeoutError:
-                    if proc.returncode is not None:
-                        stdout, stderr = await proc.communicate()
-                        return stdout.decode(errors="replace")
-                    if self._on_heartbeat:
-                        self._on_heartbeat()
-                    if _time.monotonic() - start >= self.timeout:
-                        raise
-
-        except asyncio.TimeoutError:
-            proc.kill()
+            stdout, stderr = await proc.communicate()
+            if self._on_heartbeat:
+                self._on_heartbeat()
+            return stdout.decode(errors="replace")
+        except Exception:
+            if proc.returncode is None:
+                proc.kill()
             raise
 
     async def _check_commits(self, branch_name: str) -> bool:

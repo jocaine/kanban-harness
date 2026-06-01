@@ -1183,6 +1183,45 @@ async def token_stats(project_id: int = 0, db: aiosqlite.Connection = Depends(ge
     )
     total = dict(await cursor.fetchone())
 
+    # Chat token usage (from chat_tasks table)
+    chat_where = "WHERE status='completed'"
+    chat_params = []
+    if project_id:
+        chat_where += " AND project_id=?"
+        chat_params.append(project_id)
+
+    cursor = await db.execute(
+        f"SELECT SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, "
+        f"SUM(total_tokens) as total_tokens, COUNT(*) as session_count "
+        f"FROM chat_tasks {chat_where}",
+        chat_params,
+    )
+    chat_row = dict(await cursor.fetchone())
+    if chat_row.get("session_count"):
+        by_role.append({
+            "agent_role": "chat",
+            "input_tokens": chat_row["input_tokens"] or 0,
+            "output_tokens": chat_row["output_tokens"] or 0,
+            "total_tokens": chat_row["total_tokens"] or 0,
+            "session_count": chat_row["session_count"],
+        })
+
+    # Add chat tokens to time-based totals
+    for period, time_filter in [
+        (today, "AND created_at >= date('now', 'localtime')"),
+        (this_week, "AND created_at >= date('now', 'localtime', '-7 days')"),
+        (total, ""),
+    ]:
+        cursor = await db.execute(
+            f"SELECT COALESCE(SUM(input_tokens),0) as ci, COALESCE(SUM(output_tokens),0) as co, "
+            f"COALESCE(SUM(total_tokens),0) as ct FROM chat_tasks {chat_where} {time_filter}",
+            chat_params,
+        )
+        cr = dict(await cursor.fetchone())
+        period["input_tokens"] = (period["input_tokens"] or 0) + cr["ci"]
+        period["output_tokens"] = (period["output_tokens"] or 0) + cr["co"]
+        period["total_tokens"] = (period["total_tokens"] or 0) + cr["ct"]
+
     return {
         "by_role": by_role,
         "today": today,
