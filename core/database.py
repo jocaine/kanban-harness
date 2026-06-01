@@ -194,6 +194,16 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
+    # Migration 8: Add token tracking columns to chat_tasks
+    cursor = await db.execute("PRAGMA table_info(chat_tasks)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "input_tokens" not in columns:
+        logger.info("Migrating chat_tasks: adding token tracking columns")
+        await db.execute("ALTER TABLE chat_tasks ADD COLUMN input_tokens INTEGER DEFAULT 0")
+        await db.execute("ALTER TABLE chat_tasks ADD COLUMN output_tokens INTEGER DEFAULT 0")
+        await db.execute("ALTER TABLE chat_tasks ADD COLUMN total_tokens INTEGER DEFAULT 0")
+    await db.commit()
+
 
 async def init_db():
     os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)

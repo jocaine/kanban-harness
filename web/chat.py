@@ -467,6 +467,8 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
 
     yield f"data: {json.dumps({'type': 'thinking', 'stage': 'init'})}\n\n"
 
+    total_usage = {"input": 0, "output": 0}
+
     max_rounds = 5
     tool_calls_acc = {}
     for round_idx in range(max_rounds):
@@ -480,6 +482,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                         "messages": messages,
                         "tools": TOOLS,
                         "stream": True,
+                        "stream_options": {"include_usage": True},
                         "max_tokens": 2048,
                     },
                     timeout=120,
@@ -502,6 +505,11 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                         break
                     try:
                         data = json.loads(data_str)
+
+                        if usage := data.get("usage"):
+                            total_usage["input"] += usage.get("prompt_tokens", 0)
+                            total_usage["output"] += usage.get("completion_tokens", 0)
+
                         choice = data.get("choices", [{}])[0]
                         delta = choice.get("delta", {})
 
@@ -561,7 +569,10 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                 "content": result,
             })
 
-    logger.info("[PM] done, %d tool rounds completed", round_idx + 1 if tool_calls_acc else 0)
+    logger.info("[PM] done, %d tool rounds completed, tokens: in=%d out=%d",
+                round_idx + 1 if tool_calls_acc else 0, total_usage["input"], total_usage["output"])
+    if total_usage["input"] or total_usage["output"]:
+        yield f"data: {json.dumps({'type': 'usage', 'input_tokens': total_usage['input'], 'output_tokens': total_usage['output'], 'total_tokens': total_usage['input'] + total_usage['output']})}\n\n"
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 

@@ -34,6 +34,7 @@ class ChatTaskManager:
     async def run_task(self, task_id: str, gen: AsyncGenerator[str, None], project_id: int):
         """Consume an AI generator in the background, writing chunks to buffer and DB on completion."""
         full_response = []
+        usage = {"input": 0, "output": 0, "total": 0}
 
         try:
             chunk_count = 0
@@ -45,6 +46,10 @@ class ChatTaskManager:
                         payload = json.loads(event[6:].strip())
                         if payload.get("type") == "text":
                             full_response.append(payload["content"])
+                        elif payload.get("type") == "usage":
+                            usage["input"] = payload.get("input_tokens", 0)
+                            usage["output"] = payload.get("output_tokens", 0)
+                            usage["total"] = payload.get("total_tokens", 0)
                     except (json.JSONDecodeError, KeyError):
                         pass
 
@@ -54,12 +59,14 @@ class ChatTaskManager:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute(
                     "UPDATE chat_tasks SET status='completed', response_text=?, "
-                    "chunk_count=?, completed_at=datetime('now','localtime') WHERE id=?",
-                    (text, chunk_count, task_id),
+                    "chunk_count=?, input_tokens=?, output_tokens=?, total_tokens=?, "
+                    "completed_at=datetime('now','localtime') WHERE id=?",
+                    (text, chunk_count, usage["input"], usage["output"], usage["total"], task_id),
                 )
                 await db.commit()
 
-            logger.info("[TASK] %s completed (%d chunks, %d chars)", task_id[:8], chunk_count, len(text))
+            logger.info("[TASK] %s completed (%d chunks, %d chars, tokens: in=%d out=%d)",
+                        task_id[:8], chunk_count, len(text), usage["input"], usage["output"])
             return text
 
         except Exception as e:
