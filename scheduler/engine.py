@@ -14,6 +14,7 @@ from core.session_manager import SessionManager, DEFAULT_TIMEOUT
 from core.workflow_config import workflow_config
 from agents.registry import registry
 from scheduler import handlers
+from web.board_events import broadcast
 
 logger = logging.getLogger("kh.sched.engine")
 
@@ -43,6 +44,7 @@ class SchedulerEngine:
             return
         self.running = True
         self._started_at = datetime.now()
+        await self.session_manager.recover_stale_sessions()
         await self.session_manager.start_timeout_checker()
         self._task = asyncio.create_task(self._poll_loop())
         logger.info("Scheduler started")
@@ -121,7 +123,7 @@ class SchedulerEngine:
             return
 
         for session in running:
-            req_id = self._extract_requirement_id(session.get("input_context", ""))
+            req_id = session.get("requirement_id") or self._extract_requirement_id(session.get("input_context", ""))
             if not req_id:
                 continue
 
@@ -200,9 +202,6 @@ class SchedulerEngine:
             has_running = await self._has_running_session(card["id"])
 
             if card["ceo_decision"]:
-                if has_running:
-                    await self._clear_ceo_decision(card["id"])
-                    logger.info("[CEO-DECISION] cleared for [%s] — agent resumed", card.get("code", ""))
                 continue
 
             if has_running:
@@ -270,17 +269,17 @@ class SchedulerEngine:
                 "JOIN versions v ON r.version_id = v.id "
                 "JOIN projects p ON v.project_id = p.id "
                 "WHERE r.status = 'dev' AND r.type = 'dev' AND r.archived = 0 "
+                "AND r.ceo_decision IS NULL "
                 "ORDER BY r.priority, r.position"
             )
             return [dict(row) for row in await cursor.fetchall()]
 
     async def _has_running_session(self, requirement_id: int) -> bool:
         async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT 1 FROM agent_sessions "
-                "WHERE status = 'running' AND input_context LIKE ?",
-                (f'%"requirement_id": {requirement_id}%',),
+                "WHERE status = 'running' AND requirement_id = ?",
+                (requirement_id,),
             )
             return await cursor.fetchone() is not None
 
@@ -351,6 +350,7 @@ class SchedulerEngine:
             agent_role="coach_dev",
             trigger_type="scheduler:dev_card",
             input_context=input_context,
+            requirement_id=card["id"],
         )
 
         async with aiosqlite.connect(DB_PATH) as db:
@@ -359,6 +359,8 @@ class SchedulerEngine:
                 (card["id"],),
             )
             await db.commit()
+
+        broadcast("card_updated", {"id": card["id"], "action": "assigned", "assignee": "Coach-Dev"})
 
         asyncio.create_task(handlers.handle_coach_dev_result(self.session_manager, session_id, card, repo_path))
 
@@ -430,6 +432,8 @@ class SchedulerEngine:
             )
             await db.commit()
 
+        broadcast("card_updated", {"id": requirement_id, "action": "assigned", "assignee": col_role})
+
         input_context = json.dumps({"requirement_id": requirement_id, "code": card.get("code", "")})
         role_cfg = registry.get(role_name)
         if role_cfg and role_cfg.model.provider == "hermes":
@@ -442,6 +446,7 @@ class SchedulerEngine:
             trigger_type=f"event:{event['event_type']}",
             input_context=input_context,
             timeout_seconds=effective_timeout,
+            requirement_id=requirement_id,
         )
 
         asyncio.create_task(handlers.handle_comment_agent_result(self.session_manager, session_id, role_name, card, event["project_id"]))
@@ -462,6 +467,7 @@ class SchedulerEngine:
                 "JOIN versions v ON r.version_id = v.id "
                 "WHERE r.status IN ('research', 'organizing', 'testing') "
                 "AND r.archived = 0 "
+                "AND r.ceo_decision IS NULL "
                 "AND r.updated_at < datetime('now', 'localtime', ?) "
                 "ORDER BY r.priority, r.position",
                 (f"-{workflow_config.stuck_cooldown} seconds",),

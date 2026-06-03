@@ -10,6 +10,7 @@ import aiosqlite
 from core.database import DB_PATH
 from core.workflow_config import workflow_config
 from agents.registry import registry
+from web.board_events import broadcast
 
 logger = logging.getLogger("kh.sched.handlers")
 
@@ -66,6 +67,8 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
                     )
                     logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
                 await db.commit()
+                if not is_scaffold:
+                    broadcast("card_moved", {"id": card["id"], "old_status": "dev", "new_status": "testing"})
         else:
             logger.info(f"[{card['code']}] no commits produced, scheduling continuation")
             await session_manager.continuation_retry(session_id)
@@ -94,11 +97,12 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
             comments = [dict(row) for row in await cursor.fetchall()]
 
         heartbeat_cb = lambda: session_manager.heartbeat(session_id)
+        register_cb = lambda proc: session_manager.register_process(session_id, proc)
 
         agent = CommentAgent(role_name, project_id=project_id)
         logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s)",
                     role_name, card.get("code", ""), card.get("status", ""))
-        result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb)
+        result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb, on_process_started=register_cb)
         session_manager.unregister_process(session_id)
 
         await _validate_agent_decision(session_manager, session_id, card, role_name, project_id, tokens=result.get("tokens"))
@@ -127,8 +131,8 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
         current = await cursor.fetchone()
 
     if not current:
-        logger.error("[DECISION-FAIL] card %d not found in DB", req_id)
-        await session_manager.fail_session(session_id, f"Card {req_id} not found")
+        logger.warning("[DECISION-SKIP] card %d deleted during agent run, cancelling session", req_id)
+        await session_manager.cancel_session(session_id, f"card_deleted:{req_id}")
         return
 
     current_status = current["status"]
@@ -156,6 +160,12 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
                     await append_research_to_memory(project_id, card.get("code", ""), parsed)
                     logger.info("[PRODUCT-MEMORY] appended for [%s]", card.get("code", ""))
 
+            # Trigger wiki archiver (non-blocking)
+            import asyncio
+            asyncio.create_task(
+                _trigger_wiki_archive(project_id, card, req_id)
+            )
+
         await session_manager.complete_session(session_id, f"{role_name} decided [{card.get('code', '')}]", tokens=tokens)
     else:
         # Agent did NOT make a decision - immediate escalation
@@ -174,7 +184,7 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
                 (ceo_dec, req_id),
             )
             await db.commit()
-        await session_manager.fail_session(session_id, f"{role_name} made no decision")
+        await session_manager.complete_session(session_id, f"{role_name} escalated to CEO (no decision tool called)")
 
 
 # ==================== Research conclusion extraction ====================
@@ -255,3 +265,28 @@ async def append_research_to_memory(project_id: int, card_code: str, parsed: dic
 
     logger.info("[PRODUCT-MEMORY] research conclusions appended for card=[%s] project=%d",
                 card_code, project_id)
+
+
+async def _trigger_wiki_archive(project_id: int, card: dict, req_id: int) -> None:
+    """Trigger wiki_archiver agent to extract structured wiki page from research card."""
+    try:
+        from agents.comment_agent import CommentAgent
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT author, content FROM comments WHERE requirement_id=? ORDER BY created_at",
+                (req_id,),
+            )
+            comments = [dict(row) for row in await cursor.fetchall()]
+
+        if not comments:
+            logger.warning("[WIKI-ARCHIVE] no comments for [%s], skipping", card.get("code", ""))
+            return
+
+        agent = CommentAgent("wiki_archiver", project_id=project_id)
+        await agent.execute(card, comments)
+        logger.info("[WIKI-ARCHIVE] completed for [%s]", card.get("code", ""))
+
+    except Exception as e:
+        logger.warning("[WIKI-ARCHIVE] failed for [%s]: %s", card.get("code", ""), e)

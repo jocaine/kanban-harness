@@ -104,7 +104,9 @@ app.add_middleware(PermissionGateway)
 app.add_middleware(RequestLogger)
 
 from web.api import router as api_router
+from web.board_events import router as board_events_router
 app.include_router(api_router, prefix="/api")
+app.include_router(board_events_router, prefix="/api")
 
 static_dir = os.path.join(os.path.dirname(__file__), "web", "static")
 if os.path.isdir(static_dir):

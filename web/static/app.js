@@ -834,12 +834,13 @@ function cancelMove() {
 function showReqModal(editId) {
     editingReqId = editId || null;
     pendingFiles = [];
-    document.getElementById('req-modal-title').textContent = editId ? '编辑需求' : '新建需求';
-
-    // Reset to first tab
-    switchReqTab('desc');
+    document.getElementById('req-modal-title').textContent = editId ? '编辑需求' : '新的需求想法';
 
     if (editId) {
+        // 编辑模式：显示完整表单，隐藏快速输入
+        document.getElementById('req-quick-input').style.display = 'none';
+        document.getElementById('req-full-form').style.display = '';
+        switchReqTab('desc');
         const r = requirements.find(x => x.id === editId);
         document.getElementById('req-title').value = r.title;
         document.getElementById('req-desc').value = r.description || '';
@@ -847,6 +848,9 @@ function showReqModal(editId) {
         document.getElementById('req-type').value = r.type || 'dev';
         document.getElementById('req-status').value = r.status;
         document.getElementById('req-assignee').value = r.assignee || '';
+        // 编辑模式显示状态和负责人（只读参考）
+        document.getElementById('req-status-group').style.display = '';
+        document.getElementById('req-assignee').style.display = '';
         document.getElementById('req-deadline').value = r.deadline || '';
         document.getElementById('req-hours').value = r.estimated_hours || 0;
         document.getElementById('req-actual').value = r.actual_hours || 0;
@@ -873,24 +877,17 @@ function showReqModal(editId) {
             document.getElementById('btn-desc-preview').textContent = '编辑';
         }
     } else {
-        document.getElementById('req-title').value = '';
-        document.getElementById('req-desc').value = '';
-        document.getElementById('req-priority').value = 'P2';
-        document.getElementById('req-type').value = 'dev';
-        document.getElementById('req-status').value = 'organizing';
-        document.getElementById('req-assignee').value = '';
-        document.getElementById('req-deadline').value = '';
-        document.getElementById('req-hours').value = 0;
-        document.getElementById('req-actual').value = 0;
-        document.getElementById('req-tags').value = '';
-        document.getElementById('req-notes').value = '';
-        document.getElementById('attachment-list').innerHTML = '';
-        document.getElementById('commits-section').style.display = 'none';
-        document.getElementById('req-queue-reason').value = '';
-        document.getElementById('req-queue-reason-preset').value = '';
+        // 新建模式：显示快速输入，隐藏完整表单
+        document.getElementById('req-quick-input').style.display = '';
+        document.getElementById('req-full-form').style.display = 'none';
+        document.getElementById('req-idea-input').value = '';
     }
     document.getElementById('req-modal').classList.remove('hidden');
-    document.getElementById('req-title').focus();
+    if (editId) {
+        document.getElementById('req-title').focus();
+    } else {
+        document.getElementById('req-idea-input').focus();
+    }
     updateHash();
 }
 
@@ -919,6 +916,25 @@ function handleFileSelect(input) {
 }
 
 async function saveRequirement() {
+    // 新建模式：快速输入
+    if (!editingReqId) {
+        const idea = document.getElementById('req-idea-input').value.trim();
+        if (!idea) { document.getElementById('req-idea-input').focus(); return; }
+        const body = {
+            version_id: currentVersion.id,
+            title: '待 PM 整理',
+            priority: document.getElementById('req-quick-priority').value,
+            initial_comment: idea,
+        };
+        await api('/api/requirements', {method: 'POST', body});
+        hideModal('req-modal');
+        await loadRequirements(currentVersion.id);
+        renderRequirements();
+        await refreshVersions();
+        return;
+    }
+
+    // 编辑模式：完整表单
     const title = document.getElementById('req-title').value.trim();
     if (!title) { document.getElementById('req-title').focus(); return; }
 
@@ -940,19 +956,12 @@ async function saveRequirement() {
         queue_reason: document.getElementById('req-queue-reason').value.trim()
     };
 
-    let rid = editingReqId;
-    if (editingReqId) {
-        await api('/api/requirements/' + editingReqId, {method: 'PUT', body});
-    } else {
-        body.version_id = currentVersion.id;
-        const result = await api('/api/requirements', {method: 'POST', body});
-        rid = result.id;
-    }
+    await api('/api/requirements/' + editingReqId, {method: 'PUT', body});
 
     for (const f of pendingFiles) {
         const fd = new FormData();
         fd.append('file', f);
-        await api('/api/requirements/' + rid + '/attachments', {method: 'POST', body: fd});
+        await api('/api/requirements/' + editingReqId + '/attachments', {method: 'POST', body: fd});
     }
     pendingFiles = [];
 
@@ -1246,23 +1255,13 @@ function showDocView(tab) {
     document.getElementById('arch-view').style.display = 'block';
     document.getElementById('arch-title').textContent = currentProject.name + ' - 项目文档';
     updateDocTabs();
-    if (tab === 'team') {
-        document.getElementById('team-view').style.display = 'block';
-        document.getElementById('arch-content').style.display = 'none';
-        document.getElementById('arch-actions').style.display = 'none';
-        loadTeamView();
-        if (!window._teamPollInterval) {
-            window._teamPollInterval = setInterval(loadTeamView, 5000);
-        }
-    } else {
-        document.getElementById('team-view').style.display = 'none';
-        document.getElementById('arch-content').style.display = '';
-        document.getElementById('arch-actions').style.display = '';
-        if (window._teamPollInterval) {
-            clearInterval(window._teamPollInterval);
-            window._teamPollInterval = null;
-        }
-        loadDoc();
+    if (window._teamPollInterval) {
+        clearInterval(window._teamPollInterval);
+        window._teamPollInterval = null;
+    }
+    switchDocTab(currentDocTab);
+    if (currentDocTab === 'team' && !window._teamPollInterval) {
+        window._teamPollInterval = setInterval(loadTeamView, 5000);
     }
 }
 
@@ -1275,15 +1274,24 @@ function switchDocTab(tab) {
     const teamView = document.getElementById('team-view');
     const archContent = document.getElementById('arch-content');
     const archActions = document.getElementById('arch-actions');
+    const wikiView = document.getElementById('wiki-view');
     if (tab === 'team') {
         teamView.style.display = 'block';
         archContent.style.display = 'none';
         archActions.style.display = 'none';
+        if (wikiView) wikiView.style.display = 'none';
         loadTeamView();
+    } else if (tab === 'wiki') {
+        teamView.style.display = 'none';
+        archContent.style.display = 'none';
+        archActions.style.display = 'none';
+        if (wikiView) wikiView.style.display = 'block';
+        loadWikiView();
     } else {
         teamView.style.display = 'none';
         archContent.style.display = '';
         archActions.style.display = '';
+        if (wikiView) wikiView.style.display = 'none';
         loadDoc();
     }
 }
@@ -1308,6 +1316,62 @@ function hideArchView() {
 }
 
 function cancelArchEdit() {}
+
+// ==================== Wiki ====================
+
+async function loadWikiView() {
+    if (!currentProject) return;
+    const listEl = document.getElementById('wiki-page-list');
+    const contentEl = document.getElementById('wiki-page-content');
+    contentEl.innerHTML = '<div class="arch-empty">选择左侧页面查看内容</div>';
+
+    const data = await api('/api/projects/' + currentProject.id + '/wiki');
+    const pages = data.pages || [];
+
+    if (!pages.length) {
+        listEl.innerHTML = '<div class="wiki-empty">暂无 Wiki 页面<br><small>调研卡完成后会自动生成</small></div>';
+        return;
+    }
+
+    let html = '';
+    const grouped = {research: [], product: [], arch: []};
+    pages.forEach(p => {
+        if (grouped[p.subdir]) grouped[p.subdir].push(p);
+    });
+
+    const labels = {research: '📊 调研', product: '🎯 产品', arch: '🏗️ 架构'};
+    for (const [dir, items] of Object.entries(grouped)) {
+        if (!items.length) continue;
+        html += '<div class="wiki-group"><div class="wiki-group-title">' + labels[dir] + '</div>';
+        items.forEach(p => {
+            const tags = p.tags && p.tags.length ? '<span class="wiki-tags">' + p.tags.join(', ') + '</span>' : '';
+            html += '<div class="wiki-item" onclick="loadWikiPage(\'' + p.page + '\')">' +
+                '<span class="wiki-item-title">' + p.title + '</span>' + tags + '</div>';
+        });
+        html += '</div>';
+    }
+    listEl.innerHTML = html;
+}
+
+async function loadWikiPage(pagePath) {
+    if (!currentProject) return;
+    const contentEl = document.getElementById('wiki-page-content');
+    contentEl.innerHTML = '<div class="loading">加载中...</div>';
+
+    try {
+        const data = await api('/api/projects/' + currentProject.id + '/wiki/' + pagePath);
+        contentEl.innerHTML = renderMd(data.content || '');
+    } catch (e) {
+        contentEl.innerHTML = '<div class="arch-empty">页面加载失败</div>';
+    }
+
+    // Highlight active item
+    document.querySelectorAll('.wiki-item').forEach(el => el.classList.remove('active'));
+    const items = document.querySelectorAll('.wiki-item');
+    items.forEach(el => {
+        if (el.getAttribute('onclick').includes(pagePath)) el.classList.add('active');
+    });
+}
 
 // ==================== Commits ====================
 
@@ -2231,6 +2295,37 @@ async function toggleScheduler() {
 pollActivity();
 activityInterval = setInterval(pollActivity, 5000);
 
+// ==================== Board SSE (real-time refresh) ====================
+(function initBoardSSE() {
+    let es = null;
+    let retryDelay = 1000;
+
+    function connect() {
+        es = new EventSource('/api/board/events');
+        es.onopen = () => { retryDelay = 1000; };
+        es.addEventListener('card_moved', () => refreshBoardQuiet());
+        es.addEventListener('card_created', () => refreshBoardQuiet());
+        es.addEventListener('card_updated', () => refreshBoardQuiet());
+        es.onerror = () => {
+            es.close();
+            setTimeout(connect, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+    }
+
+    async function refreshBoardQuiet() {
+        try {
+            if (currentVersion) {
+                await loadRequirements(currentVersion.id);
+                renderRequirements();
+            }
+            await refreshVersions();
+        } catch(e) {}
+    }
+
+    connect();
+})();
+
 // ==================== Chat Panel ====================
 function toggleChat() {
     const panel = document.getElementById('chat-panel');
@@ -2841,12 +2936,22 @@ async function openDecision(decision) {
     document.getElementById('decision-avatar-q').classList.add('visible');
 
     // Build plain-language speech from PM summary
-    const speech = buildSpeech(decision);
-    document.getElementById('decision-speech').innerHTML = speech;
+    if (isWizardMode(decision)) {
+        _wizardQuestions = decision.questions;
+        _wizardAnswers = new Array(decision.questions.length).fill('');
+        _wizardIndex = 0;
+        renderWizard();
+    } else {
+        const speech = buildSpeech(decision);
+        document.getElementById('decision-speech').innerHTML = speech;
 
-    // Build action buttons
-    const actions = document.getElementById('decision-actions');
-    actions.innerHTML = buildActionButtons(decision);
+        // Build action buttons
+        const actions = document.getElementById('decision-actions');
+        actions.innerHTML = buildActionButtons(decision);
+
+        // Show the custom input area
+        document.querySelector('.decision-custom').style.display = '';
+    }
 
     // Load card detail on the right
     await loadDecisionCard(decision);
@@ -2859,6 +2964,15 @@ async function openDecision(decision) {
 }
 
 function buildSpeech(decision) {
+    // For agent-deliberated decisions (PM/Industry actively asking), show message directly
+    if (decision.reason === 'agent_d' && decision.message) {
+        let chat = decision.message;
+        if (typeof marked !== 'undefined') {
+            return DOMPurify.sanitize(marked.parse(chat));
+        }
+        return escapeHtml(chat).replace(/\n/g, '<br>');
+    }
+
     // For system-escalated decisions (stuck/timeout), show the message directly
     if (decision.reason === 'stuck_timeout' && decision.message) {
         let chat = decision.message + '\n\n';
@@ -2935,35 +3049,24 @@ function buildActionButtons(decision) {
     const role = decision.asking_role || 'pm';
     const roleNames = { pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
     const roleName = roleNames[role] || role;
+    const actions = decision.actions || ['reply_to_role', 'approve_dev'];
+
+    const ACTION_DEFS = {
+        reply_to_role: { icon: '💬', label: `回复${roleName}`, hint: '卡片退回该角色继续处理', cls: 'primary' },
+        approve_dev: { icon: '✅', label: decision.type === 'research' ? '调研完成，归档' : '批准开发', hint: decision.type === 'research' ? '直接完成（跳过开发）' : '进入开发流程', cls: '' },
+        request_more_research: { icon: '🔍', label: '需要补充调研', hint: '退回调研补充材料', cls: 'warning' },
+        retry: { icon: '🔄', label: '重试', hint: '让 AI 重新尝试处理', cls: '' },
+        move_to_dev: { icon: '⏩', label: '直接移入开发', hint: '跳过当前角色，进入 dev', cls: '' },
+        archive: { icon: '🗄️', label: '归档', hint: '不再处理此卡片', cls: 'warning' },
+    };
 
     let html = '';
-
-    // "Reply and return" — send card back to this role's working column
-    html += `<button class="decision-btn primary" onclick="submitDecision('reply_to_role')">
-        <span class="decision-btn-icon">💬</span>
-        <div class="decision-btn-text">回复${roleName}<div class="decision-btn-hint">卡片退回该角色继续处理</div></div>
-    </button>`;
-
-    // "Approve" — advance or complete
-    const approveLabel = decision.type === 'research' ? '调研完成，归档' : '批准开发';
-    html += `<button class="decision-btn" onclick="submitDecision('approve_dev')">
-        <span class="decision-btn-icon">✅</span>
-        <div class="decision-btn-text">${approveLabel}<div class="decision-btn-hint">${decision.type === 'research' ? '直接完成（跳过开发）' : '进入开发流程'}</div></div>
-    </button>`;
-
-    // "Need more research"
-    if (role === 'industry') {
-        html += `<button class="decision-btn warning" onclick="submitDecision('request_more_research')">
-            <span class="decision-btn-icon">🔍</span>
-            <div class="decision-btn-text">需要补充调研<div class="decision-btn-hint">退回行业顾问补充材料</div></div>
-        </button>`;
-    }
-
-    // "Retry" — for stuck/timeout escalations
-    if (decision.reason === 'stuck_timeout' || (decision.actions && decision.actions.includes('retry'))) {
-        html += `<button class="decision-btn" onclick="submitDecision('retry')">
-            <span class="decision-btn-icon">🔄</span>
-            <div class="decision-btn-text">重试<div class="decision-btn-hint">让 AI 重新尝试处理</div></div>
+    for (const action of actions) {
+        const def = ACTION_DEFS[action];
+        if (!def) continue;
+        html += `<button class="decision-btn ${def.cls}" onclick="submitDecision('${action}')">
+            <span class="decision-btn-icon">${def.icon}</span>
+            <div class="decision-btn-text">${def.label}<div class="decision-btn-hint">${def.hint}</div></div>
         </button>`;
     }
 
@@ -3040,7 +3143,8 @@ async function submitDecision(decision, optionComment) {
     try {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
-            body: { decision, comment, asking_role: _currentDecision.asking_role || 'pm' },
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
         const result = await resp.json();
@@ -3056,7 +3160,11 @@ async function submitDecision(decision, optionComment) {
         }
 
         const statusLabel = STATUS_MAP[result.new_status]?.label || result.new_status;
-        showToast(`卡片已移至「${statusLabel}」`);
+        if (result.new_status === 'archived') {
+            showToast('卡片已归档');
+        } else {
+            showToast(`卡片已移至「${statusLabel}」`);
+        }
 
         setTimeout(pollDecisions, 1000);
     } catch (e) {
@@ -3072,7 +3180,8 @@ async function submitCustomDecision() {
     try {
         const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
             method: 'POST',
-            body: { decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' },
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'custom', comment, asking_role: _currentDecision.asking_role || 'pm' }),
         });
         if (!resp.ok) throw new Error('submit failed');
         const result = await resp.json();
@@ -3096,7 +3205,113 @@ async function submitCustomDecision() {
 function closeDecision() {
     document.getElementById('decision-overlay').classList.remove('active');
     document.getElementById('decision-avatar-q').classList.remove('visible');
+    document.querySelector('.decision-custom').style.display = '';
     _currentDecision = null;
+    _wizardQuestions = [];
+    _wizardAnswers = [];
+    _wizardIndex = 0;
+}
+
+// ==================== Multi-question Wizard ====================
+
+let _wizardQuestions = [];
+let _wizardAnswers = [];
+let _wizardIndex = 0;
+
+function isWizardMode(decision) {
+    return decision.questions && decision.questions.length > 1;
+}
+
+function renderWizard() {
+    const total = _wizardQuestions.length;
+    const idx = _wizardIndex;
+    const question = _wizardQuestions[idx];
+
+    // Progress + question
+    const speechEl = document.getElementById('decision-speech');
+    const progress = `<div class="wizard-progress">${idx + 1} / ${total}</div>`;
+    const qHtml = typeof marked !== 'undefined'
+        ? DOMPurify.sanitize(marked.parse(question))
+        : escapeHtml(question).replace(/\n/g, '<br>');
+    speechEl.innerHTML = progress + qHtml;
+
+    // Replace actions with wizard input
+    const actionsEl = document.getElementById('decision-actions');
+    const isLast = idx === total - 1;
+    const btnLabel = isLast ? '提交全部' : '下一题 →';
+    const btnCls = isLast ? 'primary' : '';
+    actionsEl.innerHTML = `
+        <div class="wizard-input-wrap">
+            <textarea id="wizard-answer" placeholder="输入你的回答...">${_wizardAnswers[idx] || ''}</textarea>
+            <div class="wizard-nav">
+                ${idx > 0 ? '<button class="decision-btn" onclick="wizardPrev()">← 上一题</button>' : ''}
+                <button class="decision-btn ${btnCls}" onclick="wizardNext()">${btnLabel}</button>
+            </div>
+        </div>`;
+
+    // Hide the original custom input area
+    document.querySelector('.decision-custom').style.display = 'none';
+
+    setTimeout(() => { const ta = document.getElementById('wizard-answer'); if (ta) ta.focus(); }, 50);
+}
+
+function wizardPrev() {
+    // Save current answer
+    const ta = document.getElementById('wizard-answer');
+    if (ta) _wizardAnswers[_wizardIndex] = ta.value.trim();
+    _wizardIndex--;
+    renderWizard();
+}
+
+function wizardNext() {
+    const ta = document.getElementById('wizard-answer');
+    const answer = ta ? ta.value.trim() : '';
+    if (!answer) {
+        ta && ta.focus();
+        ta && (ta.style.borderColor = 'var(--danger, #ef4444)');
+        setTimeout(() => { if (ta) ta.style.borderColor = ''; }, 1500);
+        return;
+    }
+    _wizardAnswers[_wizardIndex] = answer;
+
+    if (_wizardIndex < _wizardQuestions.length - 1) {
+        _wizardIndex++;
+        renderWizard();
+    } else {
+        wizardSubmit();
+    }
+}
+
+async function wizardSubmit() {
+    // Build structured comment from Q&A pairs
+    let comment = '';
+    _wizardQuestions.forEach((q, i) => {
+        comment += `**Q${i + 1}:** ${q}\n**A${i + 1}:** ${_wizardAnswers[i]}\n\n`;
+    });
+
+    try {
+        const resp = await fetch(`/api/decisions/${_currentDecision.id}/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'reply_to_role', comment: comment.trim(), asking_role: _currentDecision.asking_role || 'pm' }),
+        });
+        if (!resp.ok) throw new Error('submit failed');
+        const result = await resp.json();
+
+        closeDecision();
+
+        if (result.version_id && (!currentVersion || currentVersion.id !== result.version_id)) {
+            await selectVersion(result.version_id);
+        } else {
+            if (typeof loadRequirements === 'function' && currentVersion) await loadRequirements(currentVersion.id);
+            renderRequirements();
+        }
+
+        showToast('所有问题已回复');
+        setTimeout(pollDecisions, 1000);
+    } catch (e) {
+        alert('提交失败: ' + e.message);
+    }
 }
 
 // ESC to close decision overlay

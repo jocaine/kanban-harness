@@ -60,6 +60,7 @@ class ReqCreate(BaseModel):
     notes: str = ""
     queue_reason: str = ""
     agent_timeout: Optional[int] = None
+    initial_comment: str = ""
 
 class ReqUpdate(BaseModel):
     title: Optional[str] = None
@@ -236,6 +237,8 @@ async def list_requirements(vid: int, db: aiosqlite.Connection = Depends(get_db)
 
 @router.post("/requirements")
 async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Connection = Depends(get_db)):
+    if not data.title or not data.title.strip():
+        raise HTTPException(422, "title cannot be empty")
     agent_role = getattr(request.state, "agent_role", None) if hasattr(request, "state") else None
     if agent_role and not registry.check_permission(agent_role, "create", "requirements"):
         raise HTTPException(403, f"Role '{agent_role}' cannot create requirements")
@@ -249,8 +252,8 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
         (data.version_id,)
     )
     pos = (await cursor.fetchone())[0]
-    # 调研类型卡片创建时自动设为 research 状态
-    init_status = "research" if data.type == "research" else (data.status or "organizing")
+    # 所有卡片强制从 organizing 或 research 入口进入，由 PM 决定流转
+    init_status = "research" if data.type == "research" else "organizing"
     cursor = await db.execute(
         "INSERT INTO requirements (version_id,title,description,priority,type,status,assignee,deadline,estimated_hours,notes,queue_reason,agent_timeout,code,position) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -261,11 +264,21 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
     await db.commit()
     rid = cursor.lastrowid
 
+    # CEO 的原始想法作为第一条评论
+    if data.initial_comment and data.initial_comment.strip():
+        await db.execute(
+            "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+            (rid, "CEO", data.initial_comment.strip()),
+        )
+        await db.commit()
+
     # Emit event for async collaboration
     vcursor = await db.execute("SELECT project_id FROM versions WHERE id=?", (data.version_id,))
     vrow = await vcursor.fetchone()
     if vrow:
         import json
+        from web.board_events import broadcast
+        broadcast("card_created", {"id": rid, "status": init_status, "code": code})
         await db.execute(
             "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
             (vrow[0], "requirement_created", rid,
@@ -373,6 +386,8 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     # Emit status_changed event for async collaboration
     if old_status != data.status:
         import json
+        from web.board_events import broadcast
+        broadcast("card_moved", {"id": rid, "old_status": old_status, "new_status": data.status})
         vcursor = await db.execute(
             "SELECT v.project_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
             (rid,),
@@ -647,6 +662,13 @@ async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
 
 @router.delete("/requirements/{rid}")
 async def delete_requirement(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    # Cancel running sessions for this card
+    await db.execute(
+        "UPDATE agent_sessions SET status='completed', output_summary='card_deleted', "
+        "completed_at=datetime('now','localtime') "
+        "WHERE status IN ('idle','running') AND requirement_id = ?",
+        (rid,),
+    )
     # Clean up attachment files from disk
     att_cursor = await db.execute("SELECT filepath FROM attachments WHERE requirement_id=?", (rid,))
     for row in await att_cursor.fetchall():
@@ -801,6 +823,23 @@ async def get_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db
     cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
     row = await cursor.fetchone()
     return {"content": row[0] if row else ""}
+
+
+@router.get("/projects/{pid}/wiki")
+async def get_wiki_pages(pid: int):
+    from core.wiki import list_wiki_pages
+    pages = list_wiki_pages(pid)
+    return {"pages": pages}
+
+
+@router.get("/projects/{pid}/wiki/{subdir}/{slug}")
+async def get_wiki_page(pid: int, subdir: str, slug: str):
+    from core.wiki import read_wiki_page
+    page_path = f"{subdir}/{slug}"
+    content = read_wiki_page(pid, page_path)
+    if not content:
+        raise HTTPException(404, f"Wiki page not found: {page_path}")
+    return {"content": content, "page": page_path}
 
 
 @router.put("/projects/{pid}/product-memory")
@@ -1084,8 +1123,8 @@ async def card_debug(code: str, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(
         "SELECT id, agent_role, status, trigger_type, error_message, retry_count, "
         "input_tokens, output_tokens, total_tokens, started_at, completed_at "
-        "FROM agent_sessions WHERE input_context LIKE ? ORDER BY created_at DESC LIMIT 20",
-        (f'%"requirement_id": {req_id}%',),
+        "FROM agent_sessions WHERE requirement_id = ? ORDER BY created_at DESC LIMIT 20",
+        (req_id,),
     )
     sessions = [dict(row) for row in await cursor.fetchall()]
 
@@ -1490,8 +1529,13 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
             "asking_role": asking_role,
             "reason": decision_data.get("reason", ""),
             "message": decision_data.get("message", ""),
+            "questions": decision_data.get("questions", [decision_data.get("message", "")] if decision_data.get("message") else []),
             "actions": decision_data.get("actions", []),
-            "pm_summary": (last_comment["content"][:500] if last_comment else decision_data.get("message", "")),
+            "pm_summary": (
+                decision_data.get("message", "")
+                if decision_data.get("reason") == "agent_d"
+                else (last_comment["content"][:500] if last_comment else decision_data.get("message", ""))
+            ),
             "research_rounds": research_count,
             "waiting_since": decision_data.get("since", card["updated_at"]),
         })
@@ -1529,12 +1573,18 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
         "coach_dev": "dev",
         "coach_review": "testing",
     }
+    archive_card = False
     if data.decision == "approve_dev":
         new_status = "done" if req_type == "research" else "dev"
     elif data.decision == "request_more_research":
         new_status = "research"
     elif data.decision == "reply_to_role":
         new_status = ROLE_WORK_STATUS.get(data.asking_role, "organizing")
+    elif data.decision == "move_to_dev":
+        new_status = "dev"
+    elif data.decision == "archive":
+        new_status = ""
+        archive_card = True
     elif data.decision == "retry":
         new_status = ""
     else:
@@ -1549,6 +1599,10 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
             comment_text = "需要补充更多调研材料。"
         elif data.decision == "reply_to_role":
             comment_text = "已回复，请按反馈继续。"
+        elif data.decision == "move_to_dev":
+            comment_text = "跳过当前阶段，直接进入开发。"
+        elif data.decision == "archive":
+            comment_text = "CEO 决定归档此卡片，不再处理。"
 
     await db.execute(
         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
@@ -1557,8 +1611,15 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
 
     old_status = row["status"]
 
+    # Archive if CEO chose to archive
+    if archive_card:
+        await db.execute(
+            "UPDATE requirements SET archived=1, updated_at=datetime('now','localtime') WHERE id=?",
+            (rid,),
+        )
+
     # Move card if decision implies a status change
-    if new_status:
+    if new_status and not archive_card:
         await db.execute(
             "UPDATE requirements SET status=?, progressed_at=datetime('now','localtime'), "
             "updated_at=datetime('now','localtime') WHERE id=?",
@@ -1584,7 +1645,29 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
             )
 
     await db.commit()
-    return {"ok": True, "new_status": new_status or "organizing"}
+
+    from web.board_events import broadcast
+    if archive_card:
+        broadcast("card_updated", {"id": rid, "action": "archived"})
+    elif new_status and new_status != old_status:
+        broadcast("card_moved", {"id": rid, "old_status": old_status, "new_status": new_status})
+    else:
+        broadcast("card_updated", {"id": rid, "action": "ceo_decision"})
+
+    if archive_card:
+        vcursor = await db.execute(
+            "SELECT v.id as version_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
+            (rid,),
+        )
+        vrow = await vcursor.fetchone()
+        return {"ok": True, "new_status": "archived", "version_id": vrow["version_id"] if vrow else None}
+
+    vcursor = await db.execute(
+        "SELECT v.id as version_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
+        (rid,),
+    )
+    vrow = await vcursor.fetchone()
+    return {"ok": True, "new_status": new_status or old_status, "version_id": vrow["version_id"] if vrow else None}
 
 
 # ==================== 4. Config Reload ====================
