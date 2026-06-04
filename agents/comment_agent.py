@@ -49,11 +49,18 @@ class CommentAgent:
                 effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
             else:
                 effective_timeout = self.role_config.model.timeout
-            response = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat)
+            response, usage = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat)
 
-            input_tokens = _estimate_tokens(prompt)
-            output_tokens = _estimate_tokens(response)
-            tokens = {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens}
+            if usage:
+                tokens = {
+                    "input": usage.get("input_tokens", 0),
+                    "output": usage.get("output_tokens", 0),
+                    "total": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                }
+            else:
+                input_tokens = _estimate_tokens(prompt)
+                output_tokens = _estimate_tokens(response)
+                tokens = {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens}
 
             # PM uses tools directly (add_comment + move_requirement);
             # stdout is irrelevant — harness checks DB for actual results.
@@ -273,96 +280,101 @@ class CommentAgent:
 
         return "\n".join(sections)
 
-    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None) -> str:
+    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None) -> tuple[str, dict]:
+        """Returns (response_text, usage_dict)."""
         cfg = self.role_config.model
         effective_timeout = timeout or cfg.timeout
 
         if cfg.provider == "hermes":
-            return await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat)
+            text = await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat)
+            return text, {}
         elif cfg.provider == "claude_cli":
             return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat)
         else:
             raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
     async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None) -> str:
-        """Call hermes CLI as subprocess. Timeout managed by reconcile_sessions."""
+        """Call hermes AIAgent in-process with MCP tools and streaming heartbeat.
 
-        from web.hermes_chat import ensure_hermes_config, _build_hermes_env
+        Key: discover_mcp_tools() must be called before AIAgent creation so the
+        MCP server (agent_server.py) is connected and its tools are registered.
+        Using enabled_toolsets=None picks up all configured tools including MCP.
+        Streaming callbacks fire heartbeat on every token/tool event.
+        """
+        from web.hermes_chat import ensure_hermes_config, _api_key, _api_base_url
         await ensure_hermes_config(mode="agent")
 
-        toolsets = cfg.toolsets if hasattr(cfg, "toolsets") and cfg.toolsets else []
-        skills = cfg.skills if hasattr(cfg, "skills") and cfg.skills else []
-        cmd = ["hermes", "-z", prompt]
-        if toolsets:
-            cmd.extend(["-t", ",".join(toolsets)])
-        if skills:
-            cmd.extend(["--skills", ",".join(skills)])
-        # Always pass -m explicitly: hermes auto-detects provider from model name
-        # (claude-* → anthropic), bypassing "custom" provider's non-TTY output bug
         model_name = cfg.name or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
-        import re as _re
-        model_name = _re.sub(r'\[.*?\]', '', model_name).strip()
-        cmd.extend(["-m", model_name])
+        model_name = re.sub(r'\[.*?\]', '', model_name).strip()
 
-        logger.info(f"Calling hermes: {' '.join(cmd[:4])}...")
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=_build_hermes_env(),
-        )
+        api_key = _api_key()
+        base_url = _api_base_url()
+        provider = None
+        if base_url:
+            base = base_url.rstrip("/")
+            if not base.endswith("/v1"):
+                base += "/v1"
+            base_url = base
+            provider = "custom"
 
-        async def _read_stream(stream):
-            chunks = []
-            while True:
-                try:
-                    chunk = await stream.read(4096)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    if on_heartbeat:
-                        on_heartbeat()
-                except Exception:
-                    break
-            return b"".join(chunks)
+        logger.info("Calling hermes AIAgent in-process: model=%s", model_name)
 
-        stdout_task = asyncio.create_task(_read_stream(proc.stdout))
-        stderr_task = asyncio.create_task(_read_stream(proc.stderr))
-        stdout_data, stderr_data = await asyncio.gather(stdout_task, stderr_task)
+        def _heartbeat_cb(*_args, **_kwargs):
+            if on_heartbeat:
+                on_heartbeat()
 
-        # Process ends naturally or killed by reconcile_sessions
-        await proc.wait()
+        def _clarify_cb(question, choices=None):
+            if choices:
+                return f"[No user available. Pick the best option from {choices} and continue.]"
+            return "[No user available. Make a reasonable assumption and continue.]"
 
-        output = stdout_data.decode(errors="replace").strip()
-        if proc.returncode in (-9, -15):
-            import re
-            output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
-            output = re.sub(r'<HermesTool:[^>]*/>', '', output)
-            output = re.sub(r'<HermesTool:[^>]*>.*$', '', output, flags=re.DOTALL)
-            logger.warning(f"hermes killed (rc={proc.returncode}), partial: {output[:200]}")
-            if output.strip():
-                return (
-                    f"[转给PM]\n\n"
-                    f"[调研中断] 进程被终止，部分进展如下：\n\n"
-                    f"{output[:2000]}\n\n"
-                    f"---\n"
-                    f"PM 请评估：1) 重试 2) 基于部分信息推进 3) 缩减范围"
+        def _run_agent():
+            import logging as _logging
+            from core.telemetry import set_heartbeat_callback
+            set_heartbeat_callback(_heartbeat_cb)
+            _logging.disable(_logging.WARNING)
+            try:
+                os.environ["HERMES_YOLO_MODE"] = "1"
+                os.environ["HERMES_ACCEPT_HOOKS"] = "1"
+                from tools.mcp_tool import discover_mcp_tools
+                discover_mcp_tools()
+                from run_agent import AIAgent
+                agent = AIAgent(
+                    api_key=api_key,
+                    base_url=base_url,
+                    provider=provider,
+                    model=model_name,
+                    enabled_toolsets=None,
+                    quiet_mode=True,
+                    platform="cli",
+                    stream_delta_callback=_heartbeat_cb,
+                    tool_start_callback=_heartbeat_cb,
+                    tool_complete_callback=_heartbeat_cb,
+                    tool_gen_callback=_heartbeat_cb,
+                    clarify_callback=_clarify_cb,
                 )
-            raise RuntimeError("hermes killed with no output")
+                agent.suppress_status_output = True
+                return agent.chat(prompt) or ""
+            finally:
+                _logging.disable(_logging.NOTSET)
+                set_heartbeat_callback(None)
 
-        if proc.returncode != 0:
-            err = stderr_data.decode(errors="replace").strip()
-            logger.warning(f"hermes exited {proc.returncode}: {err[:200]}")
-            if not output:
-                raise RuntimeError(f"hermes failed: {err[:300]}")
-        import re
+        loop = asyncio.get_event_loop()
+        output = await loop.run_in_executor(None, _run_agent)
+
         output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
     async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None) -> str:
-        """Call Claude CLI subprocess with kanban MCP tools."""
+        """Call Claude CLI subprocess with kanban MCP tools.
+
+        Uses --output-format stream-json: each stdout line is a heartbeat signal.
+        Stall detection triggers only when the process truly stops producing output.
+        """
+        import json as _json
         import time as _time
+        from core.telemetry import get_stats
 
         config_dir = ensure_agent_mcp_config(self.role_config.role, self.project_id)
         tools = ",".join(
@@ -372,7 +384,8 @@ class CommentAgent:
         cmd = [
             "claude",
             "-p", prompt,
-            "--print",
+            "--output-format", "stream-json",
+            "--verbose",
             "--allowedTools", tools,
             "--model", self.role_config.model.name or "claude-sonnet-4-6",
             "--append-system-prompt", self.role_config.system_prompt,
@@ -401,75 +414,65 @@ class CommentAgent:
         if on_heartbeat:
             on_heartbeat()
 
-        start = _time.monotonic()
-        heartbeat_interval = 60
+        result_text = ""
+        usage = {}
+        start_t = _time.monotonic()
 
         try:
-            while True:
-                remaining = timeout - (_time.monotonic() - start)
-                if remaining <= 0:
+            async for line in proc.stdout:
+                if on_heartbeat:
+                    on_heartbeat()
+
+                elapsed = _time.monotonic() - start_t
+                if elapsed > timeout:
                     raise asyncio.TimeoutError()
-                wait_time = min(remaining, heartbeat_interval)
+
+                line_str = line.decode(errors="replace").strip()
+                if not line_str:
+                    continue
+
                 try:
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=wait_time
-                    )
-                    if on_heartbeat:
-                        on_heartbeat()
-                    break
-                except asyncio.TimeoutError:
-                    if proc.returncode is not None:
-                        stdout, stderr = await proc.communicate()
-                        break
-                    elapsed = int(_time.monotonic() - start)
-                    if on_heartbeat:
-                        on_heartbeat()
-                    if elapsed < timeout:
-                        logger.info(
-                            "CommentAgent(%s) still running... %ds/%ds",
-                            role, elapsed, timeout,
+                    event = _json.loads(line_str)
+                except (ValueError, TypeError):
+                    continue
+
+                if event.get("type") == "result":
+                    usage = event.get("usage", {})
+                    stats = get_stats()
+                    if stats and usage:
+                        stats.record_call(
+                            model=self.role_config.model.name or "claude-sonnet-4-6",
+                            input_tokens=usage.get("input_tokens", 0),
+                            output_tokens=usage.get("output_tokens", 0),
+                            latency_ms=event.get("duration_api_ms", 0),
                         )
-                    else:
-                        raise
+                    result_text = event.get("result", "")
+
+            await proc.wait()
+
         except asyncio.TimeoutError:
-            elapsed = int(_time.monotonic() - start)
-            err_snippet = ""
+            elapsed = int(_time.monotonic() - start_t)
             try:
                 proc.terminate()
-                _, stderr_data = await asyncio.wait_for(proc.communicate(), timeout=5)
-                err_snippet = stderr_data.decode(errors="replace").strip()[-500:]
+                await asyncio.wait_for(proc.wait(), timeout=5)
             except Exception:
                 proc.kill()
                 await proc.wait()
-            logger.error(
-                "CommentAgent(%s) timed out after %ds. stderr: %s",
-                role, elapsed, err_snippet[:300] or "(empty)",
-            )
-            raise RuntimeError(
-                f"CommentAgent({role}) timed out after {elapsed}s"
-                + (f" — {err_snippet[:200]}" if err_snippet else "")
-            )
+            logger.error("CommentAgent(%s) timed out after %ds", role, elapsed)
+            raise RuntimeError(f"CommentAgent({role}) timed out after {elapsed}s")
 
-        elapsed = int(_time.monotonic() - start)
-        output = stdout.decode(errors="replace").strip()
-        err = stderr.decode(errors="replace").strip()
-
+        elapsed = int(_time.monotonic() - start_t)
         if proc.returncode != 0:
+            err = (await proc.stderr.read()).decode(errors="replace").strip()
             logger.warning(
                 "CommentAgent(%s) CLI failed (exit=%d, %ds). stderr: %s",
                 role, proc.returncode, elapsed, err[:300] or "(empty)",
             )
-            if not output:
+            if not result_text:
                 raise RuntimeError(
                     f"CommentAgent({role}) exit {proc.returncode}: {err[:200] or 'no output'}"
                 )
         else:
-            if not output:
-                logger.warning(
-                    "CommentAgent(%s) CLI exited 0 but produced no output (%ds). stderr: %s",
-                    role, elapsed, err[:300] or "(empty)",
-                )
-            else:
-                logger.info("CommentAgent(%s) done (%ds, %d chars)", role, elapsed, len(output))
+            logger.info("CommentAgent(%s) done (%ds)", role, elapsed)
 
-        return output
+        return result_text, usage

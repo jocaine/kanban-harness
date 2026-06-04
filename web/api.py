@@ -575,6 +575,16 @@ async def dev_logs(lines: int = 200):
         return {"logs": [f"Error fetching logs: {e}"], "source": "error"}
 
 
+@router.get("/dev/telemetry")
+async def dev_telemetry():
+    """LLM call statistics — token usage, latency, call counts by model."""
+    from core.telemetry import get_stats
+    stats = get_stats()
+    if stats is None:
+        return {"status": "not_initialized", "stats": {}}
+    return {"status": "active", "stats": stats.snapshot()}
+
+
 LAYER_META = {
     'core':  {'label': 'Core 核心层',   'icon': '⚙️', 'color': '#6366f1', 'desc': '数据库、配置、会话管理'},
     'web':   {'label': 'Web 服务层',    'icon': '🌐', 'color': '#06b6d4', 'desc': 'API、Chat、Hermes、中间件'},
@@ -1374,6 +1384,12 @@ async def scheduler_state(db: aiosqlite.Connection = Depends(get_db)):
         "priority": r["priority"],
     } for r in pending_rows]
 
+    from core.telemetry import get_stats
+    telemetry_stats = {}
+    ts = get_stats()
+    if ts:
+        telemetry_stats = ts.snapshot()
+
     return {
         "generated_at": now.isoformat(),
         "scheduler": {
@@ -1392,6 +1408,7 @@ async def scheduler_state(db: aiosqlite.Connection = Depends(get_db)):
         "stale": stale,
         "blocked": blocked,
         "pending": pending,
+        "telemetry": telemetry_stats,
     }
 
 
@@ -1543,7 +1560,7 @@ async def list_pending_decisions(project_id: int = 0, db: aiosqlite.Connection =
     return {"decisions": results}
 
 class CEODecisionInput(BaseModel):
-    decision: str  # "approve_dev" | "request_more_research" | "reply_to_role" | "retry" | "custom"
+    decision: str  # "reply_to_role" | "retry"
     comment: str = ""
     asking_role: str = ""
 
@@ -1553,11 +1570,10 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     """CEO submits a decision on a card awaiting CEO input."""
     import json
 
-    cursor = await db.execute("SELECT status, type FROM requirements WHERE id=?", (rid,))
+    cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (rid,))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "requirement not found")
-    req_type = row["type"]
 
     # Clear ceo_decision — CEO has responded
     await db.execute(
@@ -1566,43 +1582,29 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
         (rid,),
     )
 
-    # Determine target status
+    # CEO can only communicate, never move cards
+    ALLOWED_DECISIONS = ("reply_to_role", "retry")
+    if data.decision not in ALLOWED_DECISIONS:
+        raise HTTPException(400, f"CEO 王权对话仅允许沟通操作: {ALLOWED_DECISIONS}")
+
     ROLE_WORK_STATUS = {
         "industry": "research",
         "pm": "organizing",
         "coach_dev": "dev",
         "coach_review": "testing",
     }
-    archive_card = False
-    if data.decision == "approve_dev":
-        new_status = "done" if req_type == "research" else "dev"
-    elif data.decision == "request_more_research":
-        new_status = "research"
-    elif data.decision == "reply_to_role":
+    if data.decision == "reply_to_role":
         new_status = ROLE_WORK_STATUS.get(data.asking_role, "organizing")
-    elif data.decision == "move_to_dev":
-        new_status = "dev"
-    elif data.decision == "archive":
-        new_status = ""
-        archive_card = True
-    elif data.decision == "retry":
-        new_status = ""
     else:
         new_status = ""
 
     # Record CEO comment
     comment_text = data.comment.strip() if data.comment else ""
     if not comment_text:
-        if data.decision == "approve_dev":
-            comment_text = "调研结果已确认，完成。" if req_type == "research" else "批准进入开发阶段。"
-        elif data.decision == "request_more_research":
-            comment_text = "需要补充更多调研材料。"
-        elif data.decision == "reply_to_role":
+        if data.decision == "reply_to_role":
             comment_text = "已回复，请按反馈继续。"
-        elif data.decision == "move_to_dev":
-            comment_text = "跳过当前阶段，直接进入开发。"
-        elif data.decision == "archive":
-            comment_text = "CEO 决定归档此卡片，不再处理。"
+        elif data.decision == "retry":
+            comment_text = "请重新执行。"
 
     await db.execute(
         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
@@ -1611,15 +1613,11 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
 
     old_status = row["status"]
 
-    # Archive if CEO chose to archive
-    if archive_card:
-        await db.execute(
-            "UPDATE requirements SET archived=1, updated_at=datetime('now','localtime') WHERE id=?",
-            (rid,),
-        )
+    # Archive is no longer available via CEO decision dialog
+    # (use the card's archive button directly)
 
-    # Move card if decision implies a status change
-    if new_status and not archive_card:
+    # Move card only for reply_to_role when status differs (shouldn't happen, but safe)
+    if new_status and new_status != old_status:
         await db.execute(
             "UPDATE requirements SET status=?, progressed_at=datetime('now','localtime'), "
             "updated_at=datetime('now','localtime') WHERE id=?",
@@ -1638,6 +1636,7 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
             context = {"old_status": old_status, "new_status": new_status or old_status, "moved_by": "CEO"}
             if data.decision == "reply_to_role":
                 context["decision"] = "reply_to_role"
+                context["asking_role"] = data.asking_role or "pm"
             await db.execute(
                 "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
                 (vrow[0], "status_changed" if data.decision != "reply_to_role" else "ceo_replied", rid,
@@ -1647,20 +1646,10 @@ async def submit_ceo_decision(rid: int, data: CEODecisionInput, db: aiosqlite.Co
     await db.commit()
 
     from web.board_events import broadcast
-    if archive_card:
-        broadcast("card_updated", {"id": rid, "action": "archived"})
-    elif new_status and new_status != old_status:
+    if new_status and new_status != old_status:
         broadcast("card_moved", {"id": rid, "old_status": old_status, "new_status": new_status})
     else:
         broadcast("card_updated", {"id": rid, "action": "ceo_decision"})
-
-    if archive_card:
-        vcursor = await db.execute(
-            "SELECT v.id as version_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",
-            (rid,),
-        )
-        vrow = await vcursor.fetchone()
-        return {"ok": True, "new_status": "archived", "version_id": vrow["version_id"] if vrow else None}
 
     vcursor = await db.execute(
         "SELECT v.id as version_id FROM requirements r JOIN versions v ON r.version_id=v.id WHERE r.id=?",

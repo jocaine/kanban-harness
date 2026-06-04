@@ -77,7 +77,7 @@ class CoachDev:
                 prompt = self._build_prompt(card)
                 work_path = worktree_path
 
-            output = await self._run_claude(prompt, work_path)
+            output, usage = await self._run_claude(prompt, work_path)
             has_commits = await self._check_commits(branch_name)
 
             if has_commits:
@@ -85,8 +85,11 @@ class CoachDev:
                 commit_message = await self._get_commit_message(work_path)
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
                 logger.info(f"Coach-Dev completed: [{code}] {summary}")
-                input_tokens = _estimate_tokens(prompt)
-                output_tokens = _estimate_tokens(output)
+                tokens = {
+                    "input": usage.get("input_tokens", 0),
+                    "output": usage.get("output_tokens", 0),
+                    "total": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                }
                 return {
                     "task_done": True,
                     "signal": "to_testing",
@@ -94,16 +97,19 @@ class CoachDev:
                     "branch": branch_name, "commit": commit_hash,
                     "commit_message": commit_message,
                     "is_scaffold": is_scaffold,
-                    "tokens": {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens},
+                    "tokens": tokens,
                 }
             else:
                 logger.warning(f"Coach-Dev produced no commits for [{code}]")
-                input_tokens = _estimate_tokens(prompt)
-                output_tokens = _estimate_tokens(output)
+                tokens = {
+                    "input": usage.get("input_tokens", 0),
+                    "output": usage.get("output_tokens", 0),
+                    "total": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                }
                 return {
                     "task_done": False, "signal": "", "success": False,
                     "summary": "No commits produced", "output": output,
-                    "tokens": {"input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens},
+                    "tokens": tokens,
                 }
 
         except asyncio.TimeoutError:
@@ -202,10 +208,20 @@ class CoachDev:
                 logger.debug(f"git {' '.join(args)}: {err}")
         return stdout.decode(errors="replace").strip()
 
-    async def _run_claude(self, prompt: str, worktree_path: str) -> str:
+    async def _run_claude(self, prompt: str, worktree_path: str) -> tuple[str, dict]:
+        """Run claude CLI, return (result_text, usage_dict).
+
+        usage_dict contains real token counts from stream-json result event.
+        """
+        import json as _json
+        import time as _time
+        from core.telemetry import trace_llm_call
+
         cmd = [
             "claude", "-p", prompt,
             "--allowedTools", "Bash,Edit,Read,Write",
+            "--output-format", "stream-json",
+            "--verbose",
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -216,15 +232,61 @@ class CoachDev:
         if self._on_heartbeat:
             self._on_heartbeat()
 
-        try:
-            stdout, stderr = await proc.communicate()
-            if self._on_heartbeat:
-                self._on_heartbeat()
-            return stdout.decode(errors="replace")
-        except Exception:
-            if proc.returncode is None:
-                proc.kill()
-            raise
+        result_text = ""
+        start = _time.monotonic()
+
+        with trace_llm_call("claude-sonnet-4-6", role="coach_dev"):
+            try:
+                async for line in proc.stdout:
+                    if self._on_heartbeat:
+                        self._on_heartbeat()
+
+                    elapsed = _time.monotonic() - start
+                    if elapsed > self.timeout:
+                        raise asyncio.TimeoutError()
+
+                    line_str = line.decode(errors="replace").strip()
+                    if not line_str:
+                        continue
+
+                    try:
+                        event = _json.loads(line_str)
+                    except (ValueError, TypeError):
+                        continue
+
+                    if event.get("type") == "result":
+                        usage = event.get("usage", {})
+                        self._record_usage(event)
+                        result_text = event.get("result", "")
+
+                await proc.wait()
+                return result_text, usage
+
+            except asyncio.TimeoutError:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except Exception:
+                    proc.kill()
+                raise
+            except Exception:
+                if proc.returncode is None:
+                    proc.kill()
+                raise
+
+    def _record_usage(self, event: dict):
+        """Record real token usage from stream-json result event."""
+        from core.telemetry import get_stats
+
+        usage = event.get("usage", {})
+        stats = get_stats()
+        if stats and usage:
+            stats.record_call(
+                model="claude-sonnet-4-6",
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+                latency_ms=event.get("duration_api_ms", 0),
+            )
 
     async def _check_commits(self, branch_name: str) -> bool:
         output = await self._run_git("log", f"main..{branch_name}", "--oneline")

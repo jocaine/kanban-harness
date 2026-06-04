@@ -49,6 +49,7 @@ from core.secret_filter import install_secret_filter
 install_secret_filter()
 
 from core.database import init_db
+from core.telemetry import init_telemetry
 from scheduler import SchedulerEngine
 from web.hermes_chat import ensure_hermes_config, sync_claude_settings
 
@@ -81,6 +82,8 @@ async def _recover_orphan_tasks():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_telemetry()
+
     # Startup: sync API config from env to hermes and claude settings
     await ensure_hermes_config()
     sync_claude_settings()
