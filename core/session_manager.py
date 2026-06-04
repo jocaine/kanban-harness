@@ -205,6 +205,23 @@ class SessionManager:
                 )
             return [dict(row) for row in await cursor.fetchall()]
 
+    async def recover_stale_sessions(self):
+        """Mark any running sessions without heartbeat as failed on startup."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT id FROM agent_sessions WHERE status='running'"
+            )
+            rows = await cursor.fetchall()
+            if rows:
+                for row in rows:
+                    await db.execute(
+                        "UPDATE agent_sessions SET status='failed', error_message='stale:restart', "
+                        "completed_at=datetime('now','localtime') WHERE id=?",
+                        (row[0],),
+                    )
+                await db.commit()
+                logger.info("Recovered %d stale sessions on startup", len(rows))
+
     async def reconcile_sessions(self):
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
