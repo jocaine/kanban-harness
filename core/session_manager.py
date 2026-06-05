@@ -60,16 +60,17 @@ class SessionManager:
         timeout_seconds: int = DEFAULT_TIMEOUT,
         parent_session_id: int | None = None,
         retry_count: int = 0,
+        requirement_id: int | None = None,
     ) -> int:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "INSERT INTO agent_sessions "
                 "(project_id, agent_role, status, trigger_type, input_context, "
-                "timeout_seconds, parent_session_id, retry_count, started_at) "
-                "VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))",
+                "timeout_seconds, parent_session_id, retry_count, requirement_id, started_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,datetime('now','localtime'))",
                 (project_id, agent_role, "running", trigger_type, input_context,
-                 timeout_seconds, parent_session_id, retry_count),
+                 timeout_seconds, parent_session_id, retry_count, requirement_id),
             )
             await db.commit()
             session_id = cursor.lastrowid

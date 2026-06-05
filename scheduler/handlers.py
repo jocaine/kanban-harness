@@ -105,6 +105,34 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
         result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb, on_process_started=register_cb)
         session_manager.unregister_process(session_id)
 
+        # Fallback: if industry agent completed but card didn't move,
+        # directly call industry_complete on its behalf
+        if role_name == "industry":
+            async with aiosqlite.connect(DB_PATH) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (card["id"],))
+                row = await cursor.fetchone()
+            if row and row["status"] == "research":
+                comment_text = result.get("comment") or "调研完成（agent 未显式提交，由 harness 代为提交）"
+                detail_text = result.get("detail", "")
+                logger.info("[DECISION-FALLBACK] industry didn't call tool, auto-submitting for [%s]", card.get("code"))
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                        (card["id"], "行业顾问", comment_text),
+                    )
+                    if detail_text:
+                        await db.execute(
+                            "INSERT INTO comment_details (requirement_id, author, content) VALUES (?,?,?)",
+                            (card["id"], "行业顾问", detail_text),
+                        )
+                    await db.execute(
+                        "UPDATE requirements SET status='organizing', progressed_at=datetime('now','localtime'), "
+                        "updated_at=datetime('now','localtime') WHERE id=?",
+                        (card["id"],),
+                    )
+                    await db.commit()
+
         await _validate_agent_decision(session_manager, session_id, card, role_name, project_id, tokens=result.get("tokens"))
 
     except Exception as e:

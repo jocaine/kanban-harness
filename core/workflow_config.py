@@ -22,7 +22,7 @@ _DEFAULTS = {
     },
     "agent": {
         "max_concurrent_sessions": 5,
-        "default_timeout_seconds": 600,
+        "default_timeout_seconds": 900,
         "max_research_rounds": 10,
         "stall_timeout_seconds": 120,
     },

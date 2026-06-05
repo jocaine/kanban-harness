@@ -9,7 +9,7 @@ from datetime import datetime
 import aiosqlite
 
 from core.database import DB_PATH
-from core.config import get_project_repo_path
+from core.workspace import get_project_repo_path
 from core.session_manager import SessionManager, DEFAULT_TIMEOUT
 from core.workflow_config import workflow_config
 from agents.registry import registry
@@ -241,7 +241,7 @@ class SchedulerEngine:
             "role": role,
             "reason": "stuck_timeout",
             "message": f"卡片在 {card['status']} 列停滞 {minutes} 分钟，需要 CEO 介入",
-            "actions": ["retry", "reply_to_role", "archive"],
+            "actions": ["retry", "reply_to_role"],
             "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, ensure_ascii=False)
         async with aiosqlite.connect(DB_PATH) as db:
@@ -391,7 +391,7 @@ class SchedulerEngine:
                 logger.info("[SCHED] matched roles for event #%d: %s", event["id"], roles or "(none)")
 
                 for role_name in roles:
-                    if role_name == "coach_dev":
+                    if role_name == "coach_dev" and event["event_type"] != "ceo_replied":
                         continue
                     await self._trigger_comment_agent(role_name, event, context)
 

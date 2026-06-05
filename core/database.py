@@ -1,29 +1,36 @@
 import logging
-import aiosqlite
+import aiosqlite  # 异步 SQLite 驱动，整个项目用 async/await 操作数据库
 import os
 from dotenv import load_dotenv
 
 logger = logging.getLogger("kh.core.database")
 
+# 加载 .env，override=True 表示 .env 优先级高于已有环境变量
 load_dotenv(override=True)
 
+# 数据库文件路径，默认 data/kanban.db
 DB_PATH = os.getenv("DB_PATH", "data/kanban.db")
 
 
+# 异步数据库连接生成器，配合依赖注入或 async for 使用
+# WAL 模式允许读写并发；row_factory=Row 使结果可按列名访问
 async def get_db():
     db = await aiosqlite.connect(DB_PATH)
     db.row_factory = aiosqlite.Row
     await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
+    await db.execute("PRAGMA foreign_keys=ON")  # SQLite 默认关闭外键，必须手动开启
     try:
         yield db
     finally:
         await db.close()
 
 
+# 增量迁移：启动时自动检测 schema 并修补
+# 策略：检测当前表结构是否缺少某特征 → 缺则执行变更
+# SQLite 不支持 ALTER CHECK 约束，所以改枚举值时必须重建表（新建→导数据→删旧→改名）
 async def _migrate_db(db: aiosqlite.Connection):
     """Run schema migrations for existing databases."""
-    # Migration 1: Add 'research' to requirements status CHECK constraint
+    # Migration 1: 给 status 枚举加 'research' 值（需重建表）
     cursor = await db.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='requirements'"
     )
@@ -63,7 +70,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         """)
         await db.commit()
 
-    # Migration 2: Rename 'pending' → 'organizing' in status constraint + data
+    # Migration 2: 重命名 'pending' → 'organizing'（重建表 + CASE WHEN 转数据）
     cursor = await db.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='requirements'"
     )
@@ -108,7 +115,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         """)
         await db.commit()
 
-    # Migration 3: Add queue_reason column to requirements
+    # Migration 3: 加 queue_reason 列（需重建表因为同时要改 CHECK 约束）
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "queue_reason" not in columns:
@@ -146,7 +153,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         """)
     await db.commit()
 
-    # Migration 4: Add agent_timeout column to requirements
+    # Migration 4: 加 agent_timeout 列（简单 ALTER，不需重建）
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "agent_timeout" not in columns:
@@ -156,7 +163,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
-    # Migration 5: Add detail column to comments
+    # Migration 5: comments 表加 detail 列（存评论的展开详情）
     cursor = await db.execute("PRAGMA table_info(comments)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "detail" not in columns:
@@ -166,7 +173,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
-    # Migration 6: Add token tracking columns to agent_sessions (KH-108)
+    # Migration 6: agent_sessions 加 token 消耗统计（input/output/total）
     cursor = await db.execute("PRAGMA table_info(agent_sessions)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "input_tokens" not in columns:
@@ -176,7 +183,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE agent_sessions ADD COLUMN total_tokens INTEGER DEFAULT 0")
     await db.commit()
 
-    # Migration 7: Add ceo_decision and progressed_at columns (王权问答重构)
+    # Migration 7: 王权问答重构 — 加 ceo_decision（CEO决策结果）和 progressed_at（最后推进时间）
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "ceo_decision" not in columns:
@@ -194,7 +201,7 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
-    # Migration 8: Add token tracking columns to chat_tasks
+    # Migration 8: chat_tasks 加 token 统计（与 agent_sessions 对齐）
     cursor = await db.execute("PRAGMA table_info(chat_tasks)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "input_tokens" not in columns:
@@ -204,13 +211,36 @@ async def _migrate_db(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE chat_tasks ADD COLUMN total_tokens INTEGER DEFAULT 0")
     await db.commit()
 
+    # Migration 9: agent_sessions 加 requirement_id（从 JSON 字段回填，方便直接查询）
+    cursor = await db.execute("PRAGMA table_info(agent_sessions)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "requirement_id" not in columns:
+        logger.info("Migrating agent_sessions: adding requirement_id column")
+        await db.execute("ALTER TABLE agent_sessions ADD COLUMN requirement_id INTEGER DEFAULT NULL")
+        await db.execute(
+            "UPDATE agent_sessions SET requirement_id = "
+            "CAST(json_extract(input_context, '$.requirement_id') AS INTEGER) "
+            "WHERE input_context != '' AND json_valid(input_context)"
+        )
+    await db.commit()
 
+
+# 首次建库 + 后续迁移，应用启动时调用一次
+# 阶段1: CREATE TABLE IF NOT EXISTS 建全部表
+# 阶段2: 修复 prefix 唯一索引
+# 阶段3: 跑增量迁移（_migrate_db）
 async def init_db():
+    # 确保数据库目录存在
     os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
         await db.executescript("""
+            -- ====== 核心看板（projects → versions → requirements） ======
+            -- projects: 顶层项目容器
+            -- versions: 项目下的版本/里程碑，FK → projects
+            -- requirements: 需求卡片，FK → versions（级联删除）
+
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -262,6 +292,11 @@ async def init_db():
                 FOREIGN KEY (version_id) REFERENCES versions(id) ON DELETE CASCADE
             );
 
+            -- ====== 需求附属（都 FK → requirements，级联删除） ======
+            -- attachments: 文件附件
+            -- comments: 评论/讨论
+            -- requirement_commits: git commit 关联
+
             CREATE TABLE IF NOT EXISTS attachments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 requirement_id INTEGER NOT NULL,
@@ -281,6 +316,9 @@ async def init_db():
                 created_at DATETIME DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
             );
+
+            -- ====== 项目附属（FK → projects） ======
+            -- project_architecture: 架构文档，每项目一条
 
             CREATE TABLE IF NOT EXISTS project_architecture (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,6 +342,11 @@ async def init_db():
                 FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE,
                 UNIQUE(requirement_id, commit_hash, repo_path)
             );
+
+            -- ====== AI Agent 系统（FK → projects） ======
+            -- agent_sessions: agent 运行记录（角色、状态、耗时）
+            -- scheduled_tasks: 定时任务队列（cron 调度）
+            -- agent_events: agent 异步事件（跨 agent 协作通信）
 
             -- KH-specific: Agent session tracking
             CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -349,6 +392,10 @@ async def init_db():
                 created_at DATETIME DEFAULT (datetime('now','localtime'))
             );
 
+            -- ====== 对话系统（FK → projects） ======
+            -- chat_messages: 对话历史（user/assistant/summary 三种角色）
+            -- chat_tasks: 后台 AI 任务（与 SSE 推送解耦）
+
             -- Indexes
             CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
             CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_prefix ON projects(prefix) WHERE prefix != '' AND archived=0;
@@ -390,7 +437,7 @@ async def init_db():
         """)
         await db.commit()
 
-    # Migration: Fix prefix unique index to exclude archived projects
+    # 修复 prefix 唯一索引：只对未归档项目做唯一约束（归档项目允许前缀重复）
     async with aiosqlite.connect(DB_PATH) as db_idx:
         await db_idx.executescript("""
             DROP INDEX IF EXISTS idx_projects_prefix;
@@ -398,6 +445,7 @@ async def init_db():
         """)
         await db_idx.commit()
 
+    # 迁移：给 requirements 加 type 列（research/dev），需重建表
     # Migration 2: Add 'type' column to requirements
     async with aiosqlite.connect(DB_PATH) as db2:
         await db2.execute("PRAGMA foreign_keys=ON")
@@ -439,20 +487,24 @@ async def init_db():
             """)
         await db2.commit()
 
+    # 最后统一跑 _migrate_db 里的所有增量迁移
     async with aiosqlite.connect(DB_PATH) as db2:
         await db2.execute("PRAGMA foreign_keys=ON")
         await _migrate_db(db2)
         await db2.commit()
 
 
+# 从项目名生成 2-3 字符前缀，用于需求编号（如 "Kanban Harness" → "KH"）
 def generate_prefix(name: str) -> str:
     parts = name.strip().split()
     if len(parts) >= 2:
-        return "".join(p[0] for p in parts[:3]).upper()
-    return name[:2].upper()
+        return "".join(p[0] for p in parts[:3]).upper()  # 多词取首字母，最多3个
+    return name[:2].upper()  # 单词取前两个字符
 
 
+# 生成下一个需求编号（如 KH-004），跨版本全局递增，同项目下编号连续不重复
 async def next_code(db: aiosqlite.Connection, version_id: int) -> str:
+    # 1. 通过 version_id 找到项目前缀
     row = await db.execute(
         "SELECT p.prefix, p.id FROM projects p "
         "JOIN versions v ON v.project_id=p.id WHERE v.id=?", (version_id,)
@@ -461,6 +513,7 @@ async def next_code(db: aiosqlite.Connection, version_id: int) -> str:
     if not proj:
         return ""
     prefix = proj[0]
+    # 2. 在该前缀下所有需求中找最大序号（SUBSTR 截取前缀后面的数字部分）
     cursor = await db.execute(
         "SELECT MAX(CAST(SUBSTR(r.code, LENGTH(p.prefix)+2) AS INTEGER)) "
         "FROM requirements r "
@@ -470,4 +523,4 @@ async def next_code(db: aiosqlite.Connection, version_id: int) -> str:
         (prefix,)
     )
     max_seq = (await cursor.fetchone())[0] or 0
-    return f"{prefix}-{max_seq + 1:03d}"
+    return f"{prefix}-{max_seq + 1:03d}"  # 3位补零，如 KH-001
