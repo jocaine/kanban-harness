@@ -25,7 +25,6 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 # === 工具链安装 (KH-077) — 不常变，放最前面利用缓存 ===
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq \
-    gcc g++ make cmake pkg-config \
     ripgrep fd-find tree procps less file \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
@@ -59,7 +58,6 @@ COPY skills/ /root/.hermes/skills/
 
 # === AI shell wrapper (KH-078) — 偶尔变 ===
 COPY scripts/ai-exec /usr/local/bin/ai-exec
-RUN chmod +x /usr/local/bin/ai-exec
 
 # === Toolchain map (KH-079) — 偶尔变 ===
 COPY config/toolchain_map.json /etc/kh/toolchain_map.json
@@ -74,7 +72,10 @@ RUN mkdir -p data
 
 EXPOSE 8765
 
+COPY entrypoint.sh /entrypoint.sh
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/projects')" || exit 1
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765", "--reload", "--no-access-log"]
