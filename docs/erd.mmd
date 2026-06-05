@@ -1,0 +1,142 @@
+%% KH (Kanban Harness) 数据库 ER 关联图
+%% 核心业务链路: projects → versions → requirements
+%% requirements 是业务最重的节点，挂了三张附属表
+
+erDiagram
+    %% ====== 链路 ======
+    projects ||--o{ versions : "project_id"
+    versions ||--o{ requirements : "version_id"
+
+    %% ====== 需求附属（级联删除） ======
+    requirements ||--o{ attachments : "requirement_id"
+    requirements ||--o{ comments : "requirement_id"
+    requirements ||--o{ requirement_commits : "requirement_id"
+
+    %% ====== 项目级附属 ======
+    projects ||--o{ project_architecture : "project_id"
+
+    %% ====== AI Agent 系统 ======
+    projects ||--o{ agent_sessions : "project_id"
+    projects ||--o{ scheduled_tasks : "project_id"
+
+    %% ====== 对话系统 ======
+    projects ||--o{ chat_messages : "project_id"
+    projects ||--o{ chat_tasks : "project_id"
+
+    %% [projects] 项目-顶层容器
+    projects {
+        INTEGER id PK "主键"
+        TEXT name "项目名称"
+        TEXT description "项目描述"
+        TEXT color "主题色如4f46e5"
+        TEXT prefix "编号前缀如KH"
+        TEXT product_memory "产品记忆markdown"
+        TEXT git_repo_path "本地仓库路径"
+        TEXT git_remote_url "远程仓库地址"
+        INTEGER archived "0活跃1归档"
+    }
+
+    %% [versions] 版本里程碑-FK到projects
+    versions {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目"
+        TEXT name "版本名如v1.0"
+        TEXT status "planning/active/testing/released"
+        TEXT git_tag "关联git标签"
+        INTEGER position "排序位置"
+    }
+
+    %% [requirements] 需求卡片-看板核心-FK到versions
+    requirements {
+        INTEGER id PK "主键"
+        INTEGER version_id "所属版本"
+        TEXT title "需求标题"
+        TEXT description "需求描述markdown"
+        TEXT priority "P0/P1/P2/P3"
+        TEXT type "research调研/dev开发"
+        TEXT status "organizing/research/dev/testing/done/blocked"
+        TEXT assignee "负责人"
+        TEXT code "唯一编号如KH-001"
+        INTEGER agent_timeout "agent超时秒数"
+        TEXT ceo_decision "CEO决策结果"
+        DATETIME progressed_at "最后推进时间"
+    }
+
+    %% [attachments] 文件附件-FK到requirements
+    attachments {
+        INTEGER id PK "主键"
+        INTEGER requirement_id "所属需求"
+        TEXT filename "显示文件名"
+        TEXT filepath "服务器存储路径"
+    }
+
+    %% [comments] 评论-多角色讨论-FK到requirements
+    comments {
+        INTEGER id PK "主键"
+        INTEGER requirement_id "所属需求"
+        TEXT author "评论者"
+        TEXT content "评论正文markdown"
+        TEXT detail "展开详情"
+    }
+
+    %% [requirement_commits] 需求Commit关联-FK到requirements
+    requirement_commits {
+        INTEGER id PK "主键"
+        INTEGER requirement_id "所属需求"
+        TEXT commit_hash "完整或短hash"
+        TEXT message "commit消息"
+    }
+
+    %% [project_architecture] 架构文档-每项目一条-FK到projects
+    project_architecture {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目UNIQUE"
+        TEXT content "架构文档markdown"
+    }
+
+    %% [agent_sessions] Agent运行记录-四种角色-FK到projects
+    agent_sessions {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目"
+        TEXT agent_role "industry/pm/coach_dev/coach_review"
+        TEXT status "idle/running/completed/failed/blocked"
+        INTEGER input_tokens "输入token消耗"
+        INTEGER output_tokens "输出token消耗"
+        INTEGER requirement_id "关联需求可选"
+    }
+
+    %% [scheduled_tasks] 定时任务-cron调度-FK到projects
+    scheduled_tasks {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目"
+        TEXT task_type "任务类型标识"
+        TEXT cron_expr "cron表达式"
+        INTEGER enabled "0禁用1启用"
+    }
+
+    %% [agent_events] Agent事件队列-跨agent协作-FK到projects
+    agent_events {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目"
+        TEXT event_type "事件类型标识"
+        INTEGER requirement_id "关联需求可选"
+        INTEGER processed "0待处理1已处理"
+    }
+
+    %% [chat_messages] 对话历史-FK到projects
+    chat_messages {
+        INTEGER id PK "主键"
+        INTEGER project_id "所属项目"
+        TEXT role "user/assistant/summary"
+        TEXT content "消息正文"
+        TEXT agent_role "由哪个agent产生可选"
+    }
+
+    %% [chat_tasks] 后台AI任务-与SSE解耦-FK到projects
+    chat_tasks {
+        TEXT id PK "UUID主键"
+        INTEGER project_id "所属项目"
+        TEXT status "running/completed/failed/cancelled"
+        TEXT user_message "用户输入的原始消息"
+        TEXT response_text "AI回复完整文本"
+    }
