@@ -1,0 +1,5725 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "a246851fb142fdadcea4f487bd16f209a086cd90",
+  "generatedAt": "2026-06-05T07:00:46.289Z",
+  "files": {
+    ".dockerignore": {
+      "filePath": ".dockerignore",
+      "contentHash": "5c733a17f40de9be5d2e2797c6524079ed30582198f461bf058d8e81ee517fc5",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 21,
+      "hasStructuralAnalysis": false
+    },
+    ".env.example": {
+      "filePath": ".env.example",
+      "contentHash": "7e616198144cc3909fa03fa13e2a12db0f5cddac1007bea723904a0502d5c4b2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 37,
+      "hasStructuralAnalysis": true
+    },
+    ".gitignore": {
+      "filePath": ".gitignore",
+      "contentHash": "483b1f32fba058c8895732300d5bd9f9a7cfb1b39033a513c1ab95fe6dfa7ae2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 9,
+      "hasStructuralAnalysis": false
+    },
+    "Dockerfile": {
+      "filePath": "Dockerfile",
+      "contentHash": "08e99201477ef89459fcdfb961ecdb3236bca9b07c4f295e2ae78c363bae5364",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 82,
+      "hasStructuralAnalysis": true
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "0c8d36893b4485d8faddd8c4e334da6a6a711c65c3033e5c7ebfdc3efbbea78e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 100,
+      "hasStructuralAnalysis": true
+    },
+    "agents/__init__.py": {
+      "filePath": "agents/__init__.py",
+      "contentHash": "1adf1c75273c02b05c0e9e10a892dfa96da952af8f495dda55b84fe80d0c6190",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "agents.coach_dev",
+          "specifiers": [
+            "CoachDev"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "AgentRegistry",
+            "registry"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 5,
+      "hasStructuralAnalysis": true
+    },
+    "agents/coach_dev.py": {
+      "filePath": "agents/coach_dev.py",
+      "contentHash": "a6c41a71c9648c727f1c9d895030c31568ac63412aebffcc03a8bca7b2d40ba3",
+      "functions": [
+        {
+          "name": "_estimate_tokens",
+          "params": [
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "classes": [
+        {
+          "name": "CoachDev",
+          "methods": [
+            "__init__",
+            "_worktree_dir",
+            "execute",
+            "_build_prompt",
+            "_build_scaffold_prompt",
+            "_setup_worktree",
+            "_cleanup_worktree",
+            "_run_git",
+            "_run_claude",
+            "_record_usage",
+            "_check_commits",
+            "_get_latest_commit",
+            "_get_commit_message",
+            "_get_current_branch",
+            "_is_scaffold_mode",
+            "_get_architecture"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 325
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "shutil",
+          "specifiers": [
+            "shutil"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime"
+          ]
+        },
+        {
+          "source": "core.workspace",
+          "specifiers": [
+            "WORKSPACE_BASE",
+            "validate_path_within_workspace"
+          ]
+        }
+      ],
+      "exports": [
+        "_estimate_tokens",
+        "CoachDev"
+      ],
+      "totalLines": 348,
+      "hasStructuralAnalysis": true
+    },
+    "agents/comment_agent.py": {
+      "filePath": "agents/comment_agent.py",
+      "contentHash": "79c79c02fa32a528ec795ac63da538edb2b69dc09e59fda20801b7f417a6c14b",
+      "functions": [
+        {
+          "name": "_estimate_tokens",
+          "params": [
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "CommentAgent",
+          "methods": [
+            "__init__",
+            "execute",
+            "_split_detail",
+            "_find_detail_boundary",
+            "_build_prompt",
+            "_load_skill",
+            "_build_suffix",
+            "_get_project_context",
+            "_call_model",
+            "_call_hermes",
+            "_call_claude_cli"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 512
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry",
+            "AgentRole"
+          ]
+        },
+        {
+          "source": "agents.mcp_config",
+          "specifiers": [
+            "ensure_agent_mcp_config"
+          ]
+        }
+      ],
+      "exports": [
+        "_estimate_tokens",
+        "CommentAgent"
+      ],
+      "totalLines": 534,
+      "hasStructuralAnalysis": true
+    },
+    "agents/event_types.py": {
+      "filePath": "agents/event_types.py",
+      "contentHash": "28846c774b3b71e35182a477cbeb8a9b7ff13420feef93e21192161410cd7dee",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 6,
+      "hasStructuralAnalysis": true
+    },
+    "agents/mcp_config.py": {
+      "filePath": "agents/mcp_config.py",
+      "contentHash": "1d4684d6e5cab3db17437976205d6ae3c7cf2064b0eb93bed0e0062cb86e74a7",
+      "functions": [
+        {
+          "name": "ensure_agent_mcp_config",
+          "params": [
+            "role",
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 42
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        }
+      ],
+      "exports": [
+        "ensure_agent_mcp_config"
+      ],
+      "totalLines": 61,
+      "hasStructuralAnalysis": true
+    },
+    "agents/registry.py": {
+      "filePath": "agents/registry.py",
+      "contentHash": "a79389614fecaf453e116c3acdbf8bb3c17bc6c99277af96769b7cd8966e0ed4",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ModelConfig",
+          "methods": [],
+          "properties": [
+            "provider",
+            "name",
+            "base_url",
+            "timeout",
+            "toolsets",
+            "skills"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "Permissions",
+          "methods": [],
+          "properties": [
+            "can_read",
+            "can_write",
+            "can_move",
+            "can_create"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "TriggerRule",
+          "methods": [],
+          "properties": [
+            "event",
+            "condition"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "AgentRole",
+          "methods": [],
+          "properties": [
+            "role",
+            "display_name",
+            "description",
+            "icon",
+            "color",
+            "model",
+            "system_prompt",
+            "allowed_tools",
+            "permissions",
+            "triggers"
+          ],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "AgentRegistry",
+          "methods": [
+            "__init__",
+            "_load_all",
+            "_load_role",
+            "get",
+            "all_roles",
+            "check_permission",
+            "get_permissions",
+            "check_move",
+            "roles_for_trigger",
+            "_evaluate_condition"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 85
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "yaml",
+          "specifiers": [
+            "yaml"
+          ]
+        }
+      ],
+      "exports": [
+        "ModelConfig",
+        "Permissions",
+        "TriggerRule",
+        "AgentRole",
+        "AgentRegistry"
+      ],
+      "totalLines": 140,
+      "hasStructuralAnalysis": true
+    },
+    "agents/roles/coach_dev.yaml": {
+      "filePath": "agents/roles/coach_dev.yaml",
+      "contentHash": "06255ff48db2e23993377009450d7c56e6e75be170295fd064f84f2a2aceeb74",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 75,
+      "hasStructuralAnalysis": true
+    },
+    "agents/roles/coach_review.yaml": {
+      "filePath": "agents/roles/coach_review.yaml",
+      "contentHash": "1efc5dbccb15d97002a444a36c52762c322661a855fa1f6ed7dcf1a681b5e08a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 84,
+      "hasStructuralAnalysis": true
+    },
+    "agents/roles/industry.yaml": {
+      "filePath": "agents/roles/industry.yaml",
+      "contentHash": "9d571912b46ba5a7e675c89972bf0b0fcafcb5cd0cb5dae5454e6bdcedbc519d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 119,
+      "hasStructuralAnalysis": true
+    },
+    "agents/roles/pm.yaml": {
+      "filePath": "agents/roles/pm.yaml",
+      "contentHash": "def8bf533cbd5099c995e8ba3380900288988793223b2e906701ebc94b1f7ebe",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 128,
+      "hasStructuralAnalysis": true
+    },
+    "build-and-push.sh": {
+      "filePath": "build-and-push.sh",
+      "contentHash": "086649006ed6a862b823ba2a32ba54ff37748c4576829ca79ed0d6d4db74ddee",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 103,
+      "hasStructuralAnalysis": true
+    },
+    "config/toolchain_map.json": {
+      "filePath": "config/toolchain_map.json",
+      "contentHash": "f9341040e299c5ba7f4a45c8529be3a38f10b9d8322b53b5e24c7310fc0e7a89",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 57,
+      "hasStructuralAnalysis": true
+    },
+    "config/workflow.yaml": {
+      "filePath": "config/workflow.yaml",
+      "contentHash": "de94f36ceec06ffeeef67b17f3b3b84ad27283c25027afcefa3745da20027a80",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "core/__init__.py": {
+      "filePath": "core/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "core/chat_task_manager.py": {
+      "filePath": "core/chat_task_manager.py",
+      "contentHash": "ffdb2327ace50dd7e043a6af6ccb0ae211838580c87426e44c40507a68e2b53f",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ChatTaskManager",
+          "methods": [
+            "create_task",
+            "run_task",
+            "get_task",
+            "get_active_task",
+            "get_completed_response",
+            "recover_orphans",
+            "cleanup_expired"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 134
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "uuid"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "AsyncGenerator"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "core.task_buffer",
+          "specifiers": [
+            "task_buffers"
+          ]
+        }
+      ],
+      "exports": [
+        "ChatTaskManager"
+      ],
+      "totalLines": 155,
+      "hasStructuralAnalysis": true
+    },
+    "core/database.py": {
+      "filePath": "core/database.py",
+      "contentHash": "c414ff412828b269bbd33d419f9e7c220a2da0b7e9a313128da0cf49a3bb1086",
+      "functions": [
+        {
+          "name": "get_db",
+          "params": [],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_migrate_db",
+          "params": [
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 195
+        },
+        {
+          "name": "init_db",
+          "params": [],
+          "exported": true,
+          "lineCount": 263
+        },
+        {
+          "name": "generate_prefix",
+          "params": [
+            "name"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "next_code",
+          "params": [
+            "db",
+            "version_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 21
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "dotenv",
+          "specifiers": [
+            "load_dotenv"
+          ]
+        }
+      ],
+      "exports": [
+        "get_db",
+        "_migrate_db",
+        "init_db",
+        "generate_prefix",
+        "next_code"
+      ],
+      "totalLines": 527,
+      "hasStructuralAnalysis": true
+    },
+    "core/session_manager.py": {
+      "filePath": "core/session_manager.py",
+      "contentHash": "5c1912faf0ab666f0f8c3231c0de8766ff1a35c6ca5960f1f06eb796e70720ec",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SessionManager",
+          "methods": [
+            "__init__",
+            "start_timeout_checker",
+            "stop",
+            "heartbeat",
+            "register_process",
+            "unregister_process",
+            "create_session",
+            "complete_session",
+            "fail_session",
+            "continuation_retry",
+            "_schedule_retry",
+            "get_session",
+            "get_running_sessions",
+            "recover_stale_sessions",
+            "reconcile_sessions",
+            "cancel_session",
+            "_kill_and_fail",
+            "_reconcile_loop"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 306
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime",
+            "timedelta"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "get_db",
+            "DB_PATH"
+          ]
+        }
+      ],
+      "exports": [
+        "SessionManager"
+      ],
+      "totalLines": 327,
+      "hasStructuralAnalysis": true
+    },
+    "core/task_buffer.py": {
+      "filePath": "core/task_buffer.py",
+      "contentHash": "27d97ab8d0c87129466694df99e506c644bc35a6a358d9e259831a2831da3f76",
+      "functions": [],
+      "classes": [
+        {
+          "name": "TaskChunk",
+          "methods": [],
+          "properties": [
+            "index",
+            "data",
+            "timestamp"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "TaskState",
+          "methods": [],
+          "properties": [
+            "task_id",
+            "chunks",
+            "done",
+            "subscribers",
+            "created_at"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "TaskBufferManager",
+          "methods": [
+            "__init__",
+            "create",
+            "get",
+            "append_chunk",
+            "mark_done",
+            "subscribe",
+            "unsubscribe",
+            "_evict_expired"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 59
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "collections",
+          "specifiers": [
+            "OrderedDict"
+          ]
+        }
+      ],
+      "exports": [
+        "TaskChunk",
+        "TaskState",
+        "TaskBufferManager"
+      ],
+      "totalLines": 87,
+      "hasStructuralAnalysis": true
+    },
+    "core/telemetry.py": {
+      "filePath": "core/telemetry.py",
+      "contentHash": "302e98a2ef8b79ffba12ec0fde018593fc24407a0c6c1b9e8d806d8309688685",
+      "functions": [
+        {
+          "name": "get_stats",
+          "params": [],
+          "returnType": "TelemetryStats | None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "init_telemetry",
+          "params": [],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_try_init_otel",
+          "params": [
+            "endpoint"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "_try_instrument_anthropic",
+          "params": [],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "set_heartbeat_callback",
+          "params": [
+            "callback"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "trace_llm_call",
+          "params": [
+            "model",
+            "role",
+            "requirement_id"
+          ],
+          "exported": true,
+          "lineCount": 34
+        }
+      ],
+      "classes": [
+        {
+          "name": "TelemetryStats",
+          "methods": [
+            "record_call",
+            "snapshot"
+          ],
+          "properties": [
+            "total_calls",
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_latency_ms",
+            "calls_by_model",
+            "errors",
+            "_lock"
+          ],
+          "exported": true,
+          "lineCount": 44
+        },
+        {
+          "name": "_HeartbeatSpanProcessor",
+          "methods": [
+            "__init__",
+            "on_start",
+            "on_end",
+            "shutdown",
+            "force_flush",
+            "_record_from_span"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 50
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "contextlib",
+          "specifiers": [
+            "contextmanager"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "threading",
+          "specifiers": [
+            "Lock"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Callable"
+          ]
+        }
+      ],
+      "exports": [
+        "TelemetryStats",
+        "get_stats",
+        "init_telemetry",
+        "_try_init_otel",
+        "_try_instrument_anthropic",
+        "_HeartbeatSpanProcessor",
+        "set_heartbeat_callback",
+        "trace_llm_call"
+      ],
+      "totalLines": 257,
+      "hasStructuralAnalysis": true
+    },
+    "core/workflow_config.py": {
+      "filePath": "core/workflow_config.py",
+      "contentHash": "e54994dd20362e30a63472d3562ec5740b0e0721953d9bf08cb64b8587a958ec",
+      "functions": [],
+      "classes": [
+        {
+          "name": "WorkflowConfig",
+          "methods": [
+            "reload_if_changed",
+            "_load"
+          ],
+          "properties": [
+            "poll_interval",
+            "stuck_cooldown",
+            "max_concurrent_sessions",
+            "default_timeout",
+            "max_research_rounds",
+            "stall_timeout",
+            "escalation_threshold",
+            "_last_mtime",
+            "_last_check"
+          ],
+          "exported": true,
+          "lineCount": 56
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass",
+            "field"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "yaml",
+          "specifiers": [
+            "yaml"
+          ]
+        }
+      ],
+      "exports": [
+        "WorkflowConfig"
+      ],
+      "totalLines": 94,
+      "hasStructuralAnalysis": true
+    },
+    "docker-compose.yml": {
+      "filePath": "docker-compose.yml",
+      "contentHash": "99c11fed2b1950adfda9d4d4b7f83c5982e1c8250c9456b3f9c7ba2e7927eebf",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 65,
+      "hasStructuralAnalysis": true
+    },
+    "docker/.gitkeep": {
+      "filePath": "docker/.gitkeep",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": false
+    },
+    "docker/firecrawl-lite/Dockerfile": {
+      "filePath": "docker/firecrawl-lite/Dockerfile",
+      "contentHash": "c63a08d064f88c25eee0e77cb2cd9381e113111d3d2367295011c23b51df1173",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 14,
+      "hasStructuralAnalysis": true
+    },
+    "docker/firecrawl-lite/requirements.txt": {
+      "filePath": "docker/firecrawl-lite/requirements.txt",
+      "contentHash": "3370fb8ced0fb887223c91405e1f4d1f01b750c7887955396ce3cf3bc54f987f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 5,
+      "hasStructuralAnalysis": false
+    },
+    "docker/firecrawl-lite/server.py": {
+      "filePath": "docker/firecrawl-lite/server.py",
+      "contentHash": "661b8b6b5a49849f05166f9d2d8a56000275300f8d46171fdd9001abc64339b3",
+      "functions": [
+        {
+          "name": "fetch_and_extract",
+          "params": [
+            "url"
+          ],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "scrape",
+          "params": [
+            "request"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "health",
+          "params": [],
+          "exported": true,
+          "lineCount": 2
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "urllib.parse",
+          "specifiers": [
+            "urlparse"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "trafilatura",
+          "specifiers": [
+            "trafilatura"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "FastAPI",
+            "Request"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "JSONResponse"
+          ]
+        }
+      ],
+      "exports": [
+        "fetch_and_extract",
+        "scrape",
+        "health"
+      ],
+      "totalLines": 100,
+      "hasStructuralAnalysis": true
+    },
+    "docker/hermes/config.yaml": {
+      "filePath": "docker/hermes/config.yaml",
+      "contentHash": "f76995894f38fcc171b89d5ad73d775bff485014bd26402523c6c71eece621ed",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 46,
+      "hasStructuralAnalysis": true
+    },
+    "docker/searxng/limiter.toml": {
+      "filePath": "docker/searxng/limiter.toml",
+      "contentHash": "474286446d7fa7f71a94ccabcd6ce5c0bc19e85e0596fcb9daf2b3c654cb8ae3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "docker/searxng/settings.yml": {
+      "filePath": "docker/searxng/settings.yml",
+      "contentHash": "45476685fcca05418d3fa63017faed68775b46e3977f6bd5fd710b0d4bfbf01c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 72,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/SCHEMA.md": {
+      "filePath": "docs/wiki/SCHEMA.md",
+      "contentHash": "91c0e44a0cf33039c7314c4143be885ea9c59c7b413f9b1891ab8d2c206681c0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 48,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/layer1-runtime.md": {
+      "filePath": "docs/wiki/arch/layer1-runtime.md",
+      "contentHash": "a22feab557b0447a4486ee66f0fe9095a719fc20db7e703c990bc186083c590b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 50,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/layer2-infra.md": {
+      "filePath": "docs/wiki/arch/layer2-infra.md",
+      "contentHash": "7e12eb7827800b7f0f183fae17100db357076836a592e3da40c3568e23319da2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 89,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/layer3-orchestration.md": {
+      "filePath": "docs/wiki/arch/layer3-orchestration.md",
+      "contentHash": "c675bc8a45b5157f893021ec652b46635e47b756f9a6b17be0425a09c58d6862",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 68,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/layer4-roles.md": {
+      "filePath": "docs/wiki/arch/layer4-roles.md",
+      "contentHash": "9aae5b22865e02059dbd3ab1a75d9808210c5c677a6084fc9fbe0413d0d3b617",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/layer5-frontend.md": {
+      "filePath": "docs/wiki/arch/layer5-frontend.md",
+      "contentHash": "05cf51533c9fe2ad3b34e825c4927397192c332d1eeb08deb5f1517067771b23",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 70,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/arch/workflows.md": {
+      "filePath": "docs/wiki/arch/workflows.md",
+      "contentHash": "1681e28fd9463fcc7ad489afb04ef392b7fdfb0377a1ad9e4a1f14f8917038c4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 46,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/index.md": {
+      "filePath": "docs/wiki/index.md",
+      "contentHash": "4c1c5032af2225014a2aa34ec9ee4767ce7f1c4de2df10ec48fa8a75e3717c7c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 24,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/log.md": {
+      "filePath": "docs/wiki/log.md",
+      "contentHash": "49d66cb1323a429ea9f7e23adfb43bff826e74caae20718cb9ef5bd0eb5c7502",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/product/decisions.md": {
+      "filePath": "docs/wiki/product/decisions.md",
+      "contentHash": "c491989cc96c3f80c61096335bdf6f7bfbd80a1b2536b9824cc09aedd46ada6a",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 56,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/product/market.md": {
+      "filePath": "docs/wiki/product/market.md",
+      "contentHash": "dcc6c469c5efb7569c7b59c4ecfc4ff0c08da89904602db2aa34b880e40e28cd",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 36,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/product/positioning.md": {
+      "filePath": "docs/wiki/product/positioning.md",
+      "contentHash": "24a28f59ef8dc569c41bc1fc1a2104237e98d21419560ce705c163e12886a369",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 57,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/product/rejected.md": {
+      "filePath": "docs/wiki/product/rejected.md",
+      "contentHash": "ee5651674a0823c99ab830ade0bd7a1d4e2281c768df796529155c2a8191d9f4",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 29,
+      "hasStructuralAnalysis": true
+    },
+    "docs/wiki/product/workflows-product.md": {
+      "filePath": "docs/wiki/product/workflows-product.md",
+      "contentHash": "aa05ae63adb0bcc18dac3b8715dbefd83b0204be958e0e9eb69dfe0796f38bf0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": true
+    },
+    "main.py": {
+      "filePath": "main.py",
+      "contentHash": "35346e4a7e94e8f6ac66a215181b12b57026089aa9c51a818ac20dc903e7201a",
+      "functions": [
+        {
+          "name": "_recover_orphan_sessions",
+          "params": [],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "_recover_orphan_tasks",
+          "params": [],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "lifespan",
+          "params": [
+            "app"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "index",
+          "params": [],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "RingBufferHandler",
+          "methods": [
+            "__init__",
+            "emit",
+            "get_all"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 17
+        }
+      ],
+      "imports": [
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "FastAPI",
+            "Depends",
+            "HTTPException"
+          ]
+        },
+        {
+          "source": "fastapi.staticfiles",
+          "specifiers": [
+            "StaticFiles"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "FileResponse"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "contextlib",
+          "specifiers": [
+            "asynccontextmanager"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "uvicorn",
+          "specifiers": [
+            "uvicorn"
+          ]
+        },
+        {
+          "source": "dotenv",
+          "specifiers": [
+            "load_dotenv"
+          ]
+        },
+        {
+          "source": "collections",
+          "specifiers": [
+            "deque"
+          ]
+        },
+        {
+          "source": "threading",
+          "specifiers": [
+            "threading"
+          ]
+        },
+        {
+          "source": "core.secret_filter",
+          "specifiers": [
+            "install_secret_filter"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "init_db"
+          ]
+        },
+        {
+          "source": "core.telemetry",
+          "specifiers": [
+            "init_telemetry"
+          ]
+        },
+        {
+          "source": "scheduler",
+          "specifiers": [
+            "SchedulerEngine"
+          ]
+        },
+        {
+          "source": "web.hermes_chat",
+          "specifiers": [
+            "ensure_hermes_config",
+            "sync_claude_settings"
+          ]
+        },
+        {
+          "source": "web.middleware",
+          "specifiers": [
+            "PermissionGateway",
+            "RequestLogger"
+          ]
+        },
+        {
+          "source": "web.api",
+          "specifiers": [
+            "api_router"
+          ]
+        },
+        {
+          "source": "web.board_events",
+          "specifiers": [
+            "board_events_router"
+          ]
+        }
+      ],
+      "exports": [
+        "RingBufferHandler",
+        "_recover_orphan_sessions",
+        "_recover_orphan_tasks",
+        "lifespan",
+        "index"
+      ],
+      "totalLines": 130,
+      "hasStructuralAnalysis": true
+    },
+    "mcp_server/__init__.py": {
+      "filePath": "mcp_server/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "mcp_server/agent_server.py": {
+      "filePath": "mcp_server/agent_server.py",
+      "contentHash": "74ad80ec503e0067c57d630c96c697199639d44d8f5f9d66525cebaca867aa16",
+      "functions": [
+        {
+          "name": "_get_db",
+          "params": [],
+          "returnType": "aiosqlite.Connection",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_check_move_permission",
+          "params": [
+            "from_status",
+            "to_status"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "get_requirement",
+          "params": [
+            "requirement_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "list_requirements",
+          "params": [
+            "version_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "create_requirements",
+          "params": [
+            "version_id",
+            "requirements"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 46
+        },
+        {
+          "name": "update_requirement",
+          "params": [
+            "requirement_id",
+            "title",
+            "description",
+            "priority",
+            "assignee",
+            "deadline",
+            "notes"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 49
+        },
+        {
+          "name": "move_requirement",
+          "params": [
+            "requirement_id",
+            "status"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 56
+        },
+        {
+          "name": "add_comment",
+          "params": [
+            "requirement_id",
+            "content"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 38
+        },
+        {
+          "name": "list_comments",
+          "params": [
+            "requirement_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "attach_detail",
+          "params": [
+            "requirement_id",
+            "content"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "read_comment_detail",
+          "params": [
+            "comment_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 57
+        },
+        {
+          "name": "_get_allowed_moves",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "load_guideline",
+          "params": [
+            "name"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "_validate_comment_split",
+          "params": [
+            "comment",
+            "detail"
+          ],
+          "returnType": "str | None",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_atomic_decision",
+          "params": [
+            "requirement_id",
+            "comment",
+            "detail",
+            "new_status",
+            "ceo_question",
+            "expected_current_status",
+            "role"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 113
+        },
+        {
+          "name": "pm_approve",
+          "params": [
+            "requirement_id",
+            "comment",
+            "target",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "pm_send_to_research",
+          "params": [
+            "requirement_id",
+            "comment",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "pm_ask_ceo",
+          "params": [
+            "requirement_id",
+            "comment",
+            "question"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "industry_complete",
+          "params": [
+            "requirement_id",
+            "comment",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "industry_ask_ceo",
+          "params": [
+            "requirement_id",
+            "comment",
+            "question"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "review_pass",
+          "params": [
+            "requirement_id",
+            "comment",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "review_reject",
+          "params": [
+            "requirement_id",
+            "comment",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "review_ask_ceo",
+          "params": [
+            "requirement_id",
+            "comment",
+            "question"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "dev_ask_ceo",
+          "params": [
+            "requirement_id",
+            "comment",
+            "question"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "wiki_write_page",
+          "params": [
+            "project_id",
+            "page_path",
+            "content",
+            "log_message"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "wiki_read_page",
+          "params": [
+            "project_id",
+            "page_path"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "wiki_list_pages",
+          "params": [
+            "project_id",
+            "subdir"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "wiki_write_raw",
+          "params": [
+            "project_id",
+            "topic",
+            "slug",
+            "content",
+            "source_url",
+            "published"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "wiki_read_raw",
+          "params": [
+            "project_id",
+            "raw_path"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "wiki_list_raw",
+          "params": [
+            "project_id",
+            "topic"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "wiki_ingest",
+          "params": [
+            "project_id",
+            "raw_path"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "wiki_update_index",
+          "params": [
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "wiki_lint",
+          "params": [
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 11
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "mcp.server.fastmcp",
+          "specifiers": [
+            "FastMCP"
+          ]
+        }
+      ],
+      "exports": [
+        "_get_db",
+        "_check_move_permission",
+        "get_requirement",
+        "list_requirements",
+        "create_requirements",
+        "update_requirement",
+        "move_requirement",
+        "add_comment",
+        "list_comments",
+        "attach_detail",
+        "read_comment_detail",
+        "_get_allowed_moves",
+        "load_guideline",
+        "_validate_comment_split",
+        "_atomic_decision",
+        "pm_approve",
+        "pm_send_to_research",
+        "pm_ask_ceo",
+        "industry_complete",
+        "industry_ask_ceo",
+        "review_pass",
+        "review_reject",
+        "review_ask_ceo",
+        "dev_ask_ceo",
+        "wiki_write_page",
+        "wiki_read_page",
+        "wiki_list_pages",
+        "wiki_write_raw",
+        "wiki_read_raw",
+        "wiki_list_raw",
+        "wiki_ingest",
+        "wiki_update_index",
+        "wiki_lint"
+      ],
+      "totalLines": 986,
+      "hasStructuralAnalysis": true
+    },
+    "mcp_server/kh_client.py": {
+      "filePath": "mcp_server/kh_client.py",
+      "contentHash": "914f88766b4883e7d53a42da651b9a24c7e25e0e47604226a75fa275b5ef4ed7",
+      "functions": [],
+      "classes": [
+        {
+          "name": "KHClient",
+          "methods": [
+            "__init__",
+            "_headers",
+            "_get",
+            "_post",
+            "_put",
+            "list_projects",
+            "list_versions",
+            "list_requirements",
+            "create_requirement",
+            "update_requirement",
+            "move_requirement",
+            "add_comment",
+            "get_scheduler_status",
+            "get_agents_status",
+            "list_agent_sessions"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 79
+        }
+      ],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "httpx"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        }
+      ],
+      "exports": [
+        "KHClient"
+      ],
+      "totalLines": 93,
+      "hasStructuralAnalysis": true
+    },
+    "mcp_server/server.py": {
+      "filePath": "mcp_server/server.py",
+      "contentHash": "2d1dd2a6f65c18711cc645e53f70a64aabc0a2d471ce0fa6045a1c02f0885c98",
+      "functions": [
+        {
+          "name": "kh_brief",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 44
+        },
+        {
+          "name": "kh_submit_idea",
+          "params": [
+            "idea",
+            "project_id",
+            "priority"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "kh_notify_event",
+          "params": [
+            "event_type",
+            "detail"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "kh_ask_pm",
+          "params": [
+            "question"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 39
+        },
+        {
+          "name": "kh_approve",
+          "params": [
+            "item_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "kh_reject",
+          "params": [
+            "item_id",
+            "reason"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "kh_web_search",
+          "params": [
+            "query",
+            "limit"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 41
+        },
+        {
+          "name": "kh_web_extract",
+          "params": [
+            "url"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "kh_load_guideline",
+          "params": [
+            "name"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 41
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "sys",
+          "specifiers": [
+            "sys"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "dotenv",
+          "specifiers": [
+            "load_dotenv"
+          ]
+        },
+        {
+          "source": "mcp.server.fastmcp",
+          "specifiers": [
+            "FastMCP"
+          ]
+        },
+        {
+          "source": "mcp_server.kh_client",
+          "specifiers": [
+            "KHClient"
+          ]
+        }
+      ],
+      "exports": [
+        "kh_brief",
+        "kh_submit_idea",
+        "kh_notify_event",
+        "kh_ask_pm",
+        "kh_approve",
+        "kh_reject",
+        "kh_web_search",
+        "kh_web_extract",
+        "kh_load_guideline"
+      ],
+      "totalLines": 359,
+      "hasStructuralAnalysis": true
+    },
+    "pytest.ini": {
+      "filePath": "pytest.ini",
+      "contentHash": "e28a989e765f6f1fc37e02fb00a351f56391f749cafcd3f93057abbfb17ba26b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3,
+      "hasStructuralAnalysis": false
+    },
+    "requirements.txt": {
+      "filePath": "requirements.txt",
+      "contentHash": "60850fff0f2e2fa46deff1c385336fc0f6ccf89f04037e4c776c1ea3d162bfc3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 15,
+      "hasStructuralAnalysis": false
+    },
+    "scheduler/__init__.py": {
+      "filePath": "scheduler/__init__.py",
+      "contentHash": "799b11877592547274a2bd841f6acb0dc64ba326032e5ac8efbb80f4503a58db",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "scheduler.engine",
+          "specifiers": [
+            "SchedulerEngine"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": true
+    },
+    "scheduler/engine.py": {
+      "filePath": "scheduler/engine.py",
+      "contentHash": "cf874b7a8c0b3eff572a2eff3aceef0023d96531412d71779a76e8c441cda4d1",
+      "functions": [],
+      "classes": [
+        {
+          "name": "SchedulerEngine",
+          "methods": [
+            "__init__",
+            "status",
+            "start",
+            "stop",
+            "pause",
+            "resume",
+            "_poll_loop",
+            "_tick",
+            "_reconcile_running_sessions",
+            "_extract_requirement_id",
+            "_get_card_status",
+            "_reconcile_ceo_decisions",
+            "_has_running_session_for_role",
+            "_set_ceo_decision",
+            "_clear_ceo_decision",
+            "_find_actionable_cards",
+            "_has_running_session",
+            "_repo_is_ready",
+            "_trigger_coach_dev",
+            "_peek_pending_events",
+            "_process_events",
+            "_trigger_comment_agent",
+            "_find_stuck_cards",
+            "_recover_stuck_cards"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 479
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "datetime"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "core.workspace",
+          "specifiers": [
+            "get_project_repo_path"
+          ]
+        },
+        {
+          "source": "core.session_manager",
+          "specifiers": [
+            "SessionManager",
+            "DEFAULT_TIMEOUT"
+          ]
+        },
+        {
+          "source": "core.workflow_config",
+          "specifiers": [
+            "workflow_config"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry"
+          ]
+        },
+        {
+          "source": "scheduler",
+          "specifiers": [
+            "handlers"
+          ]
+        },
+        {
+          "source": "web.board_events",
+          "specifiers": [
+            "broadcast"
+          ]
+        }
+      ],
+      "exports": [
+        "SchedulerEngine"
+      ],
+      "totalLines": 501,
+      "hasStructuralAnalysis": true
+    },
+    "scheduler/handlers.py": {
+      "filePath": "scheduler/handlers.py",
+      "contentHash": "7d1de6831a87b577aec45cd859aa5a3ffd8fefce8ee117434d95049d7ab8a040",
+      "functions": [
+        {
+          "name": "handle_coach_dev_result",
+          "params": [
+            "session_manager",
+            "session_id",
+            "card",
+            "repo_path"
+          ],
+          "exported": true,
+          "lineCount": 62
+        },
+        {
+          "name": "handle_comment_agent_result",
+          "params": [
+            "session_manager",
+            "session_id",
+            "role_name",
+            "card",
+            "project_id"
+          ],
+          "exported": true,
+          "lineCount": 61
+        },
+        {
+          "name": "_validate_agent_decision",
+          "params": [
+            "session_manager",
+            "session_id",
+            "card",
+            "role_name",
+            "project_id",
+            "tokens"
+          ],
+          "exported": true,
+          "lineCount": 72
+        },
+        {
+          "name": "parse_pm_research_conclusion",
+          "params": [
+            "comment"
+          ],
+          "returnType": "dict | None",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "append_research_to_memory",
+          "params": [
+            "project_id",
+            "card_code",
+            "parsed"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "_trigger_wiki_archive",
+          "params": [
+            "project_id",
+            "card",
+            "req_id"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 23
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "date",
+            "datetime"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "core.workflow_config",
+          "specifiers": [
+            "workflow_config"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry"
+          ]
+        },
+        {
+          "source": "web.board_events",
+          "specifiers": [
+            "broadcast"
+          ]
+        }
+      ],
+      "exports": [
+        "handle_coach_dev_result",
+        "handle_comment_agent_result",
+        "_validate_agent_decision",
+        "parse_pm_research_conclusion",
+        "append_research_to_memory",
+        "_trigger_wiki_archive"
+      ],
+      "totalLines": 321,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/ai-exec": {
+      "filePath": "scripts/ai-exec",
+      "contentHash": "8bf3c1ec02b11d8981726ab379850592ffc98e014f533fd3d19cd711a9c172ac",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 104,
+      "hasStructuralAnalysis": false
+    },
+    "scripts/toolchain/install_android.sh": {
+      "filePath": "scripts/toolchain/install_android.sh",
+      "contentHash": "c78d3b9f8530b710993c1d6a7a8ee040bdcc01667c4feae581ac1c7c05c31444",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 45,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/toolchain/install_flutter.sh": {
+      "filePath": "scripts/toolchain/install_flutter.sh",
+      "contentHash": "80fcc6d4aab8f175405926129f04c83bdfb8a6d27ac6da3010a5ff3784ce3878",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 35,
+      "hasStructuralAnalysis": true
+    },
+    "scripts/toolchain/install_rust.sh": {
+      "filePath": "scripts/toolchain/install_rust.sh",
+      "contentHash": "a5c24619a1e41587820a7b749a7553489dca027cef2aac5ff83bfcb61aacaf32",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 28,
+      "hasStructuralAnalysis": true
+    },
+    "skills/pm/pm-conflict-resolution/SKILL.md": {
+      "filePath": "skills/pm/pm-conflict-resolution/SKILL.md",
+      "contentHash": "56e081c6f47816dd1b982fb41ef4c36031100caee503529519cddfb2bde59d8c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 42,
+      "hasStructuralAnalysis": true
+    },
+    "skills/pm/pm-coupling/SKILL.md": {
+      "filePath": "skills/pm/pm-coupling/SKILL.md",
+      "contentHash": "1b9ea6d17c5b0950ee6ed2cf5a0eb24555cffbd6071bf57a50ea2ecf61da5b27",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 82,
+      "hasStructuralAnalysis": true
+    },
+    "skills/pm/pm-research-audit/SKILL.md": {
+      "filePath": "skills/pm/pm-research-audit/SKILL.md",
+      "contentHash": "10a46c3c67f9bcf3af988cadf782c3c6fa982ecb4eacaa0b687a92eddb4bf5a1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 93,
+      "hasStructuralAnalysis": true
+    },
+    "skills/research/industry-advisor/SKILL.md": {
+      "filePath": "skills/research/industry-advisor/SKILL.md",
+      "contentHash": "de5b529677ed896a11f34706d07fbb7bfb05772d72764a19983781ded5187a95",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 155,
+      "hasStructuralAnalysis": true
+    },
+    "skills/research/market-research/SKILL.md": {
+      "filePath": "skills/research/market-research/SKILL.md",
+      "contentHash": "68d00fdc3e4dd71851a6d8d4ab759865dfba7e565470a380856a538bafc0357f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 396,
+      "hasStructuralAnalysis": true
+    },
+    "tests/test_chat_endpoints.py": {
+      "filePath": "tests/test_chat_endpoints.py",
+      "contentHash": "97b4b7fb6a95861dea5612dad21216773679faf2b5ce975aeb8cff583e18b995",
+      "functions": [
+        {
+          "name": "setup_db",
+          "params": [],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "client",
+          "params": [],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "classes": [
+        {
+          "name": "TestPostTasks",
+          "methods": [
+            "test_returns_task_id",
+            "test_empty_message_still_creates_task"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "TestGetTaskStatus",
+          "methods": [
+            "test_running_task",
+            "test_nonexistent_task_404"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "TestGetActiveTask",
+          "methods": [
+            "test_finds_running",
+            "test_no_active_for_other_project"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "TestStreamTask",
+          "methods": [
+            "test_stream_nonexistent_404",
+            "test_stream_completed_task_replays",
+            "test_stream_has_sse_content_type"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "TestPostStream",
+          "methods": [
+            "test_returns_sse"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 9
+        }
+      ],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "pytest",
+          "specifiers": [
+            "pytest"
+          ]
+        },
+        {
+          "source": "httpx",
+          "specifiers": [
+            "AsyncClient",
+            "ASGITransport"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "init_db"
+          ]
+        },
+        {
+          "source": "core.task_buffer",
+          "specifiers": [
+            "task_buffers"
+          ]
+        }
+      ],
+      "exports": [
+        "setup_db",
+        "client",
+        "TestPostTasks",
+        "TestGetTaskStatus",
+        "TestGetActiveTask",
+        "TestStreamTask",
+        "TestPostStream"
+      ],
+      "totalLines": 148,
+      "hasStructuralAnalysis": true
+    },
+    "tests/test_chat_task_manager.py": {
+      "filePath": "tests/test_chat_task_manager.py",
+      "contentHash": "2d71b38ba3e23893958799cc92ef9a04828f3422e21d1774213f53d536899e2b",
+      "functions": [
+        {
+          "name": "setup_db",
+          "params": [],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "manager",
+          "params": [],
+          "exported": true,
+          "lineCount": 2
+        }
+      ],
+      "classes": [
+        {
+          "name": "TestCreateTask",
+          "methods": [
+            "test_create_returns_uuid",
+            "test_create_inserts_db_record",
+            "test_create_initializes_buffer"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "TestRunTask",
+          "methods": [
+            "test_successful_run",
+            "test_successful_run_updates_db",
+            "test_successful_run_marks_buffer_done",
+            "test_failed_run",
+            "test_failed_run_updates_db",
+            "test_failed_run_writes_error_to_buffer"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 78
+        },
+        {
+          "name": "TestGetTask",
+          "methods": [
+            "test_get_running_from_buffer",
+            "test_get_completed_from_db",
+            "test_get_nonexistent_returns_none"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "TestGetActiveTask",
+          "methods": [
+            "test_finds_running_task",
+            "test_no_active_task",
+            "test_returns_most_recent"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "TestRecoverOrphans",
+          "methods": [
+            "test_marks_running_as_failed",
+            "test_does_not_touch_completed"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "TestLogSequence",
+          "methods": [
+            "test_create_logs_task_id",
+            "test_complete_logs_chunk_count",
+            "test_failure_logs_error"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 30
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "pytest",
+          "specifiers": [
+            "pytest"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "init_db",
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "core.task_buffer",
+          "specifiers": [
+            "task_buffers"
+          ]
+        },
+        {
+          "source": "core.chat_task_manager",
+          "specifiers": [
+            "ChatTaskManager"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        }
+      ],
+      "exports": [
+        "setup_db",
+        "manager",
+        "TestCreateTask",
+        "TestRunTask",
+        "TestGetTask",
+        "TestGetActiveTask",
+        "TestRecoverOrphans",
+        "TestLogSequence"
+      ],
+      "totalLines": 248,
+      "hasStructuralAnalysis": true
+    },
+    "tests/test_task_buffer.py": {
+      "filePath": "tests/test_task_buffer.py",
+      "contentHash": "e261f64797efb80dc1c1bf28aee5edfc14e76c7fab818017df6f2e263ce518a8",
+      "functions": [
+        {
+          "name": "buf",
+          "params": [],
+          "exported": true,
+          "lineCount": 2
+        }
+      ],
+      "classes": [
+        {
+          "name": "TestBasicLifecycle",
+          "methods": [
+            "test_create_returns_state",
+            "test_get_existing",
+            "test_get_nonexistent",
+            "test_append_chunk",
+            "test_append_to_nonexistent_is_noop",
+            "test_mark_done",
+            "test_chunk_index_increments"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 39
+        },
+        {
+          "name": "TestSubscriberNotification",
+          "methods": [
+            "test_subscribe_gets_notified_on_append",
+            "test_subscribe_gets_notified_on_done",
+            "test_multiple_subscribers",
+            "test_subscribe_nonexistent_returns_none",
+            "test_unsubscribe",
+            "test_subscriber_can_wait_for_chunks"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 61
+        },
+        {
+          "name": "TestEviction",
+          "methods": [
+            "test_ttl_eviction",
+            "test_max_tasks_eviction",
+            "test_only_done_tasks_evicted_by_ttl"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 32
+        }
+      ],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "pytest",
+          "specifiers": [
+            "pytest"
+          ]
+        },
+        {
+          "source": "core.task_buffer",
+          "specifiers": [
+            "TaskBufferManager",
+            "TaskState",
+            "TaskChunk"
+          ]
+        }
+      ],
+      "exports": [
+        "buf",
+        "TestBasicLifecycle",
+        "TestSubscriberNotification",
+        "TestEviction"
+      ],
+      "totalLines": 158,
+      "hasStructuralAnalysis": true
+    },
+    "web/__init__.py": {
+      "filePath": "web/__init__.py",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 1,
+      "hasStructuralAnalysis": true
+    },
+    "web/api.py": {
+      "filePath": "web/api.py",
+      "contentHash": "dd4a063d447ca36f01e2e35fafc6d65e6fd12be35368f72a9df06bff9ca6ac8c",
+      "functions": [
+        {
+          "name": "_normalize_newlines",
+          "params": [
+            "s"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_get_app_version",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "get_version",
+          "params": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "list_projects",
+          "params": [
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "create_project",
+          "params": [
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "update_project",
+          "params": [
+            "pid",
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "list_versions",
+          "params": [
+            "pid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "create_version",
+          "params": [
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "update_version",
+          "params": [
+            "vid",
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "delete_version",
+          "params": [
+            "vid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "list_requirements",
+          "params": [
+            "vid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "create_requirement",
+          "params": [
+            "data",
+            "request",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 52
+        },
+        {
+          "name": "get_requirement_by_code",
+          "params": [
+            "code",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "update_requirement",
+          "params": [
+            "rid",
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "move_requirement",
+          "params": [
+            "rid",
+            "data",
+            "request",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 77
+        },
+        {
+          "name": "list_comments",
+          "params": [
+            "rid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_audit_status_change",
+          "params": [
+            "db",
+            "rid",
+            "old_status",
+            "new_status",
+            "actor",
+            "reason"
+          ],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "list_commits",
+          "params": [
+            "rid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "get_commit_diff",
+          "params": [
+            "commit_hash",
+            "project_id",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "add_comment",
+          "params": [
+            "rid",
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "_classify_log_layer",
+          "params": [
+            "msg"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "_docker_unix_request",
+          "params": [
+            "method",
+            "path"
+          ],
+          "returnType": "\"http.client.HTTPResponse\"",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "_get_self_container_id",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_fetch_docker_logs",
+          "params": [
+            "lines"
+          ],
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "dev_logs",
+          "params": [
+            "lines"
+          ],
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "dev_telemetry",
+          "params": [],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "dev_logs_layers",
+          "params": [
+            "lines"
+          ],
+          "exported": true,
+          "lineCount": 41
+        },
+        {
+          "name": "delete_project",
+          "params": [
+            "pid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "delete_requirement",
+          "params": [
+            "rid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "archive_requirement",
+          "params": [
+            "rid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "delete_comment",
+          "params": [
+            "cid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "get_comment_detail",
+          "params": [
+            "cid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "get_requirement_by_code",
+          "params": [
+            "code",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "list_tags",
+          "params": [
+            "project_id",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 41
+        },
+        {
+          "name": "get_tag_requirements",
+          "params": [
+            "tag",
+            "project_id",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "get_architecture",
+          "params": [
+            "pid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "put_architecture",
+          "params": [
+            "pid",
+            "db",
+            "body"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "get_product_memory",
+          "params": [
+            "pid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "get_wiki_pages",
+          "params": [
+            "pid"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "get_wiki_page",
+          "params": [
+            "pid",
+            "subdir",
+            "slug"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "put_product_memory",
+          "params": [
+            "pid",
+            "db",
+            "body"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "put_product_memory_section",
+          "params": [
+            "pid",
+            "db",
+            "body"
+          ],
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "append_decision",
+          "params": [
+            "pid",
+            "db",
+            "body"
+          ],
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "set_productization_target",
+          "params": [
+            "pid",
+            "db",
+            "body"
+          ],
+          "exported": true,
+          "lineCount": 26
+        },
+        {
+          "name": "_update_memory_section",
+          "params": [
+            "current",
+            "section",
+            "content",
+            "sub_section"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 58
+        },
+        {
+          "name": "_append_to_section",
+          "params": [
+            "current",
+            "sub_header",
+            "entry"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "get_skill_template",
+          "params": [],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "upload_attachment",
+          "params": [
+            "rid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "delete_attachment",
+          "params": [
+            "aid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "preview_attachment",
+          "params": [
+            "aid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "download_attachment",
+          "params": [
+            "aid",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "_get_scheduler",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "scheduler_status",
+          "params": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "scheduler_pause",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "scheduler_resume",
+          "params": [],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "trigger_task",
+          "params": [
+            "task_type"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "card_debug",
+          "params": [
+            "code",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 66
+        },
+        {
+          "name": "token_stats",
+          "params": [
+            "project_id",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 95
+        },
+        {
+          "name": "scheduler_state",
+          "params": [
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 130
+        },
+        {
+          "name": "list_agent_sessions",
+          "params": [
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "agents_status",
+          "params": [
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 50
+        },
+        {
+          "name": "list_pending_decisions",
+          "params": [
+            "project_id",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 77
+        },
+        {
+          "name": "submit_ceo_decision",
+          "params": [
+            "rid",
+            "data",
+            "db"
+          ],
+          "exported": true,
+          "lineCount": 91
+        },
+        {
+          "name": "reload_config",
+          "params": [],
+          "exported": true,
+          "lineCount": 16
+        }
+      ],
+      "classes": [
+        {
+          "name": "ProjectCreate",
+          "methods": [],
+          "properties": [
+            "name",
+            "description",
+            "color",
+            "prefix"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "ProjectUpdate",
+          "methods": [],
+          "properties": [
+            "name",
+            "description",
+            "color",
+            "prefix"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "VersionCreate",
+          "methods": [],
+          "properties": [
+            "project_id",
+            "name",
+            "description"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "VersionUpdate",
+          "methods": [],
+          "properties": [
+            "name",
+            "description",
+            "status",
+            "git_tag"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "ReqCreate",
+          "methods": [],
+          "properties": [
+            "version_id",
+            "title",
+            "description",
+            "priority",
+            "type",
+            "status",
+            "assignee",
+            "deadline",
+            "estimated_hours",
+            "notes",
+            "queue_reason",
+            "agent_timeout",
+            "initial_comment"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "ReqUpdate",
+          "methods": [],
+          "properties": [
+            "title",
+            "description",
+            "priority",
+            "type",
+            "status",
+            "assignee",
+            "deadline",
+            "estimated_hours",
+            "actual_hours",
+            "notes",
+            "tags",
+            "queue_reason",
+            "agent_timeout"
+          ],
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "ReqMove",
+          "methods": [],
+          "properties": [
+            "status",
+            "position",
+            "reason"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "CommentCreate",
+          "methods": [],
+          "properties": [
+            "author",
+            "content"
+          ],
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "CEODecisionInput",
+          "methods": [],
+          "properties": [
+            "decision",
+            "comment",
+            "asking_role"
+          ],
+          "exported": true,
+          "lineCount": 4
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "Depends",
+            "HTTPException",
+            "Request"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "Optional"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "get_db",
+            "next_code",
+            "generate_prefix"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry"
+          ]
+        },
+        {
+          "source": "web.chat",
+          "specifiers": [
+            "chat_router"
+          ]
+        }
+      ],
+      "exports": [
+        "_normalize_newlines",
+        "ProjectCreate",
+        "ProjectUpdate",
+        "VersionCreate",
+        "VersionUpdate",
+        "ReqCreate",
+        "ReqUpdate",
+        "ReqMove",
+        "CommentCreate",
+        "_get_app_version",
+        "get_version",
+        "list_projects",
+        "create_project",
+        "update_project",
+        "list_versions",
+        "create_version",
+        "update_version",
+        "delete_version",
+        "list_requirements",
+        "create_requirement",
+        "get_requirement_by_code",
+        "update_requirement",
+        "move_requirement",
+        "list_comments",
+        "_audit_status_change",
+        "list_commits",
+        "get_commit_diff",
+        "add_comment",
+        "_classify_log_layer",
+        "_docker_unix_request",
+        "_get_self_container_id",
+        "_fetch_docker_logs",
+        "dev_logs",
+        "dev_telemetry",
+        "dev_logs_layers",
+        "delete_project",
+        "delete_requirement",
+        "archive_requirement",
+        "delete_comment",
+        "get_comment_detail",
+        "get_requirement_by_code",
+        "list_tags",
+        "get_tag_requirements",
+        "get_architecture",
+        "put_architecture",
+        "get_product_memory",
+        "get_wiki_pages",
+        "get_wiki_page",
+        "put_product_memory",
+        "put_product_memory_section",
+        "append_decision",
+        "set_productization_target",
+        "_update_memory_section",
+        "_append_to_section",
+        "get_skill_template",
+        "upload_attachment",
+        "delete_attachment",
+        "preview_attachment",
+        "download_attachment",
+        "_get_scheduler",
+        "scheduler_status",
+        "scheduler_pause",
+        "scheduler_resume",
+        "trigger_task",
+        "card_debug",
+        "token_stats",
+        "scheduler_state",
+        "list_agent_sessions",
+        "agents_status",
+        "list_pending_decisions",
+        "CEODecisionInput",
+        "submit_ceo_decision",
+        "reload_config"
+      ],
+      "totalLines": 1682,
+      "hasStructuralAnalysis": true
+    },
+    "web/board_events.py": {
+      "filePath": "web/board_events.py",
+      "contentHash": "012c79e1cc890a1d11e88f1612ff11af97a414a918b112fe597c3dd9b5ff602a",
+      "functions": [
+        {
+          "name": "broadcast",
+          "params": [
+            "event_type",
+            "data"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_event_stream",
+          "params": [
+            "req"
+          ],
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "board_sse",
+          "params": [
+            "req"
+          ],
+          "exported": true,
+          "lineCount": 6
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "Request"
+          ]
+        },
+        {
+          "source": "starlette.responses",
+          "specifiers": [
+            "StreamingResponse"
+          ]
+        }
+      ],
+      "exports": [
+        "broadcast",
+        "_event_stream",
+        "board_sse"
+      ],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
+    "web/chat.py": {
+      "filePath": "web/chat.py",
+      "contentHash": "7bca19a3bd2c17191069e79eb5ecac21c8875bedc2000b9525001e8728864a13",
+      "functions": [
+        {
+          "name": "_strip_model_suffix",
+          "params": [
+            "model"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_chat_api_key",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_anthropic_base_url",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_openai_api_key",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_openai_base_url",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_ollama_base_url",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_chat_model",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_chat_provider",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_execute_tool",
+          "params": [
+            "name",
+            "args",
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 80
+        },
+        {
+          "name": "_build_pm_system_prompt",
+          "params": [
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 95
+        },
+        {
+          "name": "_chat_with_tools",
+          "params": [
+            "message",
+            "system_prompt",
+            "model",
+            "provider",
+            "project_id"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 127
+        },
+        {
+          "name": "_stream_simple",
+          "params": [
+            "message",
+            "system_prompt",
+            "model",
+            "provider"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_stream_openai_simple",
+          "params": [
+            "message",
+            "system_prompt",
+            "model"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 40
+        },
+        {
+          "name": "_stream_anthropic",
+          "params": [
+            "message",
+            "system_prompt",
+            "model"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "_stream_ollama",
+          "params": [
+            "message",
+            "system_prompt",
+            "model"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "chat_stream",
+          "params": [
+            "data"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "create_chat_task",
+          "params": [
+            "data"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "get_active_task",
+          "params": [
+            "project_id"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "get_task_status",
+          "params": [
+            "task_id"
+          ],
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "stream_task",
+          "params": [
+            "task_id",
+            "last_event_id"
+          ],
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "_execute_and_save",
+          "params": [
+            "task_id",
+            "data"
+          ],
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "_stream_from_buffer",
+          "params": [
+            "task_id",
+            "start_index"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "_stream_completed_task",
+          "params": [
+            "row"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "chat_sync",
+          "params": [
+            "data"
+          ],
+          "exported": true,
+          "lineCount": 31
+        },
+        {
+          "name": "_estimate_tokens",
+          "params": [
+            "text"
+          ],
+          "returnType": "int",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_save_message",
+          "params": [
+            "project_id",
+            "role",
+            "content",
+            "agent_role"
+          ],
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_get_recent_history",
+          "params": [
+            "project_id",
+            "limit"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_build_history_messages",
+          "params": [
+            "project_id",
+            "limit"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "_get_conversation_summary",
+          "params": [
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "chat_history",
+          "params": [
+            "project_id",
+            "limit"
+          ],
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "clear_history",
+          "params": [
+            "project_id"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_maybe_compact",
+          "params": [
+            "project_id"
+          ],
+          "exported": true,
+          "lineCount": 48
+        }
+      ],
+      "classes": [
+        {
+          "name": "ChatMessage",
+          "methods": [],
+          "properties": [
+            "message",
+            "project_id",
+            "model",
+            "provider"
+          ],
+          "exported": true,
+          "lineCount": 5
+        }
+      ],
+      "imports": [
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "AsyncGenerator"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "APIRouter",
+            "HTTPException",
+            "Query"
+          ]
+        },
+        {
+          "source": "fastapi.responses",
+          "specifiers": [
+            "StreamingResponse"
+          ]
+        },
+        {
+          "source": "pydantic",
+          "specifiers": [
+            "BaseModel"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "core.task_buffer",
+          "specifiers": [
+            "task_buffers"
+          ]
+        },
+        {
+          "source": "core.chat_task_manager",
+          "specifiers": [
+            "chat_task_manager"
+          ]
+        },
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        }
+      ],
+      "exports": [
+        "_strip_model_suffix",
+        "_chat_api_key",
+        "_anthropic_base_url",
+        "_openai_api_key",
+        "_openai_base_url",
+        "_ollama_base_url",
+        "_chat_model",
+        "_chat_provider",
+        "ChatMessage",
+        "_execute_tool",
+        "_build_pm_system_prompt",
+        "_chat_with_tools",
+        "_stream_simple",
+        "_stream_openai_simple",
+        "_stream_anthropic",
+        "_stream_ollama",
+        "chat_stream",
+        "create_chat_task",
+        "get_active_task",
+        "get_task_status",
+        "stream_task",
+        "_execute_and_save",
+        "_stream_from_buffer",
+        "_stream_completed_task",
+        "chat_sync",
+        "_estimate_tokens",
+        "_save_message",
+        "_get_recent_history",
+        "_build_history_messages",
+        "_get_conversation_summary",
+        "chat_history",
+        "clear_history",
+        "_maybe_compact"
+      ],
+      "totalLines": 907,
+      "hasStructuralAnalysis": true
+    },
+    "web/hermes_chat.py": {
+      "filePath": "web/hermes_chat.py",
+      "contentHash": "59c9c76bdacc9ed0b5f48c3d54fbb7343ec4dac3af7585f368fb003871199390",
+      "functions": [
+        {
+          "name": "_api_key",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_api_base_url",
+          "params": [],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_get_chat_history",
+          "params": [
+            "project_id",
+            "limit"
+          ],
+          "returnType": "list[dict]",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_get_chat_summary",
+          "params": [
+            "project_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "_detect_role",
+          "params": [
+            "user_message"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "_get_role_prompt",
+          "params": [
+            "role"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_build_hermes_prompt",
+          "params": [
+            "project_id",
+            "user_message"
+          ],
+          "returnType": "tuple[str, dict]",
+          "exported": true,
+          "lineCount": 99
+        },
+        {
+          "name": "stream_hermes",
+          "params": [
+            "project_id",
+            "user_message"
+          ],
+          "returnType": "AsyncGenerator[str, None]",
+          "exported": true,
+          "lineCount": 154
+        },
+        {
+          "name": "_parse_hermes_line",
+          "params": [
+            "line"
+          ],
+          "returnType": "dict | None",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "check_hermes_available",
+          "params": [],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "_build_hermes_env",
+          "params": [],
+          "returnType": "dict",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "ensure_hermes_config",
+          "params": [
+            "mode"
+          ],
+          "exported": true,
+          "lineCount": 98
+        },
+        {
+          "name": "sync_claude_settings",
+          "params": [],
+          "exported": true,
+          "lineCount": 42
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "asyncio",
+          "specifiers": [
+            "asyncio"
+          ]
+        },
+        {
+          "source": "json",
+          "specifiers": [
+            "json"
+          ]
+        },
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
+          ]
+        },
+        {
+          "source": "tempfile",
+          "specifiers": [
+            "tempfile"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "pathlib",
+          "specifiers": [
+            "Path"
+          ]
+        },
+        {
+          "source": "typing",
+          "specifiers": [
+            "AsyncGenerator"
+          ]
+        },
+        {
+          "source": "aiosqlite",
+          "specifiers": [
+            "aiosqlite"
+          ]
+        },
+        {
+          "source": "core.database",
+          "specifiers": [
+            "DB_PATH"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry"
+          ]
+        }
+      ],
+      "exports": [
+        "_api_key",
+        "_api_base_url",
+        "_get_chat_history",
+        "_get_chat_summary",
+        "_detect_role",
+        "_get_role_prompt",
+        "_build_hermes_prompt",
+        "stream_hermes",
+        "_parse_hermes_line",
+        "check_hermes_available",
+        "_build_hermes_env",
+        "ensure_hermes_config",
+        "sync_claude_settings"
+      ],
+      "totalLines": 577,
+      "hasStructuralAnalysis": true
+    },
+    "web/middleware.py": {
+      "filePath": "web/middleware.py",
+      "contentHash": "fe68a6bea1a6c267092c39e1119d5370e1366723f4c48271f2e6bafe4c034358",
+      "functions": [],
+      "classes": [
+        {
+          "name": "PermissionGateway",
+          "methods": [
+            "dispatch",
+            "_resolve_permission"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "RequestLogger",
+          "methods": [
+            "dispatch"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 34
+        }
+      ],
+      "imports": [
+        {
+          "source": "logging",
+          "specifiers": [
+            "logging"
+          ]
+        },
+        {
+          "source": "time",
+          "specifiers": [
+            "time"
+          ]
+        },
+        {
+          "source": "fastapi",
+          "specifiers": [
+            "Request"
+          ]
+        },
+        {
+          "source": "starlette.middleware.base",
+          "specifiers": [
+            "BaseHTTPMiddleware"
+          ]
+        },
+        {
+          "source": "starlette.responses",
+          "specifiers": [
+            "JSONResponse"
+          ]
+        },
+        {
+          "source": "agents.registry",
+          "specifiers": [
+            "registry"
+          ]
+        }
+      ],
+      "exports": [
+        "PermissionGateway",
+        "RequestLogger"
+      ],
+      "totalLines": 110,
+      "hasStructuralAnalysis": true
+    },
+    "web/static/app.js": {
+      "filePath": "web/static/app.js",
+      "contentHash": "b27abf8c39a1196a687a9a258e4681ea79a439f28470448cb14e368ea55e9a1e",
+      "functions": [
+        {
+          "name": "compareVersions",
+          "params": [
+            "a",
+            "b"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "updateHash",
+          "params": [],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "parseHash",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "api",
+          "params": [
+            "path"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "esc",
+          "params": [
+            "str"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "renderMd",
+          "params": [
+            "str"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "renderRoleChat",
+          "params": [
+            "content"
+          ],
+          "exported": false,
+          "lineCount": 77
+        },
+        {
+          "name": "formatSize",
+          "params": [
+            "bytes"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "loadProjects",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "renderProjects",
+          "params": [],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "selectProject",
+          "params": [
+            "pid"
+          ],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "renderGitSection",
+          "params": [
+            "project"
+          ],
+          "exported": false,
+          "lineCount": 50
+        },
+        {
+          "name": "renderProjectOverview",
+          "params": [],
+          "exported": false,
+          "lineCount": 48
+        },
+        {
+          "name": "renderWelcomeDefault",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "showProjectModal",
+          "params": [
+            "editId"
+          ],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "editProject",
+          "params": [
+            "pid"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "saveProject",
+          "params": [],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "deleteProject",
+          "params": [
+            "pid"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "pickColor",
+          "params": [
+            "el"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "loadVersions",
+          "params": [
+            "pid"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "renderVersions",
+          "params": [],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "selectVersion",
+          "params": [
+            "vid"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "loadProductizationTarget",
+          "params": [],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "showVersionModal",
+          "params": [
+            "editId"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "editVersion",
+          "params": [
+            "vid"
+          ],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "saveVersion",
+          "params": [],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "hideDoneDrawer",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "deleteVersion",
+          "params": [
+            "vid"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "loadRequirements",
+          "params": [
+            "vid"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "renderRequirements",
+          "params": [],
+          "exported": false,
+          "lineCount": 134
+        },
+        {
+          "name": "getQueueReason",
+          "params": [
+            "r"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "createCardEl",
+          "params": [
+            "r"
+          ],
+          "exported": false,
+          "lineCount": 53
+        },
+        {
+          "name": "setupDropZone",
+          "params": [
+            "container",
+            "status"
+          ],
+          "exported": false,
+          "lineCount": 44
+        },
+        {
+          "name": "getDragAfter",
+          "params": [
+            "container",
+            "y"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "confirmMove",
+          "params": [],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "cancelMove",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "showReqModal",
+          "params": [
+            "editId"
+          ],
+          "exported": false,
+          "lineCount": 59
+        },
+        {
+          "name": "renderAttachments",
+          "params": [
+            "atts"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "handleFileSelect",
+          "params": [
+            "input"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "saveRequirement",
+          "params": [],
+          "exported": false,
+          "lineCount": 55
+        },
+        {
+          "name": "onQueueReasonPresetChange",
+          "params": [
+            "select"
+          ],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "deleteReq",
+          "params": [
+            "rid"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "archiveReq",
+          "params": [
+            "rid"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "previewAtt",
+          "params": [
+            "aid"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "downloadAtt",
+          "params": [
+            "aid"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "deleteAtt",
+          "params": [
+            "aid"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "updateDescCollapsible",
+          "params": [
+            "mode",
+            "content"
+          ],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "switchReqTab",
+          "params": [
+            "tab"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "switchView",
+          "params": [
+            "view"
+          ],
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "onSearchInput",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "onSearchEnter",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "onFilterChange",
+          "params": [],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "loadTags",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "renderTagList",
+          "params": [],
+          "exported": false,
+          "lineCount": 35
+        },
+        {
+          "name": "showTagDetail",
+          "params": [
+            "tag"
+          ],
+          "exported": false,
+          "lineCount": 50
+        },
+        {
+          "name": "showReqModalFromTag",
+          "params": [
+            "rid",
+            "tag"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "loadDoc",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "renderDoc",
+          "params": [],
+          "exported": false,
+          "lineCount": 35
+        },
+        {
+          "name": "showDocView",
+          "params": [
+            "tab"
+          ],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "showArchView",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "switchDocTab",
+          "params": [
+            "tab"
+          ],
+          "exported": false,
+          "lineCount": 28
+        },
+        {
+          "name": "updateDocTabs",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "hideArchView",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "cancelArchEdit",
+          "params": [],
+          "exported": false,
+          "lineCount": 1
+        },
+        {
+          "name": "loadWikiView",
+          "params": [],
+          "exported": false,
+          "lineCount": 33
+        },
+        {
+          "name": "loadWikiPage",
+          "params": [
+            "pagePath"
+          ],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "loadCommits",
+          "params": [
+            "rid"
+          ],
+          "exported": false,
+          "lineCount": 34
+        },
+        {
+          "name": "toggleDiff",
+          "params": [
+            "hash",
+            "el"
+          ],
+          "exported": false,
+          "lineCount": 20
+        },
+        {
+          "name": "renderDiff",
+          "params": [
+            "diffText"
+          ],
+          "exported": false,
+          "lineCount": 21
+        },
+        {
+          "name": "loadComments",
+          "params": [
+            "rid"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "renderComments",
+          "params": [
+            "comments"
+          ],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "toggleDetail",
+          "params": [
+            "btn",
+            "cid"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "closeDetailOverlay",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "downloadCommentMd",
+          "params": [
+            "cid"
+          ],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "addComment",
+          "params": [],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "deleteComment",
+          "params": [
+            "cid"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "refreshVersions",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "updateStats",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "markReleased",
+          "params": [
+            "vid"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "hideModal",
+          "params": [
+            "id"
+          ],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "toggleFullscreen",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "toggleDescPreview",
+          "params": [],
+          "exported": false,
+          "lineCount": 16
+        },
+        {
+          "name": "updateDescPreview",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "closeModal",
+          "params": [
+            "id",
+            "e"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "toggleLogViewer",
+          "params": [],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "toggleLogFilter",
+          "params": [
+            "key"
+          ],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "fetchLogs",
+          "params": [],
+          "exported": false,
+          "lineCount": 43
+        },
+        {
+          "name": "buildFilterBar",
+          "params": [
+            "grouped"
+          ],
+          "exported": false,
+          "lineCount": 19
+        },
+        {
+          "name": "renderLogLines",
+          "params": [],
+          "exported": false,
+          "lineCount": 24
+        },
+        {
+          "name": "filterLogByCard",
+          "params": [
+            "value"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "clearCardFilter",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "annotateLog",
+          "params": [
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 105
+        },
+        {
+          "name": "escapeHtml",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "closeLogViewer",
+          "params": [
+            "event"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "switchLogView",
+          "params": [
+            "mode"
+          ],
+          "exported": false,
+          "lineCount": 13
+        },
+        {
+          "name": "refreshLogs",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "fetchLogsByLayer",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "renderLayerView",
+          "params": [],
+          "exported": false,
+          "lineCount": 42
+        },
+        {
+          "name": "toggleLayerSection",
+          "params": [
+            "header"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "copyCode",
+          "params": [
+            "code"
+          ],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "copyFallback",
+          "params": [
+            "code"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "showToast",
+          "params": [
+            "msg"
+          ],
+          "exported": false,
+          "lineCount": 11
+        },
+        {
+          "name": "jumpToCode",
+          "params": [
+            "code"
+          ],
+          "exported": false,
+          "lineCount": 17
+        },
+        {
+          "name": "navigateToRequirement",
+          "params": [
+            "req"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "initApp",
+          "params": [],
+          "exported": false,
+          "lineCount": 50
+        },
+        {
+          "name": "pollActivity",
+          "params": [],
+          "exported": false,
+          "lineCount": 12
+        },
+        {
+          "name": "updateSchedulerToggle",
+          "params": [
+            "mode"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "updateActivityInfo",
+          "params": [
+            "schedState",
+            "status"
+          ],
+          "exported": false,
+          "lineCount": 47
+        },
+        {
+          "name": "updateTimer",
+          "params": [
+            "timeout"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "updateBoardHeartbeats",
+          "params": [],
+          "exported": false,
+          "lineCount": 55
+        },
+        {
+          "name": "timeAgo",
+          "params": [
+            "dateStr"
+          ],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "toggleScheduler",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "toggleChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "restoreChatPanel",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "updateChatHeader",
+          "params": [],
+          "exported": false,
+          "lineCount": 8
+        },
+        {
+          "name": "loadChatHistory",
+          "params": [],
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "clearChatHistory",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "autoGrowInput",
+          "params": [
+            "el"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "sendChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 30
+        },
+        {
+          "name": "streamTask",
+          "params": [
+            "taskId",
+            "assistantDiv",
+            "fromIndex"
+          ],
+          "exported": false,
+          "lineCount": 98
+        },
+        {
+          "name": "reconnectActiveTask",
+          "params": [],
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "refreshBoardAfterChat",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "escapeHtml",
+          "params": [
+            "s"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "renderMarkdown",
+          "params": [
+            "text"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "loadTeamView",
+          "params": [],
+          "exported": false,
+          "lineCount": 15
+        },
+        {
+          "name": "renderTokenCostCard",
+          "params": [],
+          "exported": false,
+          "lineCount": 56
+        },
+        {
+          "name": "formatTokens",
+          "params": [
+            "n"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "loadProductMemorySummary",
+          "params": [],
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "renderTeamWorkflow",
+          "params": [],
+          "exported": false,
+          "lineCount": 44
+        },
+        {
+          "name": "renderTeamGrid",
+          "params": [
+            "agents",
+            "schedulerState"
+          ],
+          "exported": false,
+          "lineCount": 116
+        },
+        {
+          "name": "truncate",
+          "params": [
+            "str",
+            "len"
+          ],
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "pollDecisions",
+          "params": [],
+          "exported": false,
+          "lineCount": 10
+        },
+        {
+          "name": "updateDecisionBadges",
+          "params": [],
+          "exported": false,
+          "lineCount": 49
+        },
+        {
+          "name": "openDecision",
+          "params": [
+            "decision"
+          ],
+          "exported": false,
+          "lineCount": 47
+        },
+        {
+          "name": "buildSpeech",
+          "params": [
+            "decision"
+          ],
+          "exported": false,
+          "lineCount": 81
+        },
+        {
+          "name": "buildActionButtons",
+          "params": [
+            "decision"
+          ],
+          "exported": false,
+          "lineCount": 23
+        },
+        {
+          "name": "loadDecisionCard",
+          "params": [
+            "decision"
+          ],
+          "exported": false,
+          "lineCount": 54
+        },
+        {
+          "name": "switchDecisionTab",
+          "params": [
+            "tab",
+            "btn"
+          ],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "submitDecision",
+          "params": [
+            "decision",
+            "optionComment"
+          ],
+          "exported": false,
+          "lineCount": 36
+        },
+        {
+          "name": "submitCustomDecision",
+          "params": [],
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "closeDecision",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "isWizardMode",
+          "params": [
+            "decision"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "renderWizard",
+          "params": [],
+          "exported": false,
+          "lineCount": 32
+        },
+        {
+          "name": "wizardPrev",
+          "params": [],
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "wizardNext",
+          "params": [],
+          "exported": false,
+          "lineCount": 18
+        },
+        {
+          "name": "wizardSubmit",
+          "params": [],
+          "exported": false,
+          "lineCount": 31
+        }
+      ],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 3323,
+      "hasStructuralAnalysis": true
+    },
+    "web/static/avatars/coach_dev_256.png": {
+      "filePath": "web/static/avatars/coach_dev_256.png",
+      "contentHash": "a6e8f6075f971cc2d55965232bb89c33060e7eec40f4a9359ed67d2e818c0ab2",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 324,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/coach_dev_avatar.png": {
+      "filePath": "web/static/avatars/coach_dev_avatar.png",
+      "contentHash": "6cbfa77def9c065baa95f8e2896cae61014b24c4ab5249c390171047e020f3a0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 666,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/coach_review_256.png": {
+      "filePath": "web/static/avatars/coach_review_256.png",
+      "contentHash": "d2c99e7a360aae6408a01c25876a35d13f8d242a40dccb711292d8ebcbb7d0bc",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 238,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/coach_review_avatar.png": {
+      "filePath": "web/static/avatars/coach_review_avatar.png",
+      "contentHash": "ebdb30203e64b5dcd0748fa0d3179049f56d9b00ae8529f3c51cae91b373372e",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 685,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/industry_256.png": {
+      "filePath": "web/static/avatars/industry_256.png",
+      "contentHash": "b6b33898c8fa42b292755d8343045ebc86da7bc497b268cc54beb3336dd31605",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 231,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/industry_avatar.png": {
+      "filePath": "web/static/avatars/industry_avatar.png",
+      "contentHash": "2743ff6c8d77197f3a486d6738ca621540a5a0db7022fefd2e93daa7c8345e84",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 512,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/pm_256.png": {
+      "filePath": "web/static/avatars/pm_256.png",
+      "contentHash": "1b0c18d6820f24b0aa9c2dfa504d625f882ad4f4fa2aa4f398c5da17142f670d",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 235,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/avatars/pm_avatar.png": {
+      "filePath": "web/static/avatars/pm_avatar.png",
+      "contentHash": "e0b6781e1466d54a96e0e6bd579068f8db39dd92ef783232d094969d02825833",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 589,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/index.html": {
+      "filePath": "web/static/index.html",
+      "contentHash": "867ad5e77ec142a1b1707e0d159680470226b86d6ca2c9978a67ffe6766a8880",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 438,
+      "hasStructuralAnalysis": false
+    },
+    "web/static/lib/marked.min.js": {
+      "filePath": "web/static/lib/marked.min.js",
+      "contentHash": "15fabce5b65898b32b03f5ed25e9f891a729ad4c0d6d877110a7744aa847a894",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 7,
+      "hasStructuralAnalysis": true
+    },
+    "web/static/lib/purify.min.js": {
+      "filePath": "web/static/lib/purify.min.js",
+      "contentHash": "c0845096a7c4a6741f362ac506c94c1c7d27dc603bcc1bf64a587f76f2dbe3a1",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": true
+    },
+    "web/static/style.css": {
+      "filePath": "web/static/style.css",
+      "contentHash": "4382a7bc1fdeed59706511480dbd9d5bd756ccacd960fe19bf4fa84c0d4b0391",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 824,
+      "hasStructuralAnalysis": false
+    },
+    "web/templates/generic-product-advisor.md": {
+      "filePath": "web/templates/generic-product-advisor.md",
+      "contentHash": "6aa6ab94b5236d7ba59aaddd36bf00957957db31287c3c5f5d04c64bca06c093",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 223,
+      "hasStructuralAnalysis": true
+    }
+  }
+}

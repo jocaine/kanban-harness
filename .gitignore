@@ -6,3 +6,7 @@ uploads/
 logs/
 *.bak
 .env
+
+# understand-anything: only track core graph files
+.understand-anything/intermediate/
+.understand-anything/tmp/

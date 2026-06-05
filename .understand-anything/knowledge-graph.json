@@ -1,0 +1,4676 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "kanban_harness",
+    "languages": [
+      "Python",
+      "JavaScript",
+      "YAML",
+      "Markdown",
+      "Shell",
+      "Dockerfile"
+    ],
+    "frameworks": [
+      "FastAPI",
+      "Uvicorn",
+      "Pydantic",
+      "Docker",
+      "Docker Compose"
+    ],
+    "description": "Local-first AI team orchestration engine",
+    "analyzedAt": "2026-06-05T14:59:08.427603",
+    "gitCommitHash": "a246851fb142fdadcea4f487bd16f209a086cd90"
+  },
+  "nodes": [
+    {
+      "id": "file:agents/comment_agent.py",
+      "type": "file",
+      "name": "comment_agent.py",
+      "filePath": "agents/comment_agent.py",
+      "summary": "评论代理核心模块，负责调度 LLM（通过 Hermes 或 Claude CLI）对需求卡片进行多角色评审，并将结果拆分为评论与详情附件。",
+      "tags": [
+        "agent",
+        "llm-调用",
+        "评审",
+        "异步",
+        "多后端"
+      ],
+      "complexity": "complex",
+      "languageNotes": "通过 asyncio subprocess 调用 Claude CLI 并实时解析 JSON stream 事件，同时支持 Hermes AI Agent SDK 作为替代后端。"
+    },
+    {
+      "id": "class:agents/comment_agent.py:CommentAgent",
+      "type": "class",
+      "name": "CommentAgent",
+      "filePath": "agents/comment_agent.py",
+      "lineRange": [
+        22,
+        533
+      ],
+      "summary": "封装 LLM 评论生成全流程的代理类：构建 prompt、调用模型、拆分输出为评论与详情、收集 token 用量。",
+      "tags": [
+        "agent",
+        "llm-调用",
+        "prompt-构建",
+        "输出解析"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:agents/mcp_config.py",
+      "type": "file",
+      "name": "mcp_config.py",
+      "filePath": "agents/mcp_config.py",
+      "summary": "为 agent 子进程动态生成 MCP（Model Context Protocol）配置文件，确保 Claude CLI 能发现正确的 MCP server 地址和权限。",
+      "tags": [
+        "配置生成",
+        "mcp",
+        "工具函数",
+        "agent-基础设施"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:agents/mcp_config.py:ensure_agent_mcp_config",
+      "type": "function",
+      "name": "ensure_agent_mcp_config",
+      "filePath": "agents/mcp_config.py",
+      "lineRange": [
+        19,
+        60
+      ],
+      "summary": "根据 agent 角色和项目 ID 生成对应的 .mcp.json 和 .claude/settings.json 配置文件，使 Claude CLI 子进程能连接到 MCP server。",
+      "tags": [
+        "配置生成",
+        "文件写入",
+        "mcp"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/database.py",
+      "type": "file",
+      "name": "database.py",
+      "filePath": "core/database.py",
+      "summary": "看板数据库层：定义 SQLite 表结构（项目、版本、需求、评论、会话等）、执行增量迁移、提供连接管理和编号生成工具。",
+      "tags": [
+        "数据库",
+        "迁移",
+        "sqlite",
+        "数据模型",
+        "核心基础设施"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用 aiosqlite 异步连接，通过多步 executescript 实现无框架增量迁移（检测列是否存在再 ALTER TABLE）。"
+    },
+    {
+      "id": "function:core/database.py:_migrate_db",
+      "type": "function",
+      "name": "_migrate_db",
+      "filePath": "core/database.py",
+      "lineRange": [
+        31,
+        225
+      ],
+      "summary": "执行增量数据库迁移：检测缺失列/表并逐步 ALTER TABLE 或 CREATE TABLE，支持多版本递进迁移。",
+      "tags": [
+        "迁移",
+        "数据库",
+        "schema-演进"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:core/database.py:init_db",
+      "type": "function",
+      "name": "init_db",
+      "filePath": "core/database.py",
+      "lineRange": [
+        232,
+        494
+      ],
+      "summary": "初始化数据库：创建所有核心表（projects、versions、requirements、comments、sessions 等）、索引数据库和触发器，最后调用 _migrate_db 升级。",
+      "tags": [
+        "初始化",
+        "数据库",
+        "schema-定义"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:core/database.py:next_code",
+      "type": "function",
+      "name": "next_code",
+      "filePath": "core/database.py",
+      "lineRange": [
+        506,
+        526
+      ],
+      "summary": "为需求卡片生成下一个递增编号（如 KH-042），基于项目前缀和版本内最大序号。",
+      "tags": [
+        "编号生成",
+        "工具函数",
+        "数据库"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:core/session_manager.py",
+      "type": "file",
+      "name": "session_manager.py",
+      "filePath": "core/session_manager.py",
+      "summary": "Agent 会话生命周期管理器：创建/完成/失败会话、心跳检测、超时杀进程、自动重试与对账循环。",
+      "tags": [
+        "会话管理",
+        "生命周期",
+        "心跳",
+        "重试",
+        "进程管理"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:core/session_manager.py:SessionManager",
+      "type": "class",
+      "name": "SessionManager",
+      "filePath": "core/session_manager.py",
+      "lineRange": [
+        21,
+        326
+      ],
+      "summary": "管理 agent 执行会话的完整生命周期：注册进程、心跳监控、超时处理、失败重试调度、数据库状态对账。",
+      "tags": [
+        "会话管理",
+        "进程监控",
+        "重试策略",
+        "对账"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/telemetry.py",
+      "type": "file",
+      "name": "telemetry.py",
+      "filePath": "core/telemetry.py",
+      "summary": "遥测基础层：统计 LLM 调用次数与 token 消耗、集成 OpenTelemetry tracing、通过 SpanProcessor 驱动心跳回调。",
+      "tags": [
+        "遥测",
+        "opentelemetry",
+        "token-统计",
+        "心跳",
+        "可观测性"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "自定义 _HeartbeatSpanProcessor 将 OTel span 生命周期事件桥接为 agent 心跳信号，实现 tracing 与会话存活检测的统一。"
+    },
+    {
+      "id": "class:core/telemetry.py:TelemetryStats",
+      "type": "class",
+      "name": "TelemetryStats",
+      "filePath": "core/telemetry.py",
+      "lineRange": [
+        27,
+        70
+      ],
+      "summary": "线程安全的 LLM 调用统计收集器：记录总调用数、输入/输出 token、延迟，按模型分组汇总。",
+      "tags": [
+        "统计",
+        "线程安全",
+        "token-计数"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:core/telemetry.py:_HeartbeatSpanProcessor",
+      "type": "class",
+      "name": "_HeartbeatSpanProcessor",
+      "filePath": "core/telemetry.py",
+      "lineRange": [
+        153,
+        202
+      ],
+      "summary": "自定义 OTel SpanProcessor，在 span 开始/结束时触发心跳回调并从 span attributes 中提取 token 用量记录到 TelemetryStats。",
+      "tags": [
+        "opentelemetry",
+        "span-处理器",
+        "心跳桥接"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:core/telemetry.py:init_telemetry",
+      "type": "function",
+      "name": "init_telemetry",
+      "filePath": "core/telemetry.py",
+      "lineRange": [
+        77,
+        102
+      ],
+      "summary": "初始化遥测子系统：创建 TelemetryStats 单例，检测 OTEL_EXPORTER_OTLP_ENDPOINT 环境变量并按需启动 OTel tracing。",
+      "tags": [
+        "初始化",
+        "遥测",
+        "opentelemetry"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:core/telemetry.py:trace_llm_call",
+      "type": "function",
+      "name": "trace_llm_call",
+      "filePath": "core/telemetry.py",
+      "lineRange": [
+        223,
+        256
+      ],
+      "summary": "LLM 调用追踪上下文管理器：创建 OTel span 并在退出时记录 token 用量和延迟到 TelemetryStats。",
+      "tags": [
+        "追踪",
+        "上下文管理器",
+        "llm-调用"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:web/api.py",
+      "type": "file",
+      "name": "api.py",
+      "filePath": "web/api.py",
+      "summary": "FastAPI 路由主文件：定义看板系统全部 REST API 端点（项目/版本/需求 CRUD、评论、附件、调度器控制、CEO 决策、token 统计、日志查看等）。",
+      "tags": [
+        "api-handler",
+        "fastapi",
+        "路由",
+        "crud",
+        "核心入口"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用 FastAPI 的 Depends 注入 DB 连接，Pydantic BaseModel 定义请求体校验，APIRouter 组织路由。"
+    },
+    {
+      "id": "function:web/api.py:move_requirement",
+      "type": "function",
+      "name": "move_requirement",
+      "filePath": "web/api.py",
+      "lineRange": [
+        329,
+        405
+      ],
+      "summary": "需求状态流转端点：验证状态转换合法性、记录审计日志、触发 SSE 广播、自动调度 agent 处理队列中的卡片。",
+      "tags": [
+        "状态机",
+        "api-handler",
+        "审计",
+        "事件广播"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/api.py:create_requirement",
+      "type": "function",
+      "name": "create_requirement",
+      "filePath": "web/api.py",
+      "lineRange": [
+        239,
+        290
+      ],
+      "summary": "创建需求卡片端点：生成编号、写入数据库、可选附带初始评论、触发调度器和 SSE 事件。",
+      "tags": [
+        "api-handler",
+        "创建",
+        "需求"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:web/api.py:scheduler_state",
+      "type": "function",
+      "name": "scheduler_state",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1283,
+        1412
+      ],
+      "summary": "调度器全景状态端点：聚合活跃会话、待处理队列、重试队列、最近完成任务、并发窗口等运行时数据。",
+      "tags": [
+        "api-handler",
+        "调度器",
+        "状态查询",
+        "运维"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/api.py:token_stats",
+      "type": "function",
+      "name": "token_stats",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1185,
+        1279
+      ],
+      "summary": "Token 消耗统计端点：按项目/时间范围汇总 agent 调用的 token 用量、费用估算、模型分布。",
+      "tags": [
+        "api-handler",
+        "token-统计",
+        "费用估算"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/api.py:submit_ceo_decision",
+      "type": "function",
+      "name": "submit_ceo_decision",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1569,
+        1659
+      ],
+      "summary": "CEO 决策提交端点：接收用户裁决、写入评论、根据决策类型触发对应 agent 继续执行或状态回退。",
+      "tags": [
+        "api-handler",
+        "决策流程",
+        "人机协作"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/api.py:list_pending_decisions",
+      "type": "function",
+      "name": "list_pending_decisions",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1484,
+        1560
+      ],
+      "summary": "列出待人工裁决的需求端点：查询 queue_reason 非空的卡片并按角色分组展示。",
+      "tags": [
+        "api-handler",
+        "决策队列",
+        "查询"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:web/api.py:card_debug",
+      "type": "function",
+      "name": "card_debug",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1114,
+        1179
+      ],
+      "summary": "卡片调试端点：返回需求的完整状态（含评论、附件、关联会话、状态流转历史）用于排查问题。",
+      "tags": [
+        "api-handler",
+        "调试",
+        "运维"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:web/api.py:_update_memory_section",
+      "type": "function",
+      "name": "_update_memory_section",
+      "filePath": "web/api.py",
+      "lineRange": [
+        960,
+        1017
+      ],
+      "summary": "产品记忆文档的分段更新工具：在 markdown 文档中定位指定章节并替换/追加内容。",
+      "tags": [
+        "markdown-解析",
+        "工具函数",
+        "文档操作"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:web/api.py:agents_status",
+      "type": "function",
+      "name": "agents_status",
+      "filePath": "web/api.py",
+      "lineRange": [
+        1425,
+        1474
+      ],
+      "summary": "Agent 状态汇总端点：列出所有注册 agent 角色及其活跃会话、触发规则、模型配置。",
+      "tags": [
+        "api-handler",
+        "agent-状态",
+        "查询"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:web/hermes_chat.py",
+      "type": "file",
+      "name": "hermes_chat.py",
+      "filePath": "web/hermes_chat.py",
+      "summary": "Hermes（Claude CLI）对话集成层：角色检测、prompt 构建、流式对话调用、MCP 配置同步，为 Dashboard 提供多角色 AI 对话能力。",
+      "tags": [
+        "hermes",
+        "流式对话",
+        "角色路由",
+        "prompt-构建",
+        "集成层"
+      ],
+      "complexity": "complex",
+      "languageNotes": "通过 asyncio subprocess 启动 Claude CLI 并逐行解析 JSON stream，支持 tool_use 事件和 heartbeat 回调。"
+    },
+    {
+      "id": "function:web/hermes_chat.py:stream_hermes",
+      "type": "function",
+      "name": "stream_hermes",
+      "filePath": "web/hermes_chat.py",
+      "lineRange": [
+        213,
+        366
+      ],
+      "summary": "Hermes 流式对话核心：启动 Claude CLI 子进程、实时解析 JSON stream 事件、yield SSE 数据块、收集 token 用量。",
+      "tags": [
+        "流式",
+        "subprocess",
+        "sse",
+        "核心逻辑"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/hermes_chat.py:_build_hermes_prompt",
+      "type": "function",
+      "name": "_build_hermes_prompt",
+      "filePath": "web/hermes_chat.py",
+      "lineRange": [
+        112,
+        210
+      ],
+      "summary": "为 Hermes 对话构建完整 system prompt：加载角色定义、注入项目上下文、看板状态、对话历史摘要。",
+      "tags": [
+        "prompt-构建",
+        "上下文注入",
+        "角色"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/hermes_chat.py:ensure_hermes_config",
+      "type": "function",
+      "name": "ensure_hermes_config",
+      "filePath": "web/hermes_chat.py",
+      "lineRange": [
+        435,
+        532
+      ],
+      "summary": "确保 Hermes/Claude CLI 运行目录存在正确的 .mcp.json 和 settings 配置，支持 agent 与 chat 两种模式。",
+      "tags": [
+        "配置管理",
+        "hermes",
+        "mcp"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:web/hermes_chat.py:sync_claude_settings",
+      "type": "function",
+      "name": "sync_claude_settings",
+      "filePath": "web/hermes_chat.py",
+      "lineRange": [
+        535,
+        576
+      ],
+      "summary": "同步 Claude settings.json 中的模型配置和权限设置到 Hermes 工作目录。",
+      "tags": [
+        "配置同步",
+        "hermes",
+        "工具函数"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:core/chat_task_manager.py",
+      "type": "file",
+      "name": "chat_task_manager.py",
+      "filePath": "core/chat_task_manager.py",
+      "summary": "Chat task lifecycle manager",
+      "tags": [
+        "task-management",
+        "service",
+        "async",
+        "database",
+        "streaming",
+        "tested"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:core/chat_task_manager.py:ChatTaskManager",
+      "type": "class",
+      "name": "ChatTaskManager",
+      "filePath": "core/chat_task_manager.py",
+      "summary": "Full chat task lifecycle",
+      "tags": [
+        "task-management",
+        "async",
+        "database",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        17,
+        150
+      ]
+    },
+    {
+      "id": "file:core/task_buffer.py",
+      "type": "file",
+      "name": "task_buffer.py",
+      "filePath": "core/task_buffer.py",
+      "summary": "In-memory task buffer",
+      "tags": [
+        "buffer",
+        "pub-sub",
+        "memory-management",
+        "data-structure",
+        "streaming",
+        "tested"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:core/task_buffer.py:TaskBufferManager",
+      "type": "class",
+      "name": "TaskBufferManager",
+      "filePath": "core/task_buffer.py",
+      "summary": "Chunk buffer manager",
+      "tags": [
+        "buffer",
+        "pub-sub",
+        "async-event",
+        "memory-management"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        25,
+        83
+      ]
+    },
+    {
+      "id": "file:main.py",
+      "type": "file",
+      "name": "main.py",
+      "filePath": "main.py",
+      "summary": "App entry point",
+      "tags": [
+        "entry-point",
+        "fastapi",
+        "startup",
+        "lifecycle",
+        "logging",
+        "tested"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:main.py:RingBufferHandler",
+      "type": "class",
+      "name": "RingBufferHandler",
+      "filePath": "main.py",
+      "summary": "Ring buffer log handler",
+      "tags": [
+        "logging",
+        "ring-buffer",
+        "thread-safe"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        16,
+        32
+      ]
+    },
+    {
+      "id": "function:main.py:lifespan",
+      "type": "function",
+      "name": "lifespan",
+      "filePath": "main.py",
+      "summary": "FastAPI lifespan",
+      "tags": [
+        "lifecycle",
+        "startup",
+        "async-context"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        84,
+        96
+      ]
+    },
+    {
+      "id": "function:main.py:_recover_orphan_sessions",
+      "type": "function",
+      "name": "_recover_orphan_sessions",
+      "filePath": "main.py",
+      "summary": "Marks sessions failed",
+      "tags": [
+        "recovery",
+        "startup",
+        "database"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        58,
+        74
+      ]
+    },
+    {
+      "id": "file:tests/test_chat_endpoints.py",
+      "type": "file",
+      "name": "test_chat_endpoints.py",
+      "filePath": "tests/test_chat_endpoints.py",
+      "summary": "Chat endpoint tests",
+      "tags": [
+        "test",
+        "integration-test",
+        "api-handler",
+        "chat"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:tests/test_chat_task_manager.py",
+      "type": "file",
+      "name": "test_chat_task_manager.py",
+      "filePath": "tests/test_chat_task_manager.py",
+      "summary": "ChatTaskManager tests",
+      "tags": [
+        "test",
+        "unit-test",
+        "task-management",
+        "async"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:tests/test_task_buffer.py",
+      "type": "file",
+      "name": "test_task_buffer.py",
+      "filePath": "tests/test_task_buffer.py",
+      "summary": "TaskBufferManager tests",
+      "tags": [
+        "test",
+        "unit-test",
+        "buffer",
+        "pub-sub"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:web/chat.py",
+      "type": "file",
+      "name": "chat.py",
+      "filePath": "web/chat.py",
+      "summary": "Chat API with SSE and tool-use",
+      "tags": [
+        "api-handler",
+        "streaming",
+        "multi-model",
+        "tool-use",
+        "conversation",
+        "tested"
+      ],
+      "complexity": "complex",
+      "languageNotes": "FastAPI SSE provider strategy"
+    },
+    {
+      "id": "function:web/chat.py:_execute_tool",
+      "type": "function",
+      "name": "_execute_tool",
+      "filePath": "web/chat.py",
+      "summary": "PM tool calls",
+      "tags": [
+        "tool-use",
+        "tool-execution",
+        "database-query"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        147,
+        226
+      ]
+    },
+    {
+      "id": "function:web/chat.py:_build_pm_system_prompt",
+      "type": "function",
+      "name": "_build_pm_system_prompt",
+      "filePath": "web/chat.py",
+      "summary": "PM system prompt",
+      "tags": [
+        "prompt-engineering",
+        "context-building",
+        "product-manager"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        229,
+        323
+      ]
+    },
+    {
+      "id": "function:web/chat.py:_chat_with_tools",
+      "type": "function",
+      "name": "_chat_with_tools",
+      "filePath": "web/chat.py",
+      "summary": "LLM tool loop",
+      "tags": [
+        "tool-use",
+        "conversation-loop",
+        "streaming",
+        "core-logic"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        326,
+        452
+      ]
+    },
+    {
+      "id": "function:web/chat.py:_stream_from_buffer",
+      "type": "function",
+      "name": "_stream_from_buffer",
+      "filePath": "web/chat.py",
+      "summary": "Stream from buffer",
+      "tags": [
+        "streaming",
+        "sse",
+        "buffer-consumer"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        664,
+        691
+      ]
+    },
+    {
+      "id": "function:web/chat.py:_build_history_messages",
+      "type": "function",
+      "name": "_build_history_messages",
+      "filePath": "web/chat.py",
+      "summary": "Load history messages",
+      "tags": [
+        "conversation-history",
+        "message-building",
+        "context-management"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        775,
+        811
+      ]
+    },
+    {
+      "id": "function:web/chat.py:_maybe_compact",
+      "type": "function",
+      "name": "_maybe_compact",
+      "filePath": "web/chat.py",
+      "summary": "Auto-compact history",
+      "tags": [
+        "context-compaction",
+        "token-management",
+        "auto-summary"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        859,
+        906
+      ]
+    },
+    {
+      "id": "file:agents/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agents/__init__.py",
+      "summary": "agents 包的入口文件，重新导出 CoachDev 类和 AgentRegistry 单例，供外部模块统一引用。",
+      "tags": [
+        "entry-point",
+        "barrel",
+        "导出聚合"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agents/coach_dev.py",
+      "type": "file",
+      "name": "coach_dev.py",
+      "filePath": "agents/coach_dev.py",
+      "summary": "开发教练 Agent 实现，通过 git worktree 隔离执行 Claude CLI 完成编码任务，管理分支生命周期并采集 token 使用量。",
+      "tags": [
+        "agent",
+        "service",
+        "git-worktree",
+        "代码执行"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用 asyncio subprocess 流式解析 Claude CLI 的 JSON 事件输出，实现心跳驱动和用量统计。"
+    },
+    {
+      "id": "class:agents/coach_dev.py:CoachDev",
+      "type": "class",
+      "name": "CoachDev",
+      "filePath": "agents/coach_dev.py",
+      "lineRange": [
+        23,
+        347
+      ],
+      "summary": "核心开发 Agent 类，在独立 worktree 中调用 Claude CLI 执行需求卡编码，处理分支创建/清理及 commit 检测。",
+      "tags": [
+        "agent",
+        "orchestration",
+        "git操作",
+        "异步执行"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:agents/registry.py",
+      "type": "file",
+      "name": "registry.py",
+      "filePath": "agents/registry.py",
+      "summary": "Agent 角色注册中心，从 YAML 配置文件加载各角色定义（权限、触发规则、模型配置），提供权限检查和事件触发匹配。",
+      "tags": [
+        "配置加载",
+        "权限管理",
+        "注册中心",
+        "data-model"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agents/registry.py:AgentRegistry",
+      "type": "class",
+      "name": "AgentRegistry",
+      "filePath": "agents/registry.py",
+      "lineRange": [
+        52,
+        136
+      ],
+      "summary": "Agent 角色注册表，负责从 YAML 文件加载角色定义，提供权限验证、状态转移检查和事件触发匹配能力。",
+      "tags": [
+        "注册中心",
+        "权限检查",
+        "事件触发",
+        "singleton"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agents/registry.py:AgentRole",
+      "type": "class",
+      "name": "AgentRole",
+      "filePath": "agents/registry.py",
+      "lineRange": [
+        39,
+        49
+      ],
+      "summary": "Agent 角色数据类，定义角色的显示名、描述、模型配置、权限和触发规则等属性。",
+      "tags": [
+        "data-model",
+        "角色定义",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:core/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "core/__init__.py",
+      "summary": "core 包的空初始化文件，标记该目录为 Python 包。",
+      "tags": [
+        "entry-point",
+        "包标记",
+        "初始化"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:mcp_server/agent_server.py",
+      "type": "file",
+      "name": "agent_server.py",
+      "filePath": "mcp_server/agent_server.py",
+      "summary": "Agent MCP Server 实现，为 Claude CLI 子进程暴露细粒度的看板操作工具（CRUD 需求、评论、原子决策、Wiki 操作），直接操作 SQLite 并集成角色权限检查。",
+      "tags": [
+        "mcp-server",
+        "api-handler",
+        "看板工具",
+        "原子决策",
+        "wiki"
+      ],
+      "complexity": "complex",
+      "languageNotes": "基于 FastMCP 框架注册工具函数，每个函数即一个 MCP tool；_atomic_decision 是核心决策原语，统一处理状态流转+评论+权限校验的事务操作。"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:_atomic_decision",
+      "type": "function",
+      "name": "_atomic_decision",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        465,
+        577
+      ],
+      "summary": "原子决策原语，在单个事务中完成权限校验、状态流转、评论写入和审计日志，是所有角色决策动作的底层实现。",
+      "tags": [
+        "核心逻辑",
+        "事务操作",
+        "状态机",
+        "权限校验"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:move_requirement",
+      "type": "function",
+      "name": "move_requirement",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        194,
+        249
+      ],
+      "summary": "移动需求卡到指定状态列，包含权限检查、状态有效性验证和审计日志记录。",
+      "tags": [
+        "状态流转",
+        "权限检查",
+        "mcp-tool"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:create_requirements",
+      "type": "function",
+      "name": "create_requirements",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        93,
+        138
+      ],
+      "summary": "批量创建需求卡片，解析 JSON 输入并生成唯一编码，写入数据库。",
+      "tags": [
+        "mcp-tool",
+        "批量操作",
+        "数据写入"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:pm_approve",
+      "type": "function",
+      "name": "pm_approve",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        583,
+        608
+      ],
+      "summary": "PM 角色审批工具，将需求从 pending 推进到 dev 状态并附带评论。",
+      "tags": [
+        "mcp-tool",
+        "角色决策",
+        "PM"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:review_pass",
+      "type": "function",
+      "name": "review_pass",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        713,
+        735
+      ],
+      "summary": "代码审查通过工具，将需求从 testing 推进到 done 状态。",
+      "tags": [
+        "mcp-tool",
+        "角色决策",
+        "代码审查"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:review_reject",
+      "type": "function",
+      "name": "review_reject",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        739,
+        761
+      ],
+      "summary": "代码审查拒绝工具，将需求从 testing 退回 dev 状态并说明问题。",
+      "tags": [
+        "mcp-tool",
+        "角色决策",
+        "代码审查"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:add_comment",
+      "type": "function",
+      "name": "add_comment",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        253,
+        290
+      ],
+      "summary": "为需求卡添加评论，支持评论内容分离（摘要+详情），并关联当前 Agent 角色。",
+      "tags": [
+        "mcp-tool",
+        "评论系统",
+        "数据写入"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:read_comment_detail",
+      "type": "function",
+      "name": "read_comment_detail",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        355,
+        411
+      ],
+      "summary": "读取评论完整内容，包括摘要、详情附件和关联需求上下文，用于 Agent 理解历史讨论。",
+      "tags": [
+        "mcp-tool",
+        "评论系统",
+        "上下文加载"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:wiki_write_page",
+      "type": "function",
+      "name": "wiki_write_page",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        829,
+        850
+      ],
+      "summary": "Wiki 页面写入工具，执行权限检查后调用 wiki 模块持久化内容。",
+      "tags": [
+        "mcp-tool",
+        "wiki",
+        "知识管理"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:load_guideline",
+      "type": "function",
+      "name": "load_guideline",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        423,
+        440
+      ],
+      "summary": "加载 Agent 技能指南文件，去除 frontmatter 后返回纯内容供 Agent 使用。",
+      "tags": [
+        "mcp-tool",
+        "技能加载",
+        "配置读取"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:mcp_server/agent_server.py:update_requirement",
+      "type": "function",
+      "name": "update_requirement",
+      "filePath": "mcp_server/agent_server.py",
+      "lineRange": [
+        142,
+        190
+      ],
+      "summary": "更新需求卡字段（标题、描述、优先级、负责人等），动态构建 SQL UPDATE 语句。",
+      "tags": [
+        "mcp-tool",
+        "数据更新",
+        "动态SQL"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:web/middleware.py",
+      "type": "file",
+      "name": "middleware.py",
+      "filePath": "web/middleware.py",
+      "summary": "Web 层中间件，包含基于角色的权限网关（PermissionGateway）和请求日志记录器（RequestLogger），控制 Agent 对 API 的访问权限。",
+      "tags": [
+        "middleware",
+        "权限管理",
+        "日志记录",
+        "安全"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:web/middleware.py:PermissionGateway",
+      "type": "class",
+      "name": "PermissionGateway",
+      "filePath": "web/middleware.py",
+      "lineRange": [
+        27,
+        73
+      ],
+      "summary": "权限网关中间件，根据 X-Agent-Role 请求头验证 Agent 对 API 端点的操作权限，无角色头的请求视为人类用户直接放行。",
+      "tags": [
+        "middleware",
+        "权限校验",
+        "RBAC",
+        "安全"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:web/middleware.py:RequestLogger",
+      "type": "class",
+      "name": "RequestLogger",
+      "filePath": "web/middleware.py",
+      "lineRange": [
+        76,
+        109
+      ],
+      "summary": "请求日志中间件，记录 API 调用的角色、路径、耗时等信息，跳过静态资源和健康检查路径。",
+      "tags": [
+        "middleware",
+        "日志记录",
+        "监控"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:core/workflow_config.py",
+      "type": "file",
+      "name": "workflow_config.py",
+      "filePath": "core/workflow_config.py",
+      "summary": "Hot-reloadable workflow config singleton from config/workflow.yaml with polling, concurrency, and timeout params.",
+      "tags": [
+        "config",
+        "hot-reload",
+        "singleton",
+        "scheduler"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:core/workflow_config.py:WorkflowConfig",
+      "type": "class",
+      "name": "WorkflowConfig",
+      "filePath": "core/workflow_config.py",
+      "lineRange": [
+        33,
+        88
+      ],
+      "summary": "Dataclass config container with file mtime-based hot-reload mechanism.",
+      "tags": [
+        "dataclass",
+        "config",
+        "hot-reload",
+        "singleton"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:scheduler/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "scheduler/__init__.py",
+      "summary": "Package barrel re-exporting SchedulerEngine.",
+      "tags": [
+        "entry-point",
+        "barrel",
+        "export"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scheduler/engine.py",
+      "type": "file",
+      "name": "engine.py",
+      "filePath": "scheduler/engine.py",
+      "summary": "Core scheduler engine polling kanban for dev cards and events, orchestrating agent triggers with concurrency control and stuck recovery.",
+      "tags": [
+        "scheduler",
+        "core",
+        "event-driven",
+        "concurrency",
+        "state-machine"
+      ],
+      "complexity": "complex",
+      "languageNotes": "Heavy asyncio.create_task usage for non-blocking agent dispatch with aiosqlite async DB polling."
+    },
+    {
+      "id": "class:scheduler/engine.py:SchedulerEngine",
+      "type": "class",
+      "name": "SchedulerEngine",
+      "filePath": "scheduler/engine.py",
+      "lineRange": [
+        22,
+        500
+      ],
+      "summary": "Main scheduler class: poll loop, session limits, agent triggers, CEO escalation, stuck card recovery.",
+      "tags": [
+        "scheduler",
+        "state-machine",
+        "concurrency",
+        "agent-orchestration",
+        "event-driven"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:scheduler/handlers.py",
+      "type": "file",
+      "name": "handlers.py",
+      "filePath": "scheduler/handlers.py",
+      "summary": "Agent result handlers: status transitions, decision validation, CEO escalation, research archival, wiki trigger.",
+      "tags": [
+        "agent-callback",
+        "status-flow",
+        "decision-validation",
+        "result-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:scheduler/handlers.py:handle_coach_dev_result",
+      "type": "function",
+      "name": "handle_coach_dev_result",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        18,
+        79
+      ],
+      "summary": "Executes CoachDev agent, links commits, moves card to testing on success, supports continuation retry on partial.",
+      "tags": [
+        "agent-callback",
+        "status-flow",
+        "commit-link",
+        "dev-complete"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:scheduler/handlers.py:handle_comment_agent_result",
+      "type": "function",
+      "name": "handle_comment_agent_result",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        81,
+        141
+      ],
+      "summary": "Executes CommentAgent and validates decision, includes fallback auto-submit for industry agent.",
+      "tags": [
+        "agent-callback",
+        "decision-validation",
+        "fallback",
+        "comment-agent"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:scheduler/handlers.py:_validate_agent_decision",
+      "type": "function",
+      "name": "_validate_agent_decision",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        144,
+        215
+      ],
+      "summary": "Unified post-agent validation: checks status change or CEO escalation, triggers memory and wiki archival for research cards.",
+      "tags": [
+        "decision-validation",
+        "CEO-escalation",
+        "product-memory",
+        "post-processing"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:scheduler/handlers.py:parse_pm_research_conclusion",
+      "type": "function",
+      "name": "parse_pm_research_conclusion",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        221,
+        257
+      ],
+      "summary": "Extracts structured research conclusions (reliability, findings, archive suggestion) from PM comments.",
+      "tags": [
+        "text-parsing",
+        "research",
+        "structured-extraction",
+        "utility"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:scheduler/handlers.py:append_research_to_memory",
+      "type": "function",
+      "name": "append_research_to_memory",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        260,
+        295
+      ],
+      "summary": "Appends PM research conclusions to project product memory document section.",
+      "tags": [
+        "product-memory",
+        "archival",
+        "persistence",
+        "research"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:scheduler/handlers.py:_trigger_wiki_archive",
+      "type": "function",
+      "name": "_trigger_wiki_archive",
+      "filePath": "scheduler/handlers.py",
+      "lineRange": [
+        298,
+        320
+      ],
+      "summary": "Async triggers wiki_archiver agent to extract structured wiki page from research card comments.",
+      "tags": [
+        "wiki-archival",
+        "async-trigger",
+        "agent-invocation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/board_events.py",
+      "type": "file",
+      "name": "board_events.py",
+      "filePath": "web/board_events.py",
+      "summary": "SSE real-time push module maintaining subscriber queues and broadcasting card move/update events to frontend.",
+      "tags": [
+        "SSE",
+        "real-time",
+        "event-broadcast",
+        "api-handler"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/board_events.py:broadcast",
+      "type": "function",
+      "name": "broadcast",
+      "filePath": "web/board_events.py",
+      "lineRange": [
+        15,
+        24
+      ],
+      "summary": "Broadcasts event messages to all SSE subscribers, auto-cleaning dead connections with full queues.",
+      "tags": [
+        "event-broadcast",
+        "SSE",
+        "pub-sub"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:web/board_events.py:board_sse",
+      "type": "function",
+      "name": "board_sse",
+      "filePath": "web/board_events.py",
+      "lineRange": [
+        46,
+        51
+      ],
+      "summary": "FastAPI SSE endpoint returning StreamingResponse for real-time board events.",
+      "tags": [
+        "api-handler",
+        "SSE",
+        "route-endpoint"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "service:.dockerignore",
+      "type": "service",
+      "name": ".dockerignore",
+      "filePath": ".dockerignore",
+      "summary": "Docker 构建排除规则，过滤 .git、缓存、数据库文件、虚拟环境等非必要内容以减小镜像体积。",
+      "tags": [
+        "容器化",
+        "infrastructure",
+        "build-system"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "service:Dockerfile",
+      "type": "service",
+      "name": "Dockerfile",
+      "filePath": "Dockerfile",
+      "summary": "基于 Python 3.11-slim 的单阶段构建，按变动频率分层安装系统工具链(git/Node.js)、AI CLI(hermes-agent/claude-code)和应用依赖，暴露 8765 端口并通过 entrypoint.sh 启动 uvicorn 服务。",
+      "tags": [
+        "容器化",
+        "infrastructure",
+        "deployment",
+        "ai-toolchain"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "采用国内镜像源加速(阿里云 apt + 清华 pip + npmmirror)，按变动频率排列 COPY 指令以最大化 Docker 缓存命中率。"
+    },
+    {
+      "id": "service:docker-compose.yml",
+      "type": "service",
+      "name": "docker-compose.yml",
+      "filePath": "docker-compose.yml",
+      "summary": "开发环境编排配置，定义三个服务: web(主应用，host 网络模式+热重载)、firecrawl-lite(网页抓取)、searxng(元搜索引擎)，通过 depends_on 保证启动顺序。",
+      "tags": [
+        "orchestration",
+        "infrastructure",
+        "开发环境",
+        "deployment"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "全部使用 network_mode: host 避免容器间网络隔离问题，web 服务挂载源码目录实现开发时热重载。"
+    },
+    {
+      "id": "service:docker/firecrawl-lite/Dockerfile",
+      "type": "service",
+      "name": "Dockerfile",
+      "filePath": "docker/firecrawl-lite/Dockerfile",
+      "summary": "Firecrawl 轻量替代服务的容器镜像定义，基于 Python 3.11-slim 构建，安装 XML 解析依赖后运行 server.py 监听 3002 端口，提供网页抓取能力。",
+      "tags": [
+        "containerization",
+        "infrastructure",
+        "web-scraping",
+        "lightweight-service"
+      ],
+      "complexity": "simple",
+      "languageNotes": "单阶段构建，使用 --no-install-recommends 和清理 apt 缓存来减小镜像体积；gcc 和 libxml2/libxslt 说明依赖 lxml 等 C 扩展库。"
+    },
+    {
+      "id": "config:.env.example",
+      "type": "config",
+      "name": ".env.example",
+      "filePath": ".env.example",
+      "summary": "环境变量配置模板，定义了服务端口、数据库路径、LLM API 密钥与模型、Anthropic CLI 配置、搜索后端及日志级别等运行时参数。",
+      "tags": [
+        "configuration",
+        "environment",
+        "secret",
+        "template"
+      ],
+      "complexity": "simple",
+      "languageNotes": "使用 ${VAR} 语法实现变量间引用，支持 OpenAI/Anthropic 兼容的中转站配置模式。"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "项目主文档，介绍 Kanban Harness 作为本地优先 AI 团队编排引擎的定位、四层架构、目录结构、快速启动指南，以及与 Kanban MCP 被动工具的差异对比。",
+      "tags": [
+        "documentation",
+        "entry-point",
+        "overview",
+        "architecture"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:build-and-push.sh",
+      "type": "file",
+      "name": "build-and-push.sh",
+      "filePath": "build-and-push.sh",
+      "summary": "Docker 镜像构建与推送脚本，支持 --local 仅本地构建、--test 自增版本号打测试包、默认模式推送到阿里云容器镜像服务并同步 latest 标签。",
+      "tags": [
+        "deployment",
+        "containerization",
+        "ci-cd",
+        "build-system",
+        "shell"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "使用 .test_version 文件实现简单的本地版本号自增，避免依赖外部 CI 系统。"
+    },
+    {
+      "id": "config:pytest.ini",
+      "type": "config",
+      "name": "pytest.ini",
+      "filePath": "pytest.ini",
+      "summary": "Pytest 测试框架配置，启用 asyncio_mode=auto 使异步测试函数无需手动标记。",
+      "tags": [
+        "configuration",
+        "test",
+        "pytest"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:requirements.txt",
+      "type": "document",
+      "name": "requirements.txt",
+      "filePath": "requirements.txt",
+      "summary": "Python 依赖清单，包含 FastAPI/Uvicorn Web 栈、aiosqlite 异步数据层、Anthropic/httpx LLM 客户端、MCP 协议库、croniter 调度器及 OpenTelemetry 可观测性插桩。",
+      "tags": [
+        "dependencies",
+        "configuration",
+        "build-system",
+        "python"
+      ],
+      "complexity": "simple",
+      "languageNotes": "使用 >= 最低版本约束而非精确锁定，适合开发阶段快速迭代。"
+    },
+    {
+      "id": "config:agents/roles/coach_dev.yaml",
+      "type": "config",
+      "name": "coach_dev.yaml",
+      "filePath": "agents/roles/coach_dev.yaml",
+      "summary": "Coach-Dev 角色定义，配置开发工程师 agent 的系统提示词、工具权限和触发条件，负责将 dev 列卡片实现为代码并提交测试。",
+      "tags": [
+        "角色配置",
+        "agent",
+        "开发者",
+        "工作流"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "YAML 角色定义文件，包含 system_prompt（多行字符串）、allowed_tools、permissions 和 triggers 四大核心段落，是多角色博弈引擎的角色声明式配置。"
+    },
+    {
+      "id": "config:agents/roles/coach_review.yaml",
+      "type": "config",
+      "name": "coach_review.yaml",
+      "filePath": "agents/roles/coach_review.yaml",
+      "summary": "Coach-QA 角色定义，配置代码审查 agent 的系统提示词和权限，负责对 testing 列卡片做质量审查并决定通过或打回。",
+      "tags": [
+        "角色配置",
+        "agent",
+        "代码审查",
+        "质量保证"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "审查角色通过 review_pass/review_reject/review_ask_ceo 三个决策工具实现原子化决策，避免只评论不移卡的死循环。"
+    },
+    {
+      "id": "config:agents/roles/industry.yaml",
+      "type": "config",
+      "name": "industry.yaml",
+      "filePath": "agents/roles/industry.yaml",
+      "summary": "行业顾问角色定义，配置市场调研 agent 的系统提示词、搜索工具链和严格的证据规范，负责 research 列卡片的竞品调研和行业分析。",
+      "tags": [
+        "角色配置",
+        "agent",
+        "市场调研",
+        "web-search"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "该角色使用 Hermes provider 并配置了 web/browser/mcp-kanban 三个 toolset，是唯一具备外部搜索能力的角色。system_prompt 中定义了认知状态四分法和否定断言证据标准等严格方法论。"
+    },
+    {
+      "id": "config:agents/roles/pm.yaml",
+      "type": "config",
+      "name": "pm.yaml",
+      "filePath": "agents/roles/pm.yaml",
+      "summary": "产品经理角色定义，配置需求拆解 agent 的系统提示词和权限，负责 organizing 列的需求整理、验收标准定义、优先级排序及退回争议仲裁。",
+      "tags": [
+        "角色配置",
+        "agent",
+        "产品经理",
+        "需求管理",
+        "wiki"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "PM 角色拥有最多的移卡路径（5条）和最丰富的工具集（含 wiki 读写），承担 Karpathy Ingest 知识沉淀职责，将调研结论编译为结构化 wiki 页面。"
+    },
+    {
+      "id": "document:docs/wiki/SCHEMA.md",
+      "type": "document",
+      "name": "SCHEMA.md",
+      "filePath": "docs/wiki/SCHEMA.md",
+      "summary": "LLM Wiki 的规范定义文档，规定了页面命名、frontmatter 格式、标签分类体系、页面创建/拆分阈值及更新策略，是所有 wiki 页面的编写标准。",
+      "tags": [
+        "documentation",
+        "schema-definition",
+        "规范",
+        "wiki",
+        "元数据"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/index.md",
+      "type": "document",
+      "name": "index.md",
+      "filePath": "docs/wiki/index.md",
+      "summary": "Wiki 导航入口页面，按架构五层和产品两大分类列出所有 wiki 页面的 wikilink 索引，新会话通过此文件快速定位相关知识页。",
+      "tags": [
+        "documentation",
+        "entry-point",
+        "导航",
+        "索引",
+        "wiki"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/log.md",
+      "type": "document",
+      "name": "log.md",
+      "filePath": "docs/wiki/log.md",
+      "summary": "Wiki 变更日志，以 append-only 方式按时间顺序记录所有页面的创建、更新、迁移、拆分和归档操作。",
+      "tags": [
+        "documentation",
+        "变更日志",
+        "审计",
+        "wiki",
+        "历史记录"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/arch/layer1-runtime.md",
+      "type": "document",
+      "name": "layer1-runtime.md",
+      "filePath": "docs/wiki/arch/layer1-runtime.md",
+      "summary": "描述系统第1层（容器运行时/OS层）的架构文档，涵盖 Dockerfile 构建分层、ai-exec 命令保护脚本、toolchain_map 技术栈检测配置及 docker-compose 编排定义。",
+      "tags": [
+        "文档",
+        "架构",
+        "infrastructure",
+        "docker",
+        "运行时"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/arch/layer2-infra.md",
+      "type": "document",
+      "name": "layer2-infra.md",
+      "filePath": "docs/wiki/arch/layer2-infra.md",
+      "summary": "描述系统第2层（基础设施层）的架构文档，详细记录了 database.py 的数据模型（13张表及其关系）、task_buffer 内存发布订阅机制、config.py 工作区路径管理，以及 MCP server 工具清单。",
+      "tags": [
+        "文档",
+        "架构",
+        "database",
+        "数据模型",
+        "infrastructure"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/wiki/arch/layer3-orchestration.md",
+      "type": "document",
+      "name": "layer3-orchestration.md",
+      "filePath": "docs/wiki/arch/layer3-orchestration.md",
+      "summary": "描述系统第3层（编排调度层）的架构文档，涵盖 SchedulerEngine 主循环与事件消费、SessionManager 生命周期管理、ChatTaskManager 对话任务管理，以及 AgentRegistry 角色加载与权限检查。",
+      "tags": [
+        "文档",
+        "架构",
+        "scheduler",
+        "编排",
+        "session"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/wiki/arch/layer4-roles.md",
+      "type": "document",
+      "name": "layer4-roles.md",
+      "filePath": "docs/wiki/arch/layer4-roles.md",
+      "summary": "描述系统第4层（AI角色/提示词层）的架构文档，声明式定义了PM、行业顾问、开发教练、审查教练四个角色的模型配置、权限范围和触发条件。",
+      "tags": [
+        "文档",
+        "架构",
+        "角色定义",
+        "prompt",
+        "yaml"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/arch/layer5-frontend.md",
+      "type": "document",
+      "name": "layer5-frontend.md",
+      "filePath": "docs/wiki/arch/layer5-frontend.md",
+      "summary": "描述系统第5层（前端层）的架构文档，涵盖 FastAPI 应用入口、REST API 看板接口、SSE 流式对话、Hermes 桥接、权限中间件及前端静态文件结构。",
+      "tags": [
+        "文档",
+        "架构",
+        "frontend",
+        "api",
+        "sse"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/wiki/arch/workflows.md",
+      "type": "document",
+      "name": "workflows.md",
+      "filePath": "docs/wiki/arch/workflows.md",
+      "summary": "描述系统核心工作流的架构文档，定义了开发需求流程、调研需求流程、人类控制机制（暂停/否决/方向调整/merge独占）以及五层间的依赖规则与禁止跨层调用约束。",
+      "tags": [
+        "文档",
+        "架构",
+        "工作流",
+        "流程定义",
+        "层间依赖"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/product/decisions.md",
+      "type": "document",
+      "name": "decisions.md",
+      "filePath": "docs/wiki/product/decisions.md",
+      "summary": "产品与架构决策历史记录，涵盖技术选型（Hermes/Claude/SQLite/Docker）、流程纪律（调研不驱动架构、耦合卡流程）及 MCP 层意图驱动设计原则。",
+      "tags": [
+        "documentation",
+        "决策记录",
+        "架构",
+        "流程纪律",
+        "产品策略"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/wiki/product/market.md",
+      "type": "document",
+      "name": "market.md",
+      "filePath": "docs/wiki/product/market.md",
+      "summary": "市场分析文档，明确 KH 与竞品（CrewAI/AutoGen）的差异化锚点——成品团队 vs 编排积木，并从开源和商业两个视角分析定位优势。",
+      "tags": [
+        "documentation",
+        "市场分析",
+        "竞品对比",
+        "产品策略",
+        "定位"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/product/positioning.md",
+      "type": "document",
+      "name": "positioning.md",
+      "filePath": "docs/wiki/product/positioning.md",
+      "summary": "核心产品定位与用户画像文档，定义 KH 为预设产品管理场景的 AI 团队成品，目标用户为精力有限的个人开发者，当前产品化目标 L1（可用）。",
+      "tags": [
+        "documentation",
+        "产品定位",
+        "用户画像",
+        "产品化目标",
+        "entry-point"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/wiki/product/rejected.md",
+      "type": "document",
+      "name": "rejected.md",
+      "filePath": "docs/wiki/product/rejected.md",
+      "summary": "已否决方向汇总，记录 CEO 明确否决的技术方向（通用框架、Celery、PostgreSQL）和流程方向（调研走 DEV 流程、PM 参与验收），防止重复讨论。",
+      "tags": [
+        "documentation",
+        "已否决",
+        "决策记录",
+        "产品策略",
+        "约束"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/wiki/product/workflows-product.md",
+      "type": "document",
+      "name": "workflows-product.md",
+      "filePath": "docs/wiki/product/workflows-product.md",
+      "summary": "角色设计与工作流文档，定义四个 AI 角色（Industry/PM/Coach-Dev/Coach-QA）的职责边界、质量门禁流程及 MVP 验证路径。",
+      "tags": [
+        "documentation",
+        "工作流",
+        "角色设计",
+        "质量门禁",
+        "流程定义"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:scripts/toolchain/install_android.sh",
+      "type": "file",
+      "name": "install_android.sh",
+      "filePath": "scripts/toolchain/install_android.sh",
+      "summary": "幂等式 Android SDK 安装脚本，为容器环境自动安装 JDK 17、cmdline-tools、build-tools 和 platform-tools，已安装则跳过。",
+      "tags": [
+        "工具链",
+        "infrastructure",
+        "containerization",
+        "android",
+        "幂等安装"
+      ],
+      "complexity": "simple",
+      "languageNotes": "使用幂等检测模式（检查二进制是否存在后决定是否执行安装），并通过 /etc/profile.d/ 持久化环境变量，适合 Docker 多阶段构建场景。"
+    },
+    {
+      "id": "file:scripts/toolchain/install_flutter.sh",
+      "type": "file",
+      "name": "install_flutter.sh",
+      "filePath": "scripts/toolchain/install_flutter.sh",
+      "summary": "幂等式 Flutter SDK 安装脚本，在容器中通过 git clone stable 分支安装 Flutter 并预缓存 Linux 平台构建产物。",
+      "tags": [
+        "工具链",
+        "infrastructure",
+        "containerization",
+        "flutter",
+        "幂等安装"
+      ],
+      "complexity": "simple",
+      "languageNotes": "通过 --depth 1 浅克隆节省空间，precache --no-ios/macos/windows 只保留 Linux 相关产物，有效控制镜像体积。"
+    },
+    {
+      "id": "file:scripts/toolchain/install_rust.sh",
+      "type": "file",
+      "name": "install_rust.sh",
+      "filePath": "scripts/toolchain/install_rust.sh",
+      "summary": "幂等式 Rust 工具链安装脚本，通过 rustup 安装 stable 版本并配置全局 PATH，已存在则直接退出。",
+      "tags": [
+        "工具链",
+        "infrastructure",
+        "containerization",
+        "rust",
+        "幂等安装"
+      ],
+      "complexity": "simple",
+      "languageNotes": "使用 --no-modify-path 避免 rustup 自动修改 shell 配置，改由 /etc/profile.d/ 统一管理环境变量，保持容器可复现性。"
+    },
+    {
+      "id": "config:.gitignore",
+      "type": "config",
+      "name": ".gitignore",
+      "filePath": ".gitignore",
+      "summary": "Git 忽略规则配置，排除 Python 缓存、数据库、上传文件和日志",
+      "tags": [
+        "git",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agents/event_types.py",
+      "type": "file",
+      "name": "event_types.py",
+      "filePath": "agents/event_types.py",
+      "summary": "Agent 事件类型常量定义模块",
+      "tags": [
+        "agent",
+        "常量",
+        "事件"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:config/toolchain_map.json",
+      "type": "config",
+      "name": "toolchain_map.json",
+      "filePath": "config/toolchain_map.json",
+      "summary": "工具链映射配置，定义各编程语言的检测规则、依赖包和安装指令",
+      "tags": [
+        "工具链",
+        "配置",
+        "多语言"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:config/workflow.yaml",
+      "type": "config",
+      "name": "workflow.yaml",
+      "filePath": "config/workflow.yaml",
+      "summary": "工作流全局配置，定义轮询间隔、并发限制、超时和停滞检测参数",
+      "tags": [
+        "工作流",
+        "调度",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:docker/.gitkeep",
+      "type": "config",
+      "name": ".gitkeep",
+      "filePath": "docker/.gitkeep",
+      "summary": "Docker 目录占位文件",
+      "tags": [
+        "docker",
+        "占位"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docker/firecrawl-lite/requirements.txt",
+      "type": "document",
+      "name": "firecrawl-lite requirements.txt",
+      "filePath": "docker/firecrawl-lite/requirements.txt",
+      "summary": "Firecrawl Lite 服务的 Python 依赖清单",
+      "tags": [
+        "依赖",
+        "firecrawl"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:docker/firecrawl-lite/server.py",
+      "type": "file",
+      "name": "server.py (firecrawl-lite)",
+      "filePath": "docker/firecrawl-lite/server.py",
+      "summary": "轻量级 Firecrawl 兼容 API 服务，使用 httpx 抓取网页并用 trafilatura 提取 Markdown 内容",
+      "tags": [
+        "网页抓取",
+        "FastAPI",
+        "微服务"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:docker/hermes/config.yaml",
+      "type": "config",
+      "name": "hermes config.yaml",
+      "filePath": "docker/hermes/config.yaml",
+      "summary": "Hermes AI Agent 运行配置，包含模型选择、MCP 服务器、工具集和安全设置",
+      "tags": [
+        "hermes",
+        "AI配置",
+        "MCP"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:docker/searxng/limiter.toml",
+      "type": "config",
+      "name": "limiter.toml",
+      "filePath": "docker/searxng/limiter.toml",
+      "summary": "SearXNG 搜索引擎速率限制配置",
+      "tags": [
+        "searxng",
+        "限流",
+        "配置"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:docker/searxng/settings.yml",
+      "type": "config",
+      "name": "searxng settings.yml",
+      "filePath": "docker/searxng/settings.yml",
+      "summary": "SearXNG 元搜索引擎实例配置，定义搜索引擎列表和 API 设置",
+      "tags": [
+        "searxng",
+        "搜索",
+        "配置"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:mcp_server/__init__.py",
+      "type": "file",
+      "name": "mcp_server/__init__.py",
+      "filePath": "mcp_server/__init__.py",
+      "summary": "MCP Server 包初始化模块",
+      "tags": [
+        "MCP",
+        "包"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:mcp_server/kh_client.py",
+      "type": "file",
+      "name": "kh_client.py",
+      "filePath": "mcp_server/kh_client.py",
+      "summary": "Kanban Harness REST API 的 HTTP 客户端封装，提供项目、需求、评论等 CRUD 操作",
+      "tags": [
+        "MCP",
+        "HTTP客户端",
+        "API"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:mcp_server/server.py",
+      "type": "file",
+      "name": "server.py (MCP)",
+      "filePath": "mcp_server/server.py",
+      "summary": "Kanban Harness MCP Server 主入口，基于 FastMCP 框架暴露意图驱动的工具接口供 AI 协作使用",
+      "tags": [
+        "MCP",
+        "FastMCP",
+        "工具接口"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:scripts/ai-exec",
+      "type": "file",
+      "name": "ai-exec",
+      "filePath": "scripts/ai-exec",
+      "summary": "AI 执行脚本，用于在受控环境中运行 AI agent 任务",
+      "tags": [
+        "脚本",
+        "AI执行",
+        "自动化"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:skills/pm/pm-conflict-resolution/SKILL.md",
+      "type": "document",
+      "name": "PM 冲突解决技能",
+      "filePath": "skills/pm/pm-conflict-resolution/SKILL.md",
+      "summary": "PM 角色冲突解决技能定义，指导如何处理需求优先级冲突",
+      "tags": [
+        "技能",
+        "PM",
+        "冲突解决"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:skills/pm/pm-coupling/SKILL.md",
+      "type": "document",
+      "name": "PM 耦合分析技能",
+      "filePath": "skills/pm/pm-coupling/SKILL.md",
+      "summary": "PM 角色耦合度分析技能，评估需求间的依赖关系",
+      "tags": [
+        "技能",
+        "PM",
+        "耦合分析"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:skills/pm/pm-research-audit/SKILL.md",
+      "type": "document",
+      "name": "PM 研究审计技能",
+      "filePath": "skills/pm/pm-research-audit/SKILL.md",
+      "summary": "PM 角色研究审计技能，验证行业研究结论的可靠性",
+      "tags": [
+        "技能",
+        "PM",
+        "审计"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:skills/research/industry-advisor/SKILL.md",
+      "type": "document",
+      "name": "行业顾问技能",
+      "filePath": "skills/research/industry-advisor/SKILL.md",
+      "summary": "行业顾问角色技能定义，指导如何进行行业调研和趋势分析",
+      "tags": [
+        "技能",
+        "行业研究",
+        "顾问"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:skills/research/market-research/SKILL.md",
+      "type": "document",
+      "name": "市场研究技能",
+      "filePath": "skills/research/market-research/SKILL.md",
+      "summary": "市场研究技能的完整流程定义，包括竞品分析、用户画像和市场机会识别",
+      "tags": [
+        "技能",
+        "市场研究",
+        "竞品分析"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:web/__init__.py",
+      "type": "file",
+      "name": "web/__init__.py",
+      "filePath": "web/__init__.py",
+      "summary": "Web 包初始化模块",
+      "tags": [
+        "web",
+        "包"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/app.js",
+      "type": "file",
+      "name": "app.js",
+      "filePath": "web/static/app.js",
+      "summary": "Dashboard 前端主应用，实现看板视图、对话交互、SSE 实时更新和 Agent 会话管理的单页应用",
+      "tags": [
+        "前端",
+        "JavaScript",
+        "看板",
+        "SSE",
+        "SPA"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:web/static/avatars/coach_dev_256.png",
+      "type": "file",
+      "name": "coach_dev_256.png",
+      "filePath": "web/static/avatars/coach_dev_256.png",
+      "summary": "Coach Dev 角色头像图片(256px)",
+      "tags": [
+        "资源",
+        "头像",
+        "PNG"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/coach_dev_avatar.png",
+      "type": "file",
+      "name": "coach_dev_avatar.png",
+      "filePath": "web/static/avatars/coach_dev_avatar.png",
+      "summary": "Coach Dev 角色完整头像图片",
+      "tags": [
+        "资源",
+        "头像",
+        "PNG"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/coach_review_256.png",
+      "type": "file",
+      "name": "coach_review_256.png",
+      "filePath": "web/static/avatars/coach_review_256.png",
+      "summary": "Coach Review 角色头像图片(256px)",
+      "tags": [
+        "资源",
+        "头像",
+        "PNG"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/coach_review_avatar.png",
+      "type": "file",
+      "name": "coach_review_avatar.png",
+      "filePath": "web/static/avatars/coach_review_avatar.png",
+      "summary": "Coach Review 角色完整头像图片",
+      "tags": [
+        "资源",
+        "头像",
+        "PNG"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:mcp_server/kh_client.py:KHClient",
+      "type": "class",
+      "name": "KHClient",
+      "filePath": "mcp_server/kh_client.py",
+      "summary": "Kanban Harness REST API HTTP 客户端类，封装 GET/POST/PUT 方法",
+      "tags": [
+        "HTTP客户端",
+        "API封装"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:docker/firecrawl-lite/server.py:fetch_and_extract",
+      "type": "function",
+      "name": "fetch_and_extract",
+      "filePath": "docker/firecrawl-lite/server.py",
+      "summary": "异步抓取 URL 并用 trafilatura 提取 Markdown 内容",
+      "tags": [
+        "异步",
+        "网页抓取"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:docker/firecrawl-lite/server.py:scrape",
+      "type": "function",
+      "name": "scrape",
+      "filePath": "docker/firecrawl-lite/server.py",
+      "summary": "POST /v1/scrape 端点处理函数",
+      "tags": [
+        "API端点",
+        "抓取"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:mcp_server/server.py:kh_brief",
+      "type": "function",
+      "name": "kh_brief",
+      "filePath": "mcp_server/server.py",
+      "summary": "MCP 工具：返回 KH 团队状态摘要",
+      "tags": [
+        "MCP工具",
+        "状态查询"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:web/static/avatars/industry_256.png",
+      "type": "file",
+      "name": "industry_256.png",
+      "filePath": "web/static/avatars/industry_256.png",
+      "summary": "行业顾问角色的256px 缩略图头像，用于 UI 中角色身份展示。",
+      "tags": [
+        "静态资源",
+        "头像",
+        "图片"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/industry_avatar.png",
+      "type": "file",
+      "name": "industry_avatar.png",
+      "filePath": "web/static/avatars/industry_avatar.png",
+      "summary": "行业顾问角色的全尺寸头像图片，用于聊天面板和决策浮层的角色展示，用于 UI 中角色身份展示。",
+      "tags": [
+        "静态资源",
+        "头像",
+        "图片"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/pm_256.png",
+      "type": "file",
+      "name": "pm_256.png",
+      "filePath": "web/static/avatars/pm_256.png",
+      "summary": "产品经理角色的256px 缩略图头像，用于 UI 中角色身份展示。",
+      "tags": [
+        "静态资源",
+        "头像",
+        "图片"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/avatars/pm_avatar.png",
+      "type": "file",
+      "name": "pm_avatar.png",
+      "filePath": "web/static/avatars/pm_avatar.png",
+      "summary": "产品经理角色的全尺寸头像图片，用于聊天面板和决策浮层的默认头像，用于 UI 中角色身份展示。",
+      "tags": [
+        "静态资源",
+        "头像",
+        "图片"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/index.html",
+      "type": "file",
+      "name": "index.html",
+      "filePath": "web/static/index.html",
+      "summary": "需求管理系统的单页应用主入口 HTML，包含侧边栏导航、看板视图、需求弹窗、AI 聊天面板、Reigns 风格决策浮层和日志查看器等完整 UI 骨架。",
+      "tags": [
+        "entry-point",
+        "单页应用",
+        "前端界面",
+        "看板"
+      ],
+      "complexity": "complex",
+      "languageNotes": "纯 HTML 结构驱动的 SPA，通过 app.js 动态渲染内容，依赖 marked.min.js 和 purify.min.js 实现 Markdown 安全渲染。"
+    },
+    {
+      "id": "file:web/static/lib/marked.min.js",
+      "type": "file",
+      "name": "marked.min.js",
+      "filePath": "web/static/lib/marked.min.js",
+      "summary": "Marked.js 的压缩版本，提供客户端 Markdown 到 HTML 的解析能力。",
+      "tags": [
+        "第三方库",
+        "markdown",
+        "vendor"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/lib/purify.min.js",
+      "type": "file",
+      "name": "purify.min.js",
+      "filePath": "web/static/lib/purify.min.js",
+      "summary": "DOMPurify 的压缩版本，用于对 Markdown 渲染后的 HTML 进行 XSS 防护和内容净化。",
+      "tags": [
+        "第三方库",
+        "安全",
+        "vendor",
+        "xss-防护"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:web/static/style.css",
+      "type": "file",
+      "name": "style.css",
+      "filePath": "web/static/style.css",
+      "summary": "全局样式表，定义了暗色主题设计系统(CSS 变量)、侧边栏、看板列、需求卡片、模态弹窗、聊天面板、决策浮层和响应式布局等完整视觉层。",
+      "tags": [
+        "样式表",
+        "暗色主题",
+        "设计系统",
+        "响应式"
+      ],
+      "complexity": "complex",
+      "languageNotes": "使用 CSS 自定义属性实现主题色系统，823 行覆盖了从基础组件到复杂交互动画的所有样式，无预处理器依赖。"
+    },
+    {
+      "id": "document:web/templates/generic-product-advisor.md",
+      "type": "document",
+      "name": "generic-product-advisor.md",
+      "filePath": "web/templates/generic-product-advisor.md",
+      "summary": "通用产品化顾问团队的 Advisor Skill 模板，定义了 PM、行业顾问、技术教练三角色协作机制及独立思考到交叉碰撞到共识输出的工作流程，包含产品价值评估框架和特化填充指南。",
+      "tags": [
+        "documentation",
+        "模板",
+        "advisor-skill",
+        "多角色协作",
+        "产品化"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "采用 YAML frontmatter + Markdown 结构，通过双花括号占位符实现项目特化派生，是 advisor skill 体系的基础模板。"
+    },
+    {
+      "id": "function:core/telemetry.py:get_stats",
+      "type": "function",
+      "name": "get_stats",
+      "filePath": "core/telemetry.py",
+      "lineRange": [
+        73,
+        74
+      ],
+      "summary": "Returns the global TelemetryStats instance or None if telemetry is not initialized.",
+      "tags": [
+        "telemetry",
+        "getter"
+      ],
+      "complexity": "simple"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "file:agents/mcp_config.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "file:core/telemetry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "file:web/hermes_chat.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/session_manager.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:core/session_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:core/telemetry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:main.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:web/board_events.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:web/chat.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "file:web/hermes_chat.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "class:agents/comment_agent.py:CommentAgent",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "class:agents/comment_agent.py:CommentAgent",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/mcp_config.py",
+      "target": "function:agents/mcp_config.py:ensure_agent_mcp_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agents/mcp_config.py",
+      "target": "function:agents/mcp_config.py:ensure_agent_mcp_config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:_migrate_db",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:init_db",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:next_code",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:_migrate_db",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:init_db",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/database.py",
+      "target": "function:core/database.py:next_code",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/session_manager.py",
+      "target": "class:core/session_manager.py:SessionManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/session_manager.py",
+      "target": "class:core/session_manager.py:SessionManager",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "class:core/telemetry.py:TelemetryStats",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "class:core/telemetry.py:_HeartbeatSpanProcessor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "function:core/telemetry.py:init_telemetry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "function:core/telemetry.py:trace_llm_call",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "class:core/telemetry.py:TelemetryStats",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "class:core/telemetry.py:_HeartbeatSpanProcessor",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "function:core/telemetry.py:init_telemetry",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/telemetry.py",
+      "target": "function:core/telemetry.py:trace_llm_call",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:move_requirement",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:create_requirement",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:scheduler_state",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:token_stats",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:submit_ceo_decision",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:list_pending_decisions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:card_debug",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:_update_memory_section",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:agents_status",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:move_requirement",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:create_requirement",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:scheduler_state",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:token_stats",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:submit_ceo_decision",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:list_pending_decisions",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:card_debug",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/api.py:agents_status",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:stream_hermes",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:_build_hermes_prompt",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:ensure_hermes_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:sync_claude_settings",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:stream_hermes",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:_build_hermes_prompt",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:ensure_hermes_config",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/hermes_chat.py",
+      "target": "function:web/hermes_chat.py:sync_claude_settings",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "function:web/hermes_chat.py:ensure_hermes_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/comment_agent.py",
+      "target": "function:agents/mcp_config.py:ensure_agent_mcp_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "function:web/hermes_chat.py:stream_hermes",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/api.py",
+      "target": "class:core/session_manager.py:SessionManager",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core/database.py:init_db",
+      "target": "function:core/database.py:_migrate_db",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/session_manager.py",
+      "target": "function:core/database.py:init_db",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:core/chat_task_manager.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/chat_task_manager.py",
+      "target": "file:core/task_buffer.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/chat_task_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:core/telemetry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:scheduler/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:web/api.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:web/board_events.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:web/hermes_chat.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:web/middleware.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_endpoints.py",
+      "target": "file:core/chat_task_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_endpoints.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_endpoints.py",
+      "target": "file:core/task_buffer.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_endpoints.py",
+      "target": "file:main.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_task_manager.py",
+      "target": "file:core/chat_task_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_task_manager.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_chat_task_manager.py",
+      "target": "file:core/task_buffer.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:tests/test_task_buffer.py",
+      "target": "file:core/task_buffer.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:core/chat_task_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:core/task_buffer.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:main.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:web/hermes_chat.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core/chat_task_manager.py",
+      "target": "class:core/chat_task_manager.py:ChatTaskManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/chat_task_manager.py",
+      "target": "class:core/chat_task_manager.py:ChatTaskManager",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/task_buffer.py",
+      "target": "class:core/task_buffer.py:TaskBufferManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/task_buffer.py",
+      "target": "class:core/task_buffer.py:TaskBufferManager",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "class:main.py:RingBufferHandler",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:main.py",
+      "target": "class:main.py:RingBufferHandler",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:lifespan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:lifespan",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:_recover_orphan_sessions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:main.py:_recover_orphan_sessions",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_execute_tool",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_execute_tool",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_build_pm_system_prompt",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_build_pm_system_prompt",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_chat_with_tools",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_chat_with_tools",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_stream_from_buffer",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_stream_from_buffer",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_build_history_messages",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_build_history_messages",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_maybe_compact",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/chat.py:_maybe_compact",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:main.py:lifespan",
+      "target": "function:main.py:_recover_orphan_sessions",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:core/database.py:init_db",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:web/hermes_chat.py:ensure_hermes_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:web/hermes_chat.py:sync_claude_settings",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:main.py",
+      "target": "function:core/telemetry.py:init_telemetry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "function:web/hermes_chat.py:stream_hermes",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "class:core/chat_task_manager.py:ChatTaskManager",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "class:core/task_buffer.py:TaskBufferManager",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:core/chat_task_manager.py",
+      "target": "file:tests/test_chat_task_manager.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:core/task_buffer.py",
+      "target": "file:tests/test_task_buffer.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:main.py",
+      "target": "file:tests/test_chat_endpoints.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:web/chat.py",
+      "target": "file:tests/test_chat_endpoints.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:agents/__init__.py",
+      "target": "file:agents/coach_dev.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/__init__.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "file:core/telemetry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:web/middleware.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "class:agents/coach_dev.py:CoachDev",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "class:agents/coach_dev.py:CoachDev",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/registry.py",
+      "target": "class:agents/registry.py:AgentRegistry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agents/registry.py",
+      "target": "class:agents/registry.py:AgentRegistry",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/registry.py",
+      "target": "class:agents/registry.py:AgentRole",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agents/registry.py",
+      "target": "class:agents/registry.py:AgentRole",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:_atomic_decision",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:move_requirement",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:create_requirements",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:pm_approve",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:review_pass",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:review_reject",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:add_comment",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:read_comment_detail",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:wiki_write_page",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:load_guideline",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:update_requirement",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:_atomic_decision",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:move_requirement",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:create_requirements",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:pm_approve",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:review_pass",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:review_reject",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:add_comment",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:read_comment_detail",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:wiki_write_page",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:load_guideline",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:mcp_server/agent_server.py:update_requirement",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/middleware.py",
+      "target": "class:web/middleware.py:PermissionGateway",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/middleware.py",
+      "target": "class:web/middleware.py:PermissionGateway",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/middleware.py",
+      "target": "class:web/middleware.py:RequestLogger",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/middleware.py",
+      "target": "class:web/middleware.py:RequestLogger",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "class:agents/registry.py:AgentRegistry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:web/middleware.py:PermissionGateway",
+      "target": "class:agents/registry.py:AgentRegistry",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "function:core/telemetry.py:trace_llm_call",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:mcp_server/agent_server.py",
+      "target": "function:core/database.py:next_code",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core/workflow_config.py",
+      "target": "class:core/workflow_config.py:WorkflowConfig",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core/workflow_config.py",
+      "target": "class:core/workflow_config.py:WorkflowConfig",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:scheduler/__init__.py",
+      "target": "file:scheduler/engine.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:core/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:core/session_manager.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:core/workflow_config.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:scheduler/__init__.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "file:web/board_events.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "class:scheduler/engine.py:SchedulerEngine",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/engine.py",
+      "target": "class:scheduler/engine.py:SchedulerEngine",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:agents/coach_dev.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:agents/comment_agent.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:agents/registry.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:core/database.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:core/workflow_config.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "file:web/board_events.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:handle_coach_dev_result",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:handle_comment_agent_result",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:_validate_agent_decision",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:parse_pm_research_conclusion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:append_research_to_memory",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:_trigger_wiki_archive",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:handle_coach_dev_result",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:handle_comment_agent_result",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:parse_pm_research_conclusion",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:scheduler/handlers.py",
+      "target": "function:scheduler/handlers.py:append_research_to_memory",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/board_events.py",
+      "target": "function:web/board_events.py:broadcast",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/board_events.py",
+      "target": "function:web/board_events.py:broadcast",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:web/board_events.py",
+      "target": "function:web/board_events.py:board_sse",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:web/board_events.py",
+      "target": "function:web/board_events.py:board_sse",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:scheduler/engine.py:SchedulerEngine",
+      "target": "function:scheduler/handlers.py:handle_coach_dev_result",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:scheduler/engine.py:SchedulerEngine",
+      "target": "function:scheduler/handlers.py:handle_comment_agent_result",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:scheduler/engine.py:SchedulerEngine",
+      "target": "function:web/board_events.py:broadcast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:scheduler/engine.py:SchedulerEngine",
+      "target": "class:core/workflow_config.py:WorkflowConfig",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:scheduler/handlers.py:handle_coach_dev_result",
+      "target": "function:web/board_events.py:broadcast",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:scheduler/handlers.py:handle_comment_agent_result",
+      "target": "function:scheduler/handlers.py:_validate_agent_decision",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:scheduler/handlers.py:_validate_agent_decision",
+      "target": "function:scheduler/handlers.py:parse_pm_research_conclusion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:scheduler/handlers.py:_validate_agent_decision",
+      "target": "function:scheduler/handlers.py:append_research_to_memory",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:scheduler/handlers.py:_validate_agent_decision",
+      "target": "function:scheduler/handlers.py:_trigger_wiki_archive",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "service:docker-compose.yml",
+      "target": "service:Dockerfile",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "document:README.md",
+      "target": "config:.env.example",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:requirements.txt",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:.env.example",
+      "target": "file:main.py",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "config:pytest.ini",
+      "target": "file:main.py",
+      "type": "configures",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:build-and-push.sh",
+      "target": "file:main.py",
+      "type": "deploys",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "config:agents/roles/coach_dev.yaml",
+      "target": "config:agents/roles/coach_review.yaml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:agents/roles/industry.yaml",
+      "target": "config:agents/roles/pm.yaml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "config:agents/roles/pm.yaml",
+      "target": "config:agents/roles/coach_dev.yaml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/SCHEMA.md",
+      "target": "document:docs/wiki/index.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/SCHEMA.md",
+      "target": "document:docs/wiki/log.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/index.md",
+      "target": "document:docs/wiki/log.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer2-infra.md",
+      "target": "file:core/database.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer2-infra.md",
+      "target": "file:mcp_server/agent_server.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer3-orchestration.md",
+      "target": "file:scheduler/engine.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer3-orchestration.md",
+      "target": "file:core/session_manager.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer3-orchestration.md",
+      "target": "file:agents/coach_dev.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer3-orchestration.md",
+      "target": "file:agents/comment_agent.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer5-frontend.md",
+      "target": "file:web/api.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer5-frontend.md",
+      "target": "file:web/chat.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer5-frontend.md",
+      "target": "file:web/static/app.js",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/workflows.md",
+      "target": "file:scheduler/engine.py",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer2-infra.md",
+      "target": "document:docs/wiki/arch/layer1-runtime.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer3-orchestration.md",
+      "target": "document:docs/wiki/arch/layer2-infra.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/layer5-frontend.md",
+      "target": "document:docs/wiki/arch/layer2-infra.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/workflows.md",
+      "target": "document:docs/wiki/arch/layer3-orchestration.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/arch/workflows.md",
+      "target": "document:docs/wiki/arch/layer4-roles.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/decisions.md",
+      "target": "document:docs/wiki/product/positioning.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/decisions.md",
+      "target": "document:docs/wiki/product/workflows-product.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/decisions.md",
+      "target": "document:docs/wiki/product/rejected.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/market.md",
+      "target": "document:docs/wiki/product/positioning.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/market.md",
+      "target": "document:docs/wiki/product/rejected.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/positioning.md",
+      "target": "document:docs/wiki/product/decisions.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/positioning.md",
+      "target": "document:docs/wiki/product/workflows-product.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/positioning.md",
+      "target": "document:docs/wiki/product/market.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/rejected.md",
+      "target": "document:docs/wiki/product/decisions.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/rejected.md",
+      "target": "document:docs/wiki/product/positioning.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/workflows-product.md",
+      "target": "document:docs/wiki/product/decisions.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/wiki/product/workflows-product.md",
+      "target": "document:docs/wiki/product/positioning.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/toolchain/install_android.sh",
+      "target": "file:scripts/toolchain/install_flutter.sh",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:scripts/toolchain/install_flutter.sh",
+      "target": "file:scripts/toolchain/install_rust.sh",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:mcp_server/server.py",
+      "target": "file:mcp_server/kh_client.py",
+      "type": "imports",
+      "weight": 0.7,
+      "direction": "forward"
+    },
+    {
+      "source": "file:docker/firecrawl-lite/server.py",
+      "target": "document:docker/firecrawl-lite/requirements.txt",
+      "type": "depends_on",
+      "weight": 0.6,
+      "direction": "forward"
+    },
+    {
+      "source": "config:docker/hermes/config.yaml",
+      "target": "file:mcp_server/server.py",
+      "type": "configures",
+      "weight": 0.6,
+      "direction": "forward"
+    },
+    {
+      "source": "config:config/workflow.yaml",
+      "target": "file:scheduler/engine.py",
+      "type": "configures",
+      "weight": 0.6,
+      "direction": "forward"
+    },
+    {
+      "source": "config:config/toolchain_map.json",
+      "target": "file:scripts/ai-exec",
+      "type": "configures",
+      "weight": 0.6,
+      "direction": "forward"
+    },
+    {
+      "source": "file:web/static/app.js",
+      "target": "file:web/static/avatars/coach_dev_256.png",
+      "type": "depends_on",
+      "weight": 0.4,
+      "direction": "forward"
+    },
+    {
+      "source": "file:web/static/app.js",
+      "target": "file:web/static/avatars/coach_review_256.png",
+      "type": "depends_on",
+      "weight": 0.4,
+      "direction": "forward"
+    },
+    {
+      "source": "document:skills/research/industry-advisor/SKILL.md",
+      "target": "config:agents/roles/industry.yaml",
+      "type": "documents",
+      "weight": 0.5,
+      "direction": "forward"
+    },
+    {
+      "source": "document:skills/pm/pm-conflict-resolution/SKILL.md",
+      "target": "config:agents/roles/pm.yaml",
+      "type": "documents",
+      "weight": 0.5,
+      "direction": "forward"
+    },
+    {
+      "source": "document:skills/pm/pm-coupling/SKILL.md",
+      "target": "config:agents/roles/pm.yaml",
+      "type": "documents",
+      "weight": 0.5,
+      "direction": "forward"
+    },
+    {
+      "source": "document:skills/pm/pm-research-audit/SKILL.md",
+      "target": "config:agents/roles/pm.yaml",
+      "type": "documents",
+      "weight": 0.5,
+      "direction": "forward"
+    },
+    {
+      "source": "document:skills/research/market-research/SKILL.md",
+      "target": "config:agents/roles/industry.yaml",
+      "type": "documents",
+      "weight": 0.5,
+      "direction": "forward"
+    },
+    {
+      "source": "file:mcp_server/kh_client.py",
+      "target": "class:mcp_server/kh_client.py:KHClient",
+      "type": "contains",
+      "weight": 1.0,
+      "direction": "forward"
+    },
+    {
+      "source": "file:docker/firecrawl-lite/server.py",
+      "target": "function:docker/firecrawl-lite/server.py:fetch_and_extract",
+      "type": "contains",
+      "weight": 1.0,
+      "direction": "forward"
+    },
+    {
+      "source": "file:docker/firecrawl-lite/server.py",
+      "target": "function:docker/firecrawl-lite/server.py:scrape",
+      "type": "contains",
+      "weight": 1.0,
+      "direction": "forward"
+    },
+    {
+      "source": "file:mcp_server/server.py",
+      "target": "function:mcp_server/server.py:kh_brief",
+      "type": "contains",
+      "weight": 1.0,
+      "direction": "forward"
+    },
+    {
+      "source": "function:mcp_server/server.py:kh_brief",
+      "target": "class:mcp_server/kh_client.py:KHClient",
+      "type": "calls",
+      "weight": 0.8,
+      "direction": "forward"
+    },
+    {
+      "source": "file:web/static/index.html",
+      "target": "file:web/static/style.css",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/static/index.html",
+      "target": "file:web/static/lib/marked.min.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/static/index.html",
+      "target": "file:web/static/lib/purify.min.js",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/static/index.html",
+      "target": "file:web/static/avatars/pm_avatar.png",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "file:web/static/style.css",
+      "target": "file:web/static/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:web/templates/generic-product-advisor.md",
+      "target": "file:web/static/index.html",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:agents/coach_dev.py",
+      "target": "function:core/telemetry.py:get_stats",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:docs/wiki/arch/layer1-runtime.md",
+      "target": "service:Dockerfile",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:docs/wiki/arch/layer4-roles.md",
+      "target": "config:agents/roles/pm.yaml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:docs/wiki/arch/layer4-roles.md",
+      "target": "config:agents/roles/industry.yaml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:docs/wiki/arch/layer4-roles.md",
+      "target": "config:agents/roles/coach_dev.yaml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "document:docs/wiki/arch/layer4-roles.md",
+      "target": "config:agents/roles/coach_review.yaml",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.7
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:core-infrastructure",
+      "name": "Core Infrastructure",
+      "description": "Database schema and migrations, in-memory pub-sub buffer, telemetry stats, workflow config hot-reload",
+      "nodeIds": [
+        "file:core/__init__.py",
+        "file:core/chat_task_manager.py",
+        "file:core/database.py",
+        "file:core/session_manager.py",
+        "file:core/task_buffer.py",
+        "file:core/telemetry.py",
+        "file:core/workflow_config.py"
+      ]
+    },
+    {
+      "id": "layer:orchestration",
+      "name": "Orchestration",
+      "description": "Scheduler engine main loop, agent result handlers, CEO escalation and stuck card recovery",
+      "nodeIds": [
+        "file:scheduler/__init__.py",
+        "file:scheduler/engine.py",
+        "file:scheduler/handlers.py"
+      ]
+    },
+    {
+      "id": "layer:agents",
+      "name": "AI Agents",
+      "description": "Agent implementations, role registry, MCP config generation, event types and YAML role declarations",
+      "nodeIds": [
+        "config:agents/roles/coach_dev.yaml",
+        "config:agents/roles/coach_review.yaml",
+        "config:agents/roles/industry.yaml",
+        "config:agents/roles/pm.yaml",
+        "file:agents/__init__.py",
+        "file:agents/coach_dev.py",
+        "file:agents/comment_agent.py",
+        "file:agents/event_types.py",
+        "file:agents/mcp_config.py",
+        "file:agents/registry.py"
+      ]
+    },
+    {
+      "id": "layer:api-and-frontend",
+      "name": "API and Frontend",
+      "description": "FastAPI REST endpoints, SSE real-time push, streaming chat with Hermes bridge, middleware and Dashboard SPA",
+      "nodeIds": [
+        "document:web/templates/generic-product-advisor.md",
+        "file:web/__init__.py",
+        "file:web/api.py",
+        "file:web/board_events.py",
+        "file:web/chat.py",
+        "file:web/hermes_chat.py",
+        "file:web/middleware.py",
+        "file:web/static/app.js",
+        "file:web/static/avatars/coach_dev_256.png",
+        "file:web/static/avatars/coach_dev_avatar.png",
+        "file:web/static/avatars/coach_review_256.png",
+        "file:web/static/avatars/coach_review_avatar.png",
+        "file:web/static/avatars/industry_256.png",
+        "file:web/static/avatars/industry_avatar.png",
+        "file:web/static/avatars/pm_256.png",
+        "file:web/static/avatars/pm_avatar.png",
+        "file:web/static/index.html",
+        "file:web/static/lib/marked.min.js",
+        "file:web/static/lib/purify.min.js",
+        "file:web/static/style.css"
+      ]
+    },
+    {
+      "id": "layer:mcp-server",
+      "name": "MCP Tool Server",
+      "description": "Fine-grained kanban operation tools for agent subprocesses and intent-driven MCP interface for external use",
+      "nodeIds": [
+        "file:mcp_server/__init__.py",
+        "file:mcp_server/agent_server.py",
+        "file:mcp_server/kh_client.py",
+        "file:mcp_server/server.py"
+      ]
+    },
+    {
+      "id": "layer:infrastructure",
+      "name": "Infrastructure and Config",
+      "description": "Dockerfile builds, docker-compose orchestration, microservice configs, toolchain scripts, app entrypoint and project configs",
+      "nodeIds": [
+        "config:.env.example",
+        "config:.gitignore",
+        "config:config/toolchain_map.json",
+        "config:config/workflow.yaml",
+        "config:docker/.gitkeep",
+        "config:docker/hermes/config.yaml",
+        "config:docker/searxng/limiter.toml",
+        "config:docker/searxng/settings.yml",
+        "config:pytest.ini",
+        "document:docker/firecrawl-lite/requirements.txt",
+        "document:requirements.txt",
+        "file:build-and-push.sh",
+        "file:docker/firecrawl-lite/server.py",
+        "file:main.py",
+        "file:scripts/ai-exec",
+        "file:scripts/toolchain/install_android.sh",
+        "file:scripts/toolchain/install_flutter.sh",
+        "file:scripts/toolchain/install_rust.sh",
+        "service:.dockerignore",
+        "service:Dockerfile",
+        "service:docker-compose.yml",
+        "service:docker/firecrawl-lite/Dockerfile"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "Documentation and Knowledge Base",
+      "description": "Project README, LLM Wiki architecture docs, product decision records, and agent skill guides",
+      "nodeIds": [
+        "document:README.md",
+        "document:docs/wiki/SCHEMA.md",
+        "document:docs/wiki/arch/layer1-runtime.md",
+        "document:docs/wiki/arch/layer2-infra.md",
+        "document:docs/wiki/arch/layer3-orchestration.md",
+        "document:docs/wiki/arch/layer4-roles.md",
+        "document:docs/wiki/arch/layer5-frontend.md",
+        "document:docs/wiki/arch/workflows.md",
+        "document:docs/wiki/index.md",
+        "document:docs/wiki/log.md",
+        "document:docs/wiki/product/decisions.md",
+        "document:docs/wiki/product/market.md",
+        "document:docs/wiki/product/positioning.md",
+        "document:docs/wiki/product/rejected.md",
+        "document:docs/wiki/product/workflows-product.md",
+        "document:skills/pm/pm-conflict-resolution/SKILL.md",
+        "document:skills/pm/pm-coupling/SKILL.md",
+        "document:skills/pm/pm-research-audit/SKILL.md",
+        "document:skills/research/industry-advisor/SKILL.md",
+        "document:skills/research/market-research/SKILL.md"
+      ]
+    },
+    {
+      "id": "layer:test",
+      "name": "Tests",
+      "description": "pytest-asyncio integration and unit tests covering chat endpoints, ChatTaskManager and TaskBuffer",
+      "nodeIds": [
+        "file:tests/test_chat_endpoints.py",
+        "file:tests/test_chat_task_manager.py",
+        "file:tests/test_task_buffer.py"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "项目全景",
+      "description": "从 README 了解 Kanban Harness 的定位：一个本地优先的 AI 团队编排引擎。看板不再是被动的任务板，而是主动的调度层——Scheduler 根据看板状态自动触发 AI 角色（行业顾问、PM、开发教练）执行工作，人类通过 Dashboard 保持 CEO 级控制权。README 同时介绍了四层架构（Dashboard → Scheduler → Agents → Core）和快速启动指南。",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "应用入口与启动流程",
+      "description": "main.py 是整个系统的启动入口，扇出最高（10条依赖），串联了所有核心子系统。它使用 FastAPI lifespan 管理生命周期：初始化数据库、启动遥测、恢复孤立会话、配置 Hermes、注册路由和中间件，最后启动调度器轮询循环。理解这个文件就能看清系统启动时各模块的组装顺序。",
+      "nodeIds": [
+        "file:main.py"
+      ],
+      "languageLesson": "FastAPI 的 lifespan 上下文管理器（async generator）替代了旧版 on_startup/on_shutdown 事件，通过 yield 分隔启动逻辑和清理逻辑，确保资源在服务关闭时正确释放。"
+    },
+    {
+      "order": 3,
+      "title": "数据层：SQLite 与增量迁移",
+      "description": "database.py 是整个系统被依赖最多的模块（fan-in=14），几乎所有层都直接读写它。它定义了 13 张 SQLite 表（projects、versions、requirements、comments、sessions 等）并实现了无框架的增量迁移机制——通过检测列是否存在决定是否 ALTER TABLE。这里还提供了 next_code 编号生成器，为每张需求卡生成唯一标识如 KH-042。",
+      "nodeIds": [
+        "file:core/database.py"
+      ],
+      "languageLesson": "使用 aiosqlite 实现异步数据库操作，避免阻塞事件循环。无框架迁移模式通过 PRAGMA table_info 自省列定义，比 Alembic 更轻量但需要手工维护迁移顺序。"
+    },
+    {
+      "order": 4,
+      "title": "角色注册中心与声明式配置",
+      "description": "registry.py 是第二高 fan-in 的模块（fan-in=9），被调度器、API、中间件和 MCP Server 共同依赖。AgentRegistry 从 YAML 配置文件加载四个 AI 角色的定义（权限、触发规则、模型配置），提供权限校验和事件触发匹配能力。它是多角色博弈引擎的'角色清单'——决定了谁能做什么、什么时候被触发。",
+      "nodeIds": [
+        "file:agents/registry.py",
+        "config:agents/roles/pm.yaml",
+        "config:agents/roles/industry.yaml"
+      ],
+      "languageLesson": "YAML 角色定义采用声明式配置模式，将 system_prompt、allowed_tools、permissions 和 triggers 分段声明，运行时由 AgentRegistry 解析为 dataclass 实例。这种配置即代码的方式让角色调整无需改动 Python 逻辑。"
+    },
+    {
+      "order": 5,
+      "title": "调度引擎：看板驱动的编排循环",
+      "description": "SchedulerEngine 是系统的'心脏'——一个基于 asyncio 的轮询循环，定期扫描看板中 dev/research 列的卡片，根据角色触发规则和并发窗口决定是否派发 agent 任务。它还负责卡住检测、CEO 升级和失败重试。WorkflowConfig 提供热重载的轮询间隔和超时参数，无需重启即可调整调度行为。",
+      "nodeIds": [
+        "file:scheduler/engine.py",
+        "file:core/workflow_config.py",
+        "config:config/workflow.yaml"
+      ],
+      "languageLesson": "大量使用 asyncio.create_task 实现非阻塞 agent 派发，配合 aiosqlite 异步轮询数据库。WorkflowConfig 使用文件 mtime 检测实现零成本热重载——每次读取前比较修改时间，变化时重新解析 YAML。"
+    },
+    {
+      "order": 6,
+      "title": "Agent 结果处理与决策验证",
+      "description": "handlers.py 是调度器的'出口'——当 agent 执行完毕后，这里负责状态流转、决策验证和后处理。handle_coach_dev_result 执行开发 agent 后链接 commit 并移卡到 testing；handle_comment_agent_result 验证评审决策并处理 CEO 升级。_validate_agent_decision 是统一的后验证逻辑，确保 agent 不会只评论不移卡陷入死循环。",
+      "nodeIds": [
+        "file:scheduler/handlers.py"
+      ]
+    },
+    {
+      "order": 7,
+      "title": "会话管理与遥测",
+      "description": "SessionManager 管理 agent 执行会话的完整生命周期：注册进程、心跳监控、超时杀进程、失败重试调度和数据库状态对账。TelemetryStats 统计 LLM 调用次数与 token 消耗，自定义的 _HeartbeatSpanProcessor 将 OTel span 生命周期事件桥接为 agent 心跳信号——当 agent 在做 LLM 调用时自动产生心跳，无需额外探针。",
+      "nodeIds": [
+        "file:core/session_manager.py",
+        "file:core/telemetry.py"
+      ],
+      "languageLesson": "自定义 OpenTelemetry SpanProcessor 是 OTel 的扩展点，通过 on_start/on_end 回调拦截 span 事件。这里巧妙复用了 tracing 基础设施来驱动心跳信号，避免了两套并行的监控机制。"
+    },
+    {
+      "order": 8,
+      "title": "AI Agent 实现",
+      "description": "两个核心 agent 实现展示了系统如何调用 LLM 完成实际工作。CoachDev 在 git worktree 中隔离执行 Claude CLI 完成编码任务，管理分支生命周期；CommentAgent 调度 LLM 对需求卡片进行多角色评审，支持 Hermes 和 Claude CLI 双后端。两者都通过 asyncio subprocess 流式解析 JSON 事件输出，实现实时心跳和 token 采集。",
+      "nodeIds": [
+        "file:agents/coach_dev.py",
+        "file:agents/comment_agent.py"
+      ],
+      "languageLesson": "通过 asyncio.create_subprocess_exec 启动 Claude CLI 子进程并逐行解析 stdout 的 JSON stream 事件。git worktree 提供零成本的分支隔离——在同一仓库中创建独立工作目录，避免多 agent 并发时的文件冲突。"
+    },
+    {
+      "order": 9,
+      "title": "MCP 工具服务器：Agent 的操作接口",
+      "description": "agent_server.py 为 Claude CLI 子进程暴露细粒度的看板操作工具——CRUD 需求、添加评论、原子决策、Wiki 读写。核心是 _atomic_decision 原语，在单个事务中完成权限校验、状态流转、评论写入和审计日志。Agent 不直接操作数据库，而是通过这层 MCP 工具间接操作，实现了权限约束和操作审计。",
+      "nodeIds": [
+        "file:mcp_server/agent_server.py",
+        "file:mcp_server/server.py"
+      ],
+      "languageLesson": "基于 FastMCP 框架，每个 Python 函数即一个 MCP tool，通过装饰器注册到工具清单。Claude CLI 通过 stdio 与 MCP Server 通信，实现了 AI agent 与看板系统的松耦合集成。"
+    },
+    {
+      "order": 10,
+      "title": "REST API 与权限中间件",
+      "description": "web/api.py 是面向 Dashboard 和外部调用的 REST 接口层（fan-out=9），定义了项目/版本/需求的完整 CRUD、调度器控制、CEO 决策提交和 token 统计等端点。PermissionGateway 中间件根据 X-Agent-Role 请求头验证操作权限——无角色头的请求视为人类用户直接放行，有角色头的必须通过 AgentRegistry 权限检查。",
+      "nodeIds": [
+        "file:web/api.py",
+        "file:web/middleware.py"
+      ],
+      "languageLesson": "FastAPI 的 Depends 注入 DB 连接实现请求级别的连接管理；APIRouter 按功能分组路由。PermissionGateway 作为 Starlette middleware 在路由匹配前拦截请求，是 RBAC 的轻量实现。"
+    },
+    {
+      "order": 11,
+      "title": "实时事件与流式对话",
+      "description": "board_events.py 维护 SSE 订阅者队列，将卡片状态变更实时推送到前端。chat.py 和 hermes_chat.py 共同实现 Dashboard 的多角色 AI 对话——chat.py 提供 SSE 流式响应和 tool-use 循环（PM 可在对话中直接操作看板），hermes_chat.py 负责启动 Claude CLI 子进程并构建包含项目上下文和角色定义的 system prompt。",
+      "nodeIds": [
+        "file:web/board_events.py",
+        "file:web/chat.py",
+        "file:web/hermes_chat.py"
+      ],
+      "languageLesson": "FastAPI 的 StreamingResponse 配合 async generator 实现 SSE 推送。对话的 tool-use 循环是一个递归模式：LLM 返回 tool_use → 执行工具 → 将结果拼入 messages → 再次调用 LLM，直到 LLM 返回纯文本回复。"
+    },
+    {
+      "order": 12,
+      "title": "Dashboard 前端",
+      "description": "index.html 和 app.js 构成了零框架的单页应用——看板拖拽视图、AI 聊天面板、Reigns 风格的左右滑动决策浮层、实时 SSE 更新。style.css 使用 CSS 自定义属性定义暗色主题设计系统，823 行纯 CSS 覆盖了从基础组件到复杂交互动画的所有视觉层，无预处理器依赖。",
+      "nodeIds": [
+        "file:web/static/index.html",
+        "file:web/static/app.js",
+        "file:web/static/style.css"
+      ],
+      "languageLesson": "纯 HTML + Vanilla JS 的 SPA 模式，通过动态 DOM 操作替代框架的虚拟 DOM。CSS 自定义属性（var(--color-primary)）实现了主题色系统，修改根变量即可全局换肤。"
+    },
+    {
+      "order": 13,
+      "title": "容器化与服务编排",
+      "description": "Dockerfile 将整个系统打包为生产镜像——按变动频率分层安装系统工具链、AI CLI 和应用依赖，最大化缓存命中。docker-compose.yml 编排三个服务：web（主应用+热重载）、firecrawl-lite（网页抓取，供行业顾问调研用）、searxng（元搜索引擎）。全部使用 host 网络模式简化容器间通信。",
+      "nodeIds": [
+        "service:Dockerfile",
+        "service:docker-compose.yml"
+      ],
+      "languageLesson": "COPY 指令按变动频率排列（系统包 → AI 工具 → pip 依赖 → 源码），使日常开发中只有最后一层失效需要重建。network_mode: host 跳过 Docker 网络栈，让容器直接使用宿主机网络，适合本地开发但生产环境需谨慎。"
+    },
+    {
+      "order": 14,
+      "title": "LLM Wiki 知识体系",
+      "description": "docs/wiki/ 下的架构文档是系统的'组织记忆'——agent 执行调研后由 PM 编译结论并沉淀为结构化 wiki 页面。五层架构文档和产品决策记录不仅是文档，更是 agent 工作流的输入源——PM 和行业顾问在评审时会加载这些知识作为上下文，形成'调研→沉淀→复用'的知识循环。",
+      "nodeIds": [
+        "document:docs/wiki/index.md",
+        "document:docs/wiki/arch/workflows.md",
+        "document:docs/wiki/product/decisions.md"
+      ]
+    }
+  ]
+}
