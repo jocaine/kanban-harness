@@ -3049,15 +3049,11 @@ function buildActionButtons(decision) {
     const role = decision.asking_role || 'pm';
     const roleNames = { pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
     const roleName = roleNames[role] || role;
-    const actions = decision.actions || ['reply_to_role', 'approve_dev'];
+    const actions = decision.actions || ['reply_to_role'];
 
     const ACTION_DEFS = {
-        reply_to_role: { icon: '💬', label: `回复${roleName}`, hint: '卡片退回该角色继续处理', cls: 'primary' },
-        approve_dev: { icon: '✅', label: decision.type === 'research' ? '调研完成，归档' : '批准开发', hint: decision.type === 'research' ? '直接完成（跳过开发）' : '进入开发流程', cls: '' },
-        request_more_research: { icon: '🔍', label: '需要补充调研', hint: '退回调研补充材料', cls: 'warning' },
+        reply_to_role: { icon: '💬', label: `回复${roleName}`, hint: '回答问题，卡片留在原列', cls: 'primary' },
         retry: { icon: '🔄', label: '重试', hint: '让 AI 重新尝试处理', cls: '' },
-        move_to_dev: { icon: '⏩', label: '直接移入开发', hint: '跳过当前角色，进入 dev', cls: '' },
-        archive: { icon: '🗄️', label: '归档', hint: '不再处理此卡片', cls: 'warning' },
     };
 
     let html = '';

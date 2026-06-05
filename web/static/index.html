@@ -105,6 +105,7 @@
                 <button class="doc-tab active" data-tab="team" onclick="switchDocTab('team')">AI 团队</button>
                 <button class="doc-tab" data-tab="memory" onclick="switchDocTab('memory')">产品记忆</button>
                 <button class="doc-tab" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
+                <button class="doc-tab" data-tab="wiki" onclick="switchDocTab('wiki')">Wiki</button>
             </div>
             <div class="team-view" id="team-view">
                 <div class="team-workflow" id="team-workflow"></div>
@@ -118,6 +119,10 @@
                 <div class="team-grid" id="team-grid"></div>
             </div>
             <div class="arch-content md-content" id="arch-content" style="display:none"></div>
+            <div class="wiki-view" id="wiki-view" style="display:none">
+                <div class="wiki-page-list" id="wiki-page-list"></div>
+                <div class="wiki-page-content md-content" id="wiki-page-content"></div>
+            </div>
             <div class="arch-actions" id="arch-actions">
             </div>
         </div>
@@ -206,6 +211,23 @@
                 </div>
             </div>
             <div class="modal-body">
+                <!-- 快速输入（新建模式） -->
+                <div id="req-quick-input">
+                    <p style="margin:0 0 12px;color:var(--text2);font-size:13px">告诉 AI 团队你想做什么，PM 会帮你整理成需求卡片。</p>
+                    <textarea id="req-idea-input" rows="8" placeholder="说说你的想法，用人话就行...&#10;&#10;例如：&#10;• 我想加一个数据导出功能，支持 CSV 格式&#10;• 首页加载太慢了，优化一下性能&#10;• 做一个用户反馈收集页面，能打标签分类"></textarea>
+                    <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+                        <select id="req-quick-priority" style="width:auto;padding:6px 10px;font-size:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)">
+                            <option value="P2">普通优先级</option>
+                            <option value="P0">P0 紧急</option>
+                            <option value="P1">P1 高</option>
+                            <option value="P3">P3 低</option>
+                        </select>
+                        <span style="color:var(--text3);font-size:11px">提交后 PM 会自动拆解和排期</span>
+                    </div>
+                </div>
+
+                <!-- 完整表单（编辑模式） -->
+                <div id="req-full-form" style="display:none">
                 <!-- 标题行（始终可见） -->
                 <input type="text" id="req-title" placeholder="需求标题" />
 
@@ -253,14 +275,10 @@
                                 <option value="P3">P3 低</option>
                             </select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="req-status-group" style="display:none">
                             <label>状态</label>
                             <select id="req-status">
-                                <option value="research">调研中</option>
-                                <option value="organizing">需求整理</option>
-                                <option value="dev">开发中</option>
-                                <option value="testing">测试中</option>
-                                <option value="done">已完成</option>
+                                <option value="organizing" selected>需求整理</option>
                             </select>
                         </div>
                     </div>
@@ -277,7 +295,7 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label>负责人</label>
-                            <input type="text" id="req-assignee" placeholder="负责人" />
+                            <input type="text" id="req-assignee" style="display:none" />
                         </div>
                         <div class="form-group">
                             <label>截止日期</label>
@@ -334,6 +352,7 @@
                         </div>
                     </div>
                 </div>
+                </div><!-- end req-full-form -->
             </div>
             <div class="modal-footer">
                 <button class="btn-cancel" onclick="hideModal('req-modal')">取消</button>

@@ -264,6 +264,13 @@ async def add_comment(requirement_id: int, content: str) -> str:
     role_config = registry.get(AGENT_ROLE)
     author = role_config.display_name if role_config else AGENT_ROLE
 
+    summary = content
+    detail = ""
+
+    validation_err = _validate_comment_split(summary, detail)
+    if validation_err:
+        return validation_err
+
     db = await _get_db()
     try:
         cursor = await db.execute(
@@ -274,8 +281,8 @@ async def add_comment(requirement_id: int, content: str) -> str:
             return f"错误：需求 {requirement_id} 不存在"
 
         await db.execute(
-            "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
-            (requirement_id, author, content),
+            "INSERT INTO comments (requirement_id, author, content, detail) VALUES (?,?,?,?)",
+            (requirement_id, author, summary, detail),
         )
         await db.commit()
         return f"已添加评论到 [{row['code']}]（作者: {author}）"
@@ -346,9 +353,9 @@ async def attach_detail(requirement_id: int, content: str) -> str:
 
 @mcp.tool()
 async def read_comment_detail(comment_id: int) -> str:
-    """读取评论的详细支撑数据。
+    """读取评论的完整版内容。
 
-    PM 审核调研结果时使用，获取行业顾问等角色附加的完整数据。
+    当评论列表中显示"有完整版"时，用此工具按需加载完整内容。
 
     Args:
         comment_id: 评论 ID
@@ -362,8 +369,8 @@ async def read_comment_detail(comment_id: int) -> str:
         if not row:
             return f"错误：评论 #{comment_id} 不存在"
         if not row["detail"]:
-            return f"评论 #{comment_id} 没有附加详细数据"
-        return f"**{row['author']}** 的详细数据：\n\n{row['detail']}"
+            return f"评论 #{comment_id} 没有完整版内容"
+        return f"**{row['author']}** 的完整版：\n\n{row['detail']}"
     finally:
         await db.close()
     """获取项目背景信息：产品记忆 + 架构文档。
@@ -438,12 +445,29 @@ async def load_guideline(name: str) -> str:
 # making "commented but didn't move" impossible by design.
 
 
+def _validate_comment_split(comment: str, detail: str) -> str | None:
+    """Reject oversized comment when detail is empty. Returns error message or None."""
+    if detail.strip():
+        return None
+
+    SUMMARY_MAX = 800
+    if len(comment) <= SUMMARY_MAX:
+        return None
+
+    return (
+        f"错误：comment 参数过长（{len(comment)}字）且 detail 为空。\n"
+        "分层规则：comment 是内容的精简版（≤500字），detail 是完整版。\n"
+        "其他角色处理卡片时只会加载 comment，需要深入时才展开 detail。\n"
+        "请重新调用：comment 写精炼摘要，detail 写完整内容。"
+    )
+
+
 async def _atomic_decision(
     requirement_id: int,
     comment: str,
     detail: str,
     new_status: str | None,
-    ceo_question: str | None,
+    ceo_question: str | list[str] | None,
     expected_current_status: str,
     role: str,
 ) -> str:
@@ -456,6 +480,10 @@ async def _atomic_decision(
 
     if not comment.strip():
         return "错误：评论内容不能为空"
+
+    validation_err = _validate_comment_split(comment, detail)
+    if validation_err:
+        return validation_err
 
     role_config = registry.get(role)
     author = role_config.display_name if role_config else role
@@ -504,19 +532,21 @@ async def _atomic_decision(
         }
 
         if ceo_question:
+            questions = ceo_question if isinstance(ceo_question, list) else [ceo_question]
             ceo_dec = json.dumps({
                 "role": role,
                 "reason": "agent_d",
-                "message": ceo_question,
-                "actions": ["reply_to_role", "approve_dev", "request_more_research"],
+                "questions": questions,
+                "message": questions[0],
+                "actions": ["reply_to_role"],
                 "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }, ensure_ascii=False)
             await db.execute(
                 "UPDATE requirements SET assignee='', queue_reason=?, "
                 "ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
-                (f"等待 CEO: {ceo_question[:50]}", ceo_dec, requirement_id),
+            (f"等待 CEO: {questions[0][:50]}", ceo_dec, requirement_id),
             )
-            logger.info("CEO-ASK [%s] by %s: %s", code, role, ceo_question[:80])
+            logger.info("CEO-ASK [%s] by %s: %s", code, role, questions[0][:80])
 
         elif new_status and new_status != current_status:
             col_assignee = COL_ASSIGNEE.get(new_status, "")
@@ -553,11 +583,17 @@ async def _atomic_decision(
 async def pm_approve(requirement_id: int, comment: str, target: str = "dev", detail: str = "") -> str:
     """PM 审批通过：发表评论并将卡片推进到下一阶段。
 
+    comment 和 detail 是同一内容的两种粒度：
+    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
+    - detail: 完整版 — 需要深入了解时才展开加载
+
+    短评论（≤800字）不需要 detail。长内容必须拆分。
+
     Args:
         requirement_id: 需求 ID
-        comment: 评审意见（Markdown，200-500字摘要）
+        comment: 内容精简版（≤500字）
         target: 目标状态，"dev"（进入开发）或 "done"（调研类需求完成）
-        detail: 可选的详细支撑数据
+        detail: 内容完整版（当你的输出较长时必须填写）
     """
     if target not in ("dev", "done"):
         return "错误：target 必须是 'dev' 或 'done'"
@@ -576,10 +612,16 @@ async def pm_approve(requirement_id: int, comment: str, target: str = "dev", det
 async def pm_send_to_research(requirement_id: int, comment: str, detail: str = "") -> str:
     """PM 退回调研：发表评论并将卡片移回 research 列，由行业顾问补充调研。
 
+    comment 和 detail 是同一内容的两种粒度：
+    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
+    - detail: 完整版 — 需要深入了解时才展开加载
+
+    短评论（≤800字）不需要 detail。长内容必须拆分。
+
     Args:
         requirement_id: 需求 ID
-        comment: 退回原因和补充调研方向（Markdown）
-        detail: 可选的详细说明
+        comment: 内容精简版（≤500字）
+        detail: 内容完整版（当你的输出较长时必须填写）
     """
     return await _atomic_decision(
         requirement_id=requirement_id,
@@ -593,22 +635,28 @@ async def pm_send_to_research(requirement_id: int, comment: str, detail: str = "
 
 
 @mcp.tool()
-async def pm_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+async def pm_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
     """PM 请求 CEO 决策：发表评论并设置等待 CEO 决策。卡片留在 organizing 列。
 
     Args:
         requirement_id: 需求 ID
         comment: 当前分析和需要 CEO 决策的背景说明
-        question: 需要 CEO 回答的具体问题（简洁明确）
+        question: 需要 CEO 回答的具体问题。可以是单个字符串，也可以是问题列表（每个问题 CEO 将逐一回答）
     """
-    if not question.strip():
-        return "错误：question 不能为空"
+    if isinstance(question, list):
+        if not question or not any(q.strip() for q in question):
+            return "错误：question 列表不能为空"
+        questions = [q.strip() for q in question if q.strip()]
+    else:
+        if not question.strip():
+            return "错误：question 不能为空"
+        questions = [question.strip()]
     return await _atomic_decision(
         requirement_id=requirement_id,
         comment=comment,
         detail="",
         new_status=None,
-        ceo_question=question.strip(),
+        ceo_question=questions if len(questions) > 1 else questions[0],
         expected_current_status="organizing",
         role="pm",
     )
@@ -618,13 +666,8 @@ async def pm_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
 
 @mcp.tool()
 async def industry_complete(requirement_id: int, comment: str, detail: str = "") -> str:
-    """行业顾问调研完成：发表结论并将卡片转给 PM（research → organizing）。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 调研结论摘要（200-500字）
-        detail: 详细调研数据（表格、来源链接、搜索记录等）
-    """
+    """行业顾问调研完成：发表结论并将卡片转给 PM（research → organizing）。"""
+    logger.info(">>> industry_complete CALLED: req_id=%d, comment_len=%d", requirement_id, len(comment))
     return await _atomic_decision(
         requirement_id=requirement_id,
         comment=comment,
@@ -637,22 +680,28 @@ async def industry_complete(requirement_id: int, comment: str, detail: str = "")
 
 
 @mcp.tool()
-async def industry_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+async def industry_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
     """行业顾问请求 CEO 补充信息：发表评论并设置等待 CEO。卡片留在 research 列。
 
     Args:
         requirement_id: 需求 ID
         comment: 当前调研进展和缺失信息说明
-        question: 需要 CEO 补充的具体信息（简洁明确）
+        question: 需要 CEO 补充的具体信息。可以是单个字符串或问题列表
     """
-    if not question.strip():
-        return "错误：question 不能为空"
+    if isinstance(question, list):
+        if not question or not any(q.strip() for q in question):
+            return "错误：question 列表不能为空"
+        questions = [q.strip() for q in question if q.strip()]
+    else:
+        if not question.strip():
+            return "错误：question 不能为空"
+        questions = [question.strip()]
     return await _atomic_decision(
         requirement_id=requirement_id,
         comment=comment,
         detail="",
         new_status=None,
-        ceo_question=question.strip(),
+        ceo_question=questions if len(questions) > 1 else questions[0],
         expected_current_status="research",
         role="industry",
     )
@@ -664,10 +713,16 @@ async def industry_ask_ceo(requirement_id: int, comment: str, question: str) -> 
 async def review_pass(requirement_id: int, comment: str, detail: str = "") -> str:
     """QA 审查通过：发表评论并将卡片移到 done。
 
+    comment 和 detail 是同一内容的两种粒度：
+    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
+    - detail: 完整版 — 需要深入了解时才展开加载
+
+    短评论（≤800字）不需要 detail。长内容必须拆分。
+
     Args:
         requirement_id: 需求 ID
-        comment: 审查通过结论
-        detail: 可选的逐条验收详情
+        comment: 内容精简版（≤500字）
+        detail: 内容完整版（当你的输出较长时必须填写）
     """
     return await _atomic_decision(
         requirement_id=requirement_id,
@@ -684,10 +739,16 @@ async def review_pass(requirement_id: int, comment: str, detail: str = "") -> st
 async def review_reject(requirement_id: int, comment: str, detail: str = "") -> str:
     """QA 审查不通过：发表评论并将卡片打回 dev 列。
 
+    comment 和 detail 是同一内容的两种粒度：
+    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
+    - detail: 完整版 — 需要深入了解时才展开加载
+
+    短评论（≤800字）不需要 detail。长内容必须拆分。
+
     Args:
         requirement_id: 需求 ID
-        comment: 问题概述和打回原因
-        detail: 可选的详细问题列表和复现步骤
+        comment: 内容精简版（≤500字）
+        detail: 内容完整版（当你的输出较长时必须填写）
     """
     return await _atomic_decision(
         requirement_id=requirement_id,
@@ -701,27 +762,224 @@ async def review_reject(requirement_id: int, comment: str, detail: str = "") -> 
 
 
 @mcp.tool()
-async def review_ask_ceo(requirement_id: int, comment: str, question: str) -> str:
+async def review_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
     """QA 请求 CEO 决策：发表评论并设置等待 CEO。卡片留在 testing 列。
 
     Args:
         requirement_id: 需求 ID
         comment: 审查中遇到的无法自行判断的问题
-        question: 需要 CEO 裁决的具体问题（简洁明确）
+        question: 需要 CEO 裁决的具体问题。可以是单个字符串或问题列表
     """
-    if not question.strip():
-        return "错误：question 不能为空"
+    if isinstance(question, list):
+        if not question or not any(q.strip() for q in question):
+            return "错误：question 列表不能为空"
+        questions = [q.strip() for q in question if q.strip()]
+    else:
+        if not question.strip():
+            return "错误：question 不能为空"
+        questions = [question.strip()]
     return await _atomic_decision(
         requirement_id=requirement_id,
         comment=comment,
         detail="",
         new_status=None,
-        ceo_question=question.strip(),
+        ceo_question=questions if len(questions) > 1 else questions[0],
         expected_current_status="testing",
         role="coach_review",
+    )
+
+
+@mcp.tool()
+async def dev_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
+    """开发请求 CEO 决策：发表评论并设置等待 CEO。卡片留在 dev 列。
+
+    Args:
+        requirement_id: 需求 ID
+        comment: 开发中遇到的需要 CEO 裁决的问题背景
+        question: 需要 CEO 裁决的具体问题。可以是单个字符串或问题列表
+    """
+    if isinstance(question, list):
+        if not question or not any(q.strip() for q in question):
+            return "错误：question 列表不能为空"
+        questions = [q.strip() for q in question if q.strip()]
+    else:
+        if not question.strip():
+            return "错误：question 不能为空"
+        questions = [question.strip()]
+    return await _atomic_decision(
+        requirement_id=requirement_id,
+        comment=comment,
+        detail="",
+        new_status=None,
+        ceo_question=questions if len(questions) > 1 else questions[0],
+        expected_current_status="dev",
+        role="coach_dev",
     )
 
 
 if __name__ == "__main__":
     logger.info("Agent MCP server starting (role=%s, project=%d, db=%s)", AGENT_ROLE, PROJECT_ID, DB_PATH)
     mcp.run()
+
+
+# ==================== Wiki Tools ====================
+
+
+@mcp.tool()
+async def wiki_write_page(project_id: int, page_path: str, content: str, log_message: str = "") -> str:
+    """写入 wiki 页面。自动更新 frontmatter 日期和 log。
+
+    Args:
+        project_id: 项目 ID（默认使用环境变量中的项目）
+        page_path: 页面路径如 'research/KH-042-can-bus'（无需 .md 后缀）
+        content: 页面完整内容（应包含 frontmatter）
+        log_message: 可选的 log 描述
+    """
+    from agents.registry import registry
+    if not registry.check_permission(AGENT_ROLE, "write", "wiki"):
+        return f"权限拒绝：角色 '{AGENT_ROLE}' 无权写入 wiki"
+
+    pid = project_id or PROJECT_ID
+    try:
+        from core.wiki import write_wiki_page
+        relative = write_wiki_page(pid, page_path, content, log_message)
+        return f"已写入 wiki 页面: {relative}"
+    except ValueError as e:
+        return f"错误：{e}"
+    except Exception as e:
+        return f"写入失败：{e}"
+
+
+@mcp.tool()
+async def wiki_read_page(project_id: int, page_path: str) -> str:
+    """读取 wiki 页面内容。
+
+    Args:
+        project_id: 项目 ID（默认使用环境变量中的项目）
+        page_path: 页面路径如 'research/KH-042-can-bus'
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import read_wiki_page
+    content = read_wiki_page(pid, page_path)
+    if not content:
+        return f"页面不存在: {page_path}"
+    return content
+
+
+@mcp.tool()
+async def wiki_list_pages(project_id: int, subdir: str = "") -> str:
+    """列出 wiki 页面目录。
+
+    Args:
+        project_id: 项目 ID（默认使用环境变量中的项目）
+        subdir: 子目录过滤（research/product/arch），留空列出全部
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import list_wiki_pages
+    pages = list_wiki_pages(pid, subdir or None)
+    if not pages:
+        return "暂无 wiki 页面"
+    import json
+    return json.dumps(pages, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def wiki_write_raw(project_id: int, topic: str, slug: str, content: str,
+                         source_url: str = "", published: str = "Unknown") -> str:
+    """写入原始素材到 raw/ 目录。不可变，不会覆盖已有文件。
+
+    Args:
+        project_id: 项目 ID
+        topic: 主题目录名（如 'research', 'product'）
+        slug: 文件名 slug（kebab-case，如 '2026-06-03-can-bus-spec'）
+        content: 原始内容
+        source_url: 来源 URL
+        published: 发布日期（YYYY-MM-DD 或 Unknown）
+    """
+    pid = project_id or PROJECT_ID
+    try:
+        from core.wiki import write_raw
+        relative = write_raw(pid, topic, slug, content, source_url, published)
+        return f"已写入原始素材: {relative}"
+    except ValueError as e:
+        return f"错误：{e}"
+    except Exception as e:
+        return f"写入失败：{e}"
+
+
+@mcp.tool()
+async def wiki_read_raw(project_id: int, raw_path: str) -> str:
+    """读取原始素材文件。
+
+    Args:
+        project_id: 项目 ID
+        raw_path: 路径如 'topic/filename'（无 raw/ 前缀，无 .md 后缀）
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import read_raw
+    content = read_raw(pid, raw_path)
+    if not content:
+        return f"原始素材不存在: {raw_path}"
+    return content
+
+
+@mcp.tool()
+async def wiki_list_raw(project_id: int, topic: str = "") -> str:
+    """列出原始素材文件。
+
+    Args:
+        project_id: 项目 ID
+        topic: 按主题过滤，留空列出全部
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import list_raw
+    raws = list_raw(pid, topic or None)
+    if not raws:
+        return "暂无原始素材"
+    import json
+    return json.dumps(raws, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def wiki_ingest(project_id: int, raw_path: str) -> str:
+    """准备 ingest 上下文：返回 raw 内容 + 相关 wiki 页面，供你决定编译策略。
+
+    Args:
+        project_id: 项目 ID
+        raw_path: 原始素材路径如 'topic/filename'
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import prepare_ingest
+    import json
+    result = prepare_ingest(pid, raw_path)
+    if "error" in result:
+        return result["error"]
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def wiki_update_index(project_id: int) -> str:
+    """重建 wiki index.md（扫描所有页面生成表格目录）。
+
+    Args:
+        project_id: 项目 ID
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import update_index
+    content = update_index(pid)
+    lines = content.count("\n")
+    return f"已重建 index.md（{lines} 行）"
+
+
+@mcp.tool()
+async def wiki_lint(project_id: int) -> str:
+    """执行 wiki lint 检查：修复 index 一致性和死链，报告孤立页面。
+
+    Args:
+        project_id: 项目 ID
+    """
+    pid = project_id or PROJECT_ID
+    from core.wiki import lint_wiki
+    import json
+    result = lint_wiki(pid)
+    return json.dumps(result, ensure_ascii=False, indent=2)

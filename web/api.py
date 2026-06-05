@@ -444,7 +444,7 @@ async def list_commits(rid: int, db: aiosqlite.Connection = Depends(get_db)):
 @router.get("/commits/{commit_hash}/diff")
 async def get_commit_diff(commit_hash: str, project_id: int = 0, db: aiosqlite.Connection = Depends(get_db)):
     import asyncio
-    from core.config import get_project_repo_path
+    from core.workspace import get_project_repo_path
 
     if project_id:
         cursor = await db.execute("SELECT git_remote_url FROM projects WHERE id=?", (project_id,))
@@ -1114,7 +1114,7 @@ async def trigger_task(task_type: str):
 async def card_debug(code: str, db: aiosqlite.Connection = Depends(get_db)):
     """Aggregate all runtime info for a card by its code (e.g. KH-086)."""
     import json as _json
-    from core.config import WORKSPACE_BASE
+    from core.workspace import WORKSPACE_BASE
 
     cursor = await db.execute(
         "SELECT r.*, v.project_id FROM requirements r "

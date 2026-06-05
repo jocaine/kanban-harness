@@ -72,57 +72,6 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "create_requirement",
-            "description": "Create a new requirement card (status=organizing for actionable tasks)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Requirement title"},
-                    "description": {"type": "string", "description": "Markdown description with goals and acceptance criteria"},
-                    "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
-                    "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
-                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. System default is 600 (10min). Recommended: 3600 for deep investigation."},
-                },
-                "required": ["title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_research_card",
-            "description": "Create a research card (type=research). PM will structure it first, then hand off to industry advisor for async investigation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Research topic title"},
-                    "description": {"type": "string", "description": "What to investigate, key questions to answer"},
-                    "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"], "default": "P2"},
-                    "initial_comment": {"type": "string", "description": "User's original words as the first comment on the card"},
-                    "agent_timeout": {"type": "integer", "description": "Timeout in seconds for industry advisor research. System default is 600 (10min). Recommended: 3600 for deep investigation."},
-                },
-                "required": ["title"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "move_requirement",
-            "description": "Move a requirement to a different status column",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Requirement code like KH-001"},
-                    "status": {"type": "string", "enum": ["research", "organizing", "dev", "testing", "done", "blocked"]},
-                },
-                "required": ["code", "status"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "get_scheduler_status",
             "description": "Get the current scheduler/AI team status",
             "parameters": {"type": "object", "properties": {}},
@@ -145,29 +94,43 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "update_project",
-            "description": "Update project settings like git_repo_path or description",
+            "name": "wiki_read_page",
+            "description": "Read a wiki page by path (e.g. 'research/wiki-patterns', 'product/user-persona')",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "git_repo_path": {"type": "string", "description": "Local git repository path"},
-                    "git_remote_url": {"type": "string", "description": "Remote git URL"},
-                    "description": {"type": "string", "description": "Project description"},
+                    "page_path": {"type": "string", "description": "Page path like 'research/topic-name'"},
                 },
+                "required": ["page_path"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "set_architecture",
-            "description": "Set or update the project architecture document. Use when user confirms tech stack, framework choices, or project structure. Content should be markdown describing: tech stack, directory structure, key dependencies, deployment approach.",
+            "name": "wiki_write_page",
+            "description": "Write or update a wiki page. Use for recording decisions, user preferences, or knowledge worth preserving across sessions.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Architecture document in markdown format"},
+                    "page_path": {"type": "string", "description": "Page path like 'product/user-persona'"},
+                    "content": {"type": "string", "description": "Full page content with frontmatter"},
+                    "log_message": {"type": "string", "description": "Short description of the change"},
                 },
-                "required": ["content"],
+                "required": ["page_path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wiki_list_pages",
+            "description": "List all wiki pages, optionally filtered by subdir (research/product/arch)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subdir": {"type": "string", "description": "Filter by subdir: research, product, or arch"},
+                },
             },
         },
     },
@@ -212,95 +175,6 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                 rows = [dict(r) for r in await cursor.fetchall()]
                 return json.dumps(rows, ensure_ascii=False)
 
-            elif name in ("create_requirement", "create_research_card"):
-                if not project_id:
-                    return json.dumps({"error": "no project selected"})
-                cursor = await db.execute(
-                    "SELECT id FROM versions WHERE project_id=? AND status IN ('active','planning') ORDER BY position LIMIT 1",
-                    (project_id,),
-                )
-                ver = await cursor.fetchone()
-                if not ver:
-                    # Auto-create a default version if none exists
-                    cursor = await db.execute(
-                        "SELECT prefix FROM projects WHERE id=?", (project_id,),
-                    )
-                    proj_row = await cursor.fetchone()
-                    prefix = proj_row["prefix"] if proj_row else "v"
-                    await db.execute(
-                        "INSERT INTO versions (project_id, name, description, status, position, created_at, updated_at) "
-                        "VALUES (?, 'v0.1 MVP', ?, 'active', 0, datetime('now','localtime'), datetime('now','localtime'))",
-                        (project_id, f"{prefix} 最小可用版本"),
-                    )
-                    cursor = await db.execute("SELECT last_insert_rowid()")
-                    ver = await cursor.fetchone()
-                    logger.info("[PM] auto-created version v0.1 MVP for project %d", project_id)
-                version_id = ver[0] if isinstance(ver[0], int) else ver["id"]
-                from core.database import next_code
-                code = await next_code(db, version_id)
-                cursor = await db.execute(
-                    "SELECT COALESCE(MAX(position),-1)+1 FROM requirements WHERE version_id=? AND archived=0",
-                    (version_id,),
-                )
-                pos = (await cursor.fetchone())[0]
-                title = args.get("title", "")
-                desc = args.get("description", "")
-                priority = args.get("priority", "P2")
-                initial_comment = args.get("initial_comment", "")
-                agent_timeout = args.get("agent_timeout")
-                is_research = name == "create_research_card"
-                req_type = "research" if is_research else "dev"
-                status = "organizing"
-                # Retry with incremented code on unique constraint failure
-                import re as _re
-                for _attempt in range(5):
-                    try:
-                        await db.execute(
-                            "INSERT INTO requirements (version_id,title,description,priority,type,status,agent_timeout,code,position) VALUES (?,?,?,?,?,?,?,?,?)",
-                            (version_id, title, desc, priority, req_type, status, agent_timeout, code, pos),
-                        )
-                        break
-                    except Exception as _e:
-                        if "UNIQUE constraint" in str(_e) and _attempt < 4:
-                            # Increment code suffix and retry
-                            _m = _re.search(r'(\d+)$', code)
-                            code = code[:_m.start()] + str(int(_m.group()) + 1).zfill(_m.end() - _m.start()) if _m else code + "-2"
-                            logger.warning("[PM] code conflict, retrying with %s", code)
-                        else:
-                            raise
-                # Get the new requirement ID for event emit
-                cursor = await db.execute("SELECT last_insert_rowid()")
-                new_req_id = (await cursor.fetchone())[0]
-                # User's original message as first comment
-                if initial_comment:
-                    await db.execute(
-                        "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
-                        (new_req_id, "CEO", initial_comment),
-                    )
-                # Emit requirement_created event so scheduler triggers industry/pm
-                await db.execute(
-                    "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
-                    (project_id, "requirement_created", new_req_id,
-                     json.dumps({"status": status, "code": code, "title": title})),
-                )
-                await db.commit()
-                logger.info("[PM] created %s: %s (status=%s, priority=%s)", code, title, status, priority)
-                return json.dumps({"created": code, "title": title, "status": status, "priority": priority}, ensure_ascii=False)
-
-            elif name == "move_requirement":
-                code = args.get("code", "")
-                status = args.get("status", "")
-                cursor = await db.execute("SELECT id, title FROM requirements WHERE code=?", (code,))
-                row = await cursor.fetchone()
-                if not row:
-                    return json.dumps({"error": f"requirement {code} not found"})
-                await db.execute(
-                    "UPDATE requirements SET status=?, updated_at=datetime('now','localtime') WHERE id=?",
-                    (status, row["id"]),
-                )
-                await db.commit()
-                return json.dumps({"moved": code, "to": status, "title": row["title"]}, ensure_ascii=False)
-
             elif name == "get_scheduler_status":
                 from main import scheduler
                 return json.dumps(scheduler.status, ensure_ascii=False)
@@ -320,41 +194,32 @@ async def _execute_tool(name: str, args: dict, project_id: int) -> str:
                     return json.dumps({"error": f"requirement {code} not found"})
                 return json.dumps(dict(row), ensure_ascii=False, default=str)
 
-            elif name == "update_project":
-                if not project_id:
-                    return json.dumps({"error": "no project selected"})
-                updates, params = [], []
-                for field in ("git_repo_path", "git_remote_url", "description"):
-                    if field in args and args[field]:
-                        updates.append(f"{field}=?")
-                        params.append(args[field])
-                if not updates:
-                    return json.dumps({"error": "nothing to update"})
-                updates.append("updated_at=datetime('now','localtime')")
-                params.append(project_id)
-                await db.execute(f"UPDATE projects SET {','.join(updates)} WHERE id=?", params)
-                await db.commit()
-                return json.dumps({"updated": True, "fields": list(args.keys())}, ensure_ascii=False)
+            elif name == "wiki_read_page":
+                from core.wiki import read_wiki_page
+                page_path = args.get("page_path", "")
+                content = read_wiki_page(project_id, page_path)
+                if not content:
+                    return json.dumps({"error": f"page not found: {page_path}"})
+                return content
 
-            elif name == "set_architecture":
-                if not project_id:
-                    return json.dumps({"error": "no project selected"})
+            elif name == "wiki_write_page":
+                from core.wiki import write_wiki_page, update_index
+                page_path = args.get("page_path", "")
                 content = args.get("content", "")
-                if not content.strip():
-                    return json.dumps({"error": "content cannot be empty"})
-                await db.execute(
-                    "INSERT INTO project_architecture (project_id, content, updated_at) "
-                    "VALUES (?, ?, datetime('now','localtime')) "
-                    "ON CONFLICT(project_id) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at",
-                    (project_id, content),
-                )
-                await db.execute(
-                    "INSERT INTO agent_events (project_id, event_type, context) VALUES (?,?,?)",
-                    (project_id, "architecture_confirmed", json.dumps({"length": len(content)})),
-                )
-                await db.commit()
-                logger.info("[PM] set_architecture for project %d (%d chars)", project_id, len(content))
-                return json.dumps({"success": True, "project_id": project_id, "chars": len(content)}, ensure_ascii=False)
+                log_msg = args.get("log_message", "")
+                if not page_path or not content:
+                    return json.dumps({"error": "page_path and content are required"})
+                relative = write_wiki_page(project_id, page_path, content, log_msg)
+                update_index(project_id)
+                return f"已写入 wiki: {relative}"
+
+            elif name == "wiki_list_pages":
+                from core.wiki import list_wiki_pages
+                subdir = args.get("subdir", "")
+                pages = list_wiki_pages(project_id, subdir or None)
+                if not pages:
+                    return "暂无 wiki 页面"
+                return json.dumps(pages, ensure_ascii=False, indent=2)
 
             return json.dumps({"error": f"unknown tool: {name}"})
     except Exception as e:
@@ -422,26 +287,37 @@ async def _build_pm_system_prompt(project_id: int) -> str:
                 for p in projects:
                     sections.append(f"- [{p['prefix']}] {p['name']} (id: {p['id']})")
 
-    # Chat-specific directives (complement pm.yaml, not duplicate it)
+    # Chat-specific directives
     sections.append("""
 ## 聊天专属指令
 
-你正在和 CEO 直接对话。CEO 是最终决策者，不需要追问确认，直接执行。
+你正在和 CEO 直接对话。你是 CEO 的项目观察者和顾问，不是执行者。
 
-仅用于聊天界面（不改变 pm.yaml 中的角色边界）：
-- 用户描述需求/想法 → 调用 create_requirement 建卡（status=organizing, type=dev）
-- 用户的需求涉及调研 → 调用 create_research_card 建卡（type=research，PM先拆解再交给行业顾问）
-- 用户问进度 → 调用 list_requirements
-- 用户要移动卡片 → 调用 move_requirement
-- 用户要更新架构 → 调用 set_architecture
+你的职责：
+1. 回答 CEO 关于项目状态、进度、风险的提问（用 list_requirements / get_requirement / get_scheduler_status 查询真实数据）
+2. 综合分析看板状态，主动识别瓶颈和风险
+3. 当 CEO 想做某事时，告诉他应该怎么做（在 UI 上建卡、调整优先级等），但你不直接操作
+
+## Wiki 实时写入（Karpathy Writeback）
+
+你有 wiki 读写能力。在对话中发现以下内容时，主动写入 wiki：
+- **用户偏好/习惯** → 写入 product/user-persona（技术水平、决策风格、领域熟悉度）
+- **产品决策** → 写入 product/decisions（方向选择、否决理由）
+- **值得沉淀的发现** → 写入对应目录
+
+写入原则：
+- 增量更新：先 wiki_read_page 读取现有内容，合并后写回，不要覆盖已有信息
+- 不需要问用户"要不要记录" — 该记就记，这是你的职责
+- 不确定是否值得记录时，不记录（宁缺毋滥）
+
+你不能做的事：
+- 不能建卡、不能移动卡片、不能修改项目设置
+- 如果用户要求你建卡或修改状态，告知他："这个操作请在看板 UI 上完成，我可以帮你想清楚该建什么卡、怎么描述。"
 
 原则：
-1. 绝不追问，宁可先建卡再让用户调整
-2. 需要调研的内容不要自己做，建 research 卡让 PM 拆解后交给行业顾问
-3. 每张卡片包含：title、description（功能目标+验收标准）、priority
-4. 建卡后告知用户创建了什么
-5. 用 get_requirement 查卡片详情，不要凭记忆回答（如 agent_timeout、description 等字段）
-6. 不确定的系统行为不要猜，用 get_scheduler_status 查实时状态
+1. 用 get_requirement 查卡片详情，不要凭记忆回答
+2. 不确定的系统行为不要猜，用 get_scheduler_status 查实时状态
+3. 回答要简洁、有判断，像一个了解全局的参谋
 """)
 
     return "\n".join(sections)
