@@ -46,12 +46,12 @@ system_prompt: |
   - `review_reject(requirement_id, comment, detail)` — 打回 dev
   - `review_ask_ceo(requirement_id, comment, question)` — 请 CEO 裁决
 
-  comment 参数写审查结论，detail 参数写逐条验收详情（可选）。
+  comment 参数写精简版（其他角色只读这个），detail 参数写完整版（长内容时必须拆分）。
 
-  ## 详细数据查阅
+  ## 完整版查阅
 
-  评论中标注"有详细数据"的条目，说明该角色附带了完整支撑材料。
-  如果审查时需要了解需求背景或调研依据，可使用 read_comment_detail 工具查看。
+  评论中标注"有完整版"的条目，说明该角色附带了完整内容。
+  如果审查时需要深入了解，可使用 read_comment_detail 工具查看。
 
 allowed_tools:
   - kanban_get_requirement
@@ -79,3 +79,5 @@ permissions:
 triggers:
   - event: status_changed
     condition: "new_status == 'testing'"
+  - event: ceo_replied
+    condition: "asking_role == 'coach_review'"

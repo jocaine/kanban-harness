@@ -35,7 +35,7 @@ class CommentAgent:
         self.project_id = project_id
 
     async def execute(self, card: dict, existing_comments: list[dict] | None = None,
-                      on_heartbeat=None) -> dict:
+                      on_heartbeat=None, on_process_started=None) -> dict:
         """Generate a review comment for the given card.
 
         Args:
@@ -49,7 +49,7 @@ class CommentAgent:
                 effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
             else:
                 effective_timeout = self.role_config.model.timeout
-            response, usage = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat)
+            response, usage = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat, on_process_started=on_process_started, requirement_id=card.get("id"))
 
             if usage:
                 tokens = {
@@ -280,20 +280,20 @@ class CommentAgent:
 
         return "\n".join(sections)
 
-    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None) -> tuple[str, dict]:
+    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None, on_process_started=None, requirement_id: int | None = None) -> tuple[str, dict]:
         """Returns (response_text, usage_dict)."""
         cfg = self.role_config.model
         effective_timeout = timeout or cfg.timeout
 
         if cfg.provider == "hermes":
-            text = await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat)
+            text = await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat, requirement_id=requirement_id)
             return text, {}
         elif cfg.provider == "claude_cli":
-            return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat)
+            return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat, on_process_started)
         else:
             raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
-    async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None) -> str:
+    async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None, requirement_id: int | None = None) -> str:
         """Call hermes AIAgent in-process with MCP tools and streaming heartbeat.
 
         Key: discover_mcp_tools() must be called before AIAgent creation so the
@@ -323,6 +323,29 @@ class CommentAgent:
             if on_heartbeat:
                 on_heartbeat()
 
+        _tool_heartbeat_timer = [None]  # mutable ref for closure
+
+        def _tool_keepalive():
+            """Periodic heartbeat every 60s while a tool is executing."""
+            _heartbeat_cb()
+            import threading
+            _tool_heartbeat_timer[0] = threading.Timer(60, _tool_keepalive)
+            _tool_heartbeat_timer[0].daemon = True
+            _tool_heartbeat_timer[0].start()
+
+        def _tool_start_cb(*_args, **_kwargs):
+            _heartbeat_cb()
+            import threading
+            _tool_heartbeat_timer[0] = threading.Timer(60, _tool_keepalive)
+            _tool_heartbeat_timer[0].daemon = True
+            _tool_heartbeat_timer[0].start()
+
+        def _tool_complete_cb(*_args, **_kwargs):
+            if _tool_heartbeat_timer[0]:
+                _tool_heartbeat_timer[0].cancel()
+                _tool_heartbeat_timer[0] = None
+            _heartbeat_cb()
+
         def _clarify_cb(question, choices=None):
             if choices:
                 return f"[No user available. Pick the best option from {choices} and continue.]"
@@ -348,25 +371,54 @@ class CommentAgent:
                     quiet_mode=True,
                     platform="cli",
                     stream_delta_callback=_heartbeat_cb,
-                    tool_start_callback=_heartbeat_cb,
-                    tool_complete_callback=_heartbeat_cb,
+                    tool_start_callback=_tool_start_cb,
+                    tool_complete_callback=_tool_complete_cb,
                     tool_gen_callback=_heartbeat_cb,
                     clarify_callback=_clarify_cb,
                 )
                 agent.suppress_status_output = True
-                return agent.chat(prompt) or ""
+                result = agent.chat(prompt) or ""
+                # If agent produced research but didn't call decision tool,
+                # nudge it with a focused follow-up
+                if self.role_config.role == "industry" and requirement_id:
+                    import sqlite3 as _sqlite3
+                    _conn = _sqlite3.connect(os.getenv("DB_PATH", "data/kanban.db"))
+                    _conn.row_factory = _sqlite3.Row
+                    _cur = _conn.execute("SELECT status FROM requirements WHERE id=?",
+                                         (requirement_id,))
+                    _row = _cur.fetchone()
+                    _conn.close()
+                    if _row and _row["status"] == "research":
+                        logger.info("CommentAgent(industry) nudging agent to call decision tool")
+                        result = agent.chat(
+                            "调研阶段已结束，请将你的调研结论通过 mcp_kanban_industry_complete 工具提交。"
+                            " requirement_id 是 %d。" % requirement_id
+                        ) or ""
+                return result
             finally:
+                if _tool_heartbeat_timer[0]:
+                    _tool_heartbeat_timer[0].cancel()
                 _logging.disable(_logging.NOTSET)
                 set_heartbeat_callback(None)
 
         loop = asyncio.get_event_loop()
-        output = await loop.run_in_executor(None, _run_agent)
+        try:
+            output = await asyncio.wait_for(
+                loop.run_in_executor(None, _run_agent),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.error("CommentAgent(%s) hermes timeout after %ds", self.role_config.role, timeout)
+            raise TimeoutError(f"hermes agent exceeded {timeout}s timeout")
+
+        logger.info("CommentAgent(%s) raw output length=%d, first 500: %s",
+                    self.role_config.role, len(output), output[:500])
 
         output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
-    async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None) -> str:
+    async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None, on_process_started=None) -> str:
         """Call Claude CLI subprocess with kanban MCP tools.
 
         Uses --output-format stream-json: each stdout line is a heartbeat signal.
@@ -410,6 +462,9 @@ class CommentAgent:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
+
+        if on_process_started:
+            on_process_started(proc)
 
         if on_heartbeat:
             on_heartbeat()

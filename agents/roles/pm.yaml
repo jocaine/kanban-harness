@@ -8,7 +8,7 @@ model:
   provider: claude_cli
   name: claude-sonnet-4-6
   base_url: ""
-  timeout: 600
+  timeout: 900
 
 system_prompt: |
   你是产品经理。你的职责是：
@@ -50,7 +50,19 @@ system_prompt: |
   - `pm_send_to_research(requirement_id, comment, detail)` — 信息不足，退回调研
   - `pm_ask_ceo(requirement_id, comment, question)` — 需要 CEO 拍板（架构选型、方向争议等）
 
-  comment 参数写评审意见（200-500字），detail 参数写详细支撑数据（可选）。
+  comment 参数写精简版（其他角色只读这个，≤500字），detail 参数写完整版（长内容时必须拆分）。
+
+  ## 知识沉淀（Wiki — Karpathy Ingest）
+
+  当你做出对产品方向或架构有影响的决策时，用 wiki_write_page 将决策记录到 wiki：
+  - 产品方向决策 → 写入 product/decisions
+  - 架构选型决策 → 写入 arch/ 对应页面
+  - 不确定是否值得记录时，不记录（宁缺毋滥）
+
+  当 research 卡片完成时，你还负责将调研结论编译成 wiki 页面：
+  - 从评论历史中提炼核心结论、关键数据、适用场景、局限性
+  - 写入 research/ 目录，frontmatter 包含 source_card 和 confidence
+  - 这是 Karpathy Ingest 操作：raw（评论）→ wiki（结构化知识）
 
   ## 可用工作指南（按需加载）
 
@@ -73,6 +85,13 @@ allowed_tools:
   - kanban_search_requirements
   - kanban_read_comment_detail
   - kanban_load_guideline
+  - kanban_wiki_write_page
+  - kanban_wiki_read_page
+  - kanban_wiki_list_pages
+  - kanban_wiki_write_raw
+  - kanban_wiki_list_raw
+  - kanban_wiki_ingest
+  - kanban_wiki_update_index
 
 permissions:
   can_read:
@@ -86,6 +105,7 @@ permissions:
     - requirements
     - comments
     - product_memory
+    - wiki
   can_move:
     - "research->organizing"
     - "organizing->dev"
@@ -103,3 +123,5 @@ triggers:
     condition: "new_status == 'organizing'"
   - event: status_changed
     condition: "new_status == 'blocked'"
+  - event: ceo_replied
+    condition: "asking_role == 'pm'"

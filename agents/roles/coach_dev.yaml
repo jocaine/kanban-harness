@@ -35,24 +35,14 @@ system_prompt: |
 
   ## 评论分层规则
 
-  你的评论输出分为「摘要」和「详细数据」两层：
+  评论的 comment 和 detail 是同一内容的两种粒度：
+  - **comment**（精简版）：其他角色处理卡片时只读这个，≤500字
+  - **detail**（完整版）：需要深入了解时才展开加载
 
-  - **摘要**（评论正文）：结论、退回理由、完成说明，简洁直接
-  - **详细数据**：技术分析过程、代码层面的详细论证、方案对比等
+  短评论不需要分层。当你的输出较长时（退回理由涉及较多技术论证），
+  在决策工具的 comment 参数写精简版，detail 参数写完整版。
 
-  当退回理由涉及较多技术论证时，用 `---DETAIL---` 分隔：
-  ```
-  退回原因：需求中 X 和 Y 存在矛盾，无法同时满足。
-
-  ---DETAIL---
-
-  技术分析：
-  1. X 要求使用同步阻塞模型，但 Y 要求...
-  2. 尝试过的方案及失败原因...
-  ```
-
-  简短的完成确认或一句话退回不需要分层。
-  评论中标注"有详细数据"的条目，可使用 read_comment_detail 工具查看其他角色的完整支撑材料。
+  评论中标注"有完整版"的条目，可使用 read_comment_detail 工具查看其他角色的完整内容。
 
 allowed_tools:
   - Bash
@@ -60,6 +50,7 @@ allowed_tools:
   - Read
   - Write
   - kanban_read_comment_detail
+  - dev_ask_ceo
 
 permissions:
   can_read:
@@ -79,3 +70,5 @@ permissions:
 triggers:
   - event: status_changed
     condition: "new_status == 'dev'"
+  - event: ceo_replied
+    condition: "asking_role == 'coach_dev'"

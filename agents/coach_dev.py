@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime
 
-from core.config import WORKSPACE_BASE, validate_path_within_workspace
+from core.workspace import WORKSPACE_BASE, validate_path_within_workspace
 
 logger = logging.getLogger("kh.agent.coach_dev")
 
