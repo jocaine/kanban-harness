@@ -51,7 +51,7 @@ class PermissionGateway(BaseHTTPMiddleware):
 
         if action and resource and action != "move":
             if not registry.check_permission(role, action, resource):
-                logger.warning(f"Permission denied: {role} cannot {action} {resource}")
+                logger.warning(f"权限拒绝: {role} 不能 {action} {resource}")
                 return JSONResponse(
                     status_code=403,
                     content={

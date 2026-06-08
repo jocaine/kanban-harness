@@ -76,7 +76,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     )
     row = await cursor.fetchone()
     if row and "'organizing'" not in row[0]:
-        logger.info("Migrating requirements table: pending→organizing status rename")
+        logger.info("迁移 requirements 表: pending→organizing 状态重命名")
         await db.executescript("""
             PRAGMA foreign_keys=OFF;
             DROP TABLE IF EXISTS requirements_new;
@@ -119,7 +119,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "queue_reason" not in columns:
-        logger.info("Migrating requirements table: adding queue_reason column")
+        logger.info("迁移 requirements 表: 添加 queue_reason 列")
         await db.executescript("""
             PRAGMA foreign_keys=OFF;
             DROP TABLE IF EXISTS requirements_new;
@@ -157,7 +157,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "agent_timeout" not in columns:
-        logger.info("Migrating requirements table: adding agent_timeout column")
+        logger.info("迁移 requirements 表: 添加 agent_timeout 列")
         await db.execute(
             "ALTER TABLE requirements ADD COLUMN agent_timeout INTEGER DEFAULT NULL"
         )
@@ -167,7 +167,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(comments)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "detail" not in columns:
-        logger.info("Migrating comments table: adding detail column")
+        logger.info("迁移 comments 表: 添加 detail 列")
         await db.execute(
             "ALTER TABLE comments ADD COLUMN detail TEXT DEFAULT ''"
         )
@@ -177,7 +177,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(agent_sessions)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "input_tokens" not in columns:
-        logger.info("Migrating agent_sessions: adding token tracking columns")
+        logger.info("迁移 agent_sessions: 添加 token 统计列")
         await db.execute("ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER DEFAULT 0")
         await db.execute("ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER DEFAULT 0")
         await db.execute("ALTER TABLE agent_sessions ADD COLUMN total_tokens INTEGER DEFAULT 0")
@@ -187,12 +187,12 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(requirements)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "ceo_decision" not in columns:
-        logger.info("Migrating requirements table: adding ceo_decision column")
+        logger.info("迁移 requirements 表: 添加 ceo_decision 列")
         await db.execute(
             "ALTER TABLE requirements ADD COLUMN ceo_decision TEXT DEFAULT NULL"
         )
     if "progressed_at" not in columns:
-        logger.info("Migrating requirements table: adding progressed_at column")
+        logger.info("迁移 requirements 表: 添加 progressed_at 列")
         await db.execute(
             "ALTER TABLE requirements ADD COLUMN progressed_at DATETIME DEFAULT NULL"
         )
@@ -205,7 +205,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(chat_tasks)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "input_tokens" not in columns:
-        logger.info("Migrating chat_tasks: adding token tracking columns")
+        logger.info("迁移 chat_tasks: 添加 token 统计列")
         await db.execute("ALTER TABLE chat_tasks ADD COLUMN input_tokens INTEGER DEFAULT 0")
         await db.execute("ALTER TABLE chat_tasks ADD COLUMN output_tokens INTEGER DEFAULT 0")
         await db.execute("ALTER TABLE chat_tasks ADD COLUMN total_tokens INTEGER DEFAULT 0")
@@ -215,7 +215,7 @@ async def _migrate_db(db: aiosqlite.Connection):
     cursor = await db.execute("PRAGMA table_info(agent_sessions)")
     columns = {row[1] for row in await cursor.fetchall()}
     if "requirement_id" not in columns:
-        logger.info("Migrating agent_sessions: adding requirement_id column")
+        logger.info("迁移 agent_sessions: 添加 requirement_id 列")
         await db.execute("ALTER TABLE agent_sessions ADD COLUMN requirement_id INTEGER DEFAULT NULL")
         await db.execute(
             "UPDATE agent_sessions SET requirement_id = "
@@ -414,6 +414,18 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_chat_messages_project
                 ON chat_messages(project_id, created_at DESC);
 
+            -- 卡片生命周期日志（持久化，跨重启保留）
+            CREATE TABLE IF NOT EXISTS requirement_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requirement_id INTEGER NOT NULL,
+                level TEXT DEFAULT 'info',
+                source TEXT DEFAULT '',
+                message TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_reqlog_rid ON requirement_logs(requirement_id, created_at);
+
             -- Background chat tasks (v0.7: AI execution decoupled from SSE)
             CREATE TABLE IF NOT EXISTS chat_tasks (
                 id TEXT PRIMARY KEY,
@@ -452,7 +464,7 @@ async def init_db():
         cursor = await db2.execute("PRAGMA table_info(requirements)")
         columns = {row[1] for row in await cursor.fetchall()}
         if "type" not in columns:
-            logger.info("Migrating requirements table: adding type column")
+            logger.info("迁移 requirements 表: 添加 type 列")
             await db2.executescript("""
                 PRAGMA foreign_keys=OFF;
                 DROP TABLE IF EXISTS requirements_new;

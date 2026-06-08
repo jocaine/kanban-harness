@@ -78,13 +78,13 @@ class WorkflowConfig:
 
             self._last_mtime = _CONFIG_PATH.stat().st_mtime
             logger.info(
-                "Workflow config reloaded: poll=%ds, stuck_cooldown=%ds, max_concurrent=%d, timeout=%ds",
+                "工作流配置已重载: 轮询=%d秒, 卡住冷却=%d秒, 最大并发=%d, 超时=%d秒",
                 self.poll_interval, self.stuck_cooldown, self.max_concurrent_sessions, self.default_timeout,
             )
             return True
 
         except Exception as e:
-            logger.warning("[FAULT:CONFIG] failed to reload workflow config, keeping previous values: %s", e)
+            logger.warning("[FAULT:CONFIG] 重载工作流配置失败, 保持原值: %s", e)
             return False
 
 

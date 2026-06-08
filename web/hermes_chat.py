@@ -216,12 +216,12 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
 
     # 1. Route: detect role (real architectural decision based on registry)
     role = _detect_role(user_message)
-    logger.info("[hermes] route=%s msg=%r project=%d", role, user_message[:60], project_id)
+    logger.info("[hermes] 路由=%s 消息=%r project=%d", role, user_message[:60], project_id)
     yield f"data: {json.dumps({'type': 'route', 'role': role}, ensure_ascii=False)}\n\n"
 
     # 2. Build prompt (instant — DB queries are <50ms)
     prompt, ctx_summary = await _build_hermes_prompt(project_id, user_message)
-    logger.info("[hermes] prompt built: %d chars, context=%s", len(prompt), json.dumps(ctx_summary, ensure_ascii=False))
+    logger.info("[hermes] 提示词构建完成: %d 字符, context=%s", len(prompt), json.dumps(ctx_summary, ensure_ascii=False))
 
     # 3. Signal: context loaded, now waiting for AI
     yield f"data: {json.dumps({'type': 'status', 'state': 'waiting', 'context': ctx_summary}, ensure_ascii=False)}\n\n"
@@ -244,7 +244,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             flags += f" -t {HERMES_TOOLSETS}"
 
         shell_cmd = f'{HERMES_BIN} -z "$(cat {tmp.name})"{flags} --yolo'
-        logger.info("[hermes] spawning: %s", shell_cmd[:120])
+        logger.info("[hermes] 启动进程: %s", shell_cmd[:120])
 
         proc = await asyncio.create_subprocess_shell(
             shell_cmd,
@@ -252,7 +252,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             stderr=asyncio.subprocess.PIPE,
             env=_build_hermes_env(),
         )
-        logger.info("[hermes] process started pid=%d", proc.pid)
+        logger.info("[hermes] 进程已启动 pid=%d", proc.pid)
 
         # Parse stderr for real hermes startup signals (MCP connection, plugin loading)
         stderr_lines = []
@@ -285,7 +285,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
                 # Log if we've been waiting too long with no output
                 elapsed = time.time() - t_start
                 if not first_output and elapsed > 30 and int(elapsed) % 30 == 0:
-                    logger.warning("[hermes] no output after %.0fs, still waiting (pid=%d)", elapsed, proc.pid)
+                    logger.warning("[hermes] %.0f秒无输出, 仍在等待 (pid=%d)", elapsed, proc.pid)
                 continue
             if not chunk:
                 break
@@ -293,7 +293,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
             if not first_output:
                 first_output = True
                 t_first = time.time() - t_start
-                logger.info("[hermes] first output after %.1fs", t_first)
+                logger.info("[hermes] 首次输出耗时 %.1f秒", t_first)
                 yield f"data: {json.dumps({'type': 'status', 'state': 'streaming'}, ensure_ascii=False)}\n\n"
 
             byte_buf += chunk
@@ -320,7 +320,7 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
                 if event:
                     if event["type"] == "tool_start":
                         tool_calls_seen += 1
-                        logger.info("[hermes] tool_call #%d: %s", tool_calls_seen, event.get("name", "?"))
+                        logger.info("[hermes] 工具调用 #%d: %s", tool_calls_seen, event.get("name", "?"))
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         # Flush remaining
@@ -343,17 +343,17 @@ async def stream_hermes(project_id: int, user_message: str) -> AsyncGenerator[st
         # Log stderr summary for diagnostics
         mcp_lines = [l for l in stderr_lines if "MCP" in l or "mcp" in l]
         if mcp_lines:
-            logger.info("[hermes] MCP stderr summary: %s", "; ".join(mcp_lines[-3:]))
+            logger.info("[hermes] MCP stderr 摘要: %s", "; ".join(mcp_lines[-3:]))
 
         if proc.returncode != 0:
             stderr_out = await proc.stderr.read()
             err_msg = stderr_out.decode("utf-8", errors="replace").strip()
-            logger.error("[hermes] exited code=%d after %.1fs: %s", proc.returncode, t_total, err_msg[:200])
+            logger.error("[hermes] 退出 code=%d, 耗时 %.1f秒: %s", proc.returncode, t_total, err_msg[:200])
             if err_msg:
                 yield f"data: {json.dumps({'type': 'error', 'content': f'hermes error: {err_msg}'}, ensure_ascii=False)}\n\n"
         else:
             logger.info(
-                "[hermes] done: %.1fs total, %d lines, %d tool_calls, exit=0",
+                "[hermes] 完成: 总耗时 %.1f秒, %d 行, %d 次工具调用, exit=0",
                 t_total, total_lines, tool_calls_seen,
             )
 
@@ -529,7 +529,7 @@ async def ensure_hermes_config(mode: str = "chat"):
     with open(config_file, "w") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 
-    logger.info(f"Ensured hermes config with local MCP at {config_file}")
+    logger.info(f"已确保 hermes 配置使用本地 MCP: {config_file}")
 
 
 def sync_claude_settings():
@@ -554,7 +554,7 @@ def sync_claude_settings():
             env[key] = val
 
     if not env:
-        logger.warning("sync_claude_settings: no API env vars found, skipping")
+        logger.warning("sync_claude_settings: 未找到 API 环境变量, 跳过")
         return
 
     # Read existing settings
@@ -573,4 +573,4 @@ def sync_claude_settings():
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
-    logger.info("Synced %d env vars into %s", len(merged), settings_file)
+    logger.info("已同步 %d 个环境变量到 %s", len(merged), settings_file)

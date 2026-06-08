@@ -237,6 +237,7 @@
                     <button class="req-tab" data-tab="comments" onclick="switchReqTab('comments')">评论</button>
                     <button class="req-tab" data-tab="notes" onclick="switchReqTab('notes')">备注</button>
                     <button class="req-tab" data-tab="meta" onclick="switchReqTab('meta')">优先级与附件</button>
+                    <button class="req-tab" data-tab="logs" onclick="switchReqTab('logs')">日志</button>
                 </div>
 
                 <!-- Tab: 描述 -->
@@ -351,6 +352,11 @@
                             <div id="commits-list"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Tab: 日志 -->
+                <div class="req-tab-content" id="tab-logs">
+                    <div id="card-log-list" class="card-log-list" style="max-height:400px;overflow-y:auto;font-size:12px;font-family:monospace;"></div>
                 </div>
                 </div><!-- end req-full-form -->
             </div>

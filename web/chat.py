@@ -146,7 +146,7 @@ class ChatMessage(BaseModel):
 
 async def _execute_tool(name: str, args: dict, project_id: int) -> str:
     """Execute a tool call and return the result as a string."""
-    logger.info("[PM] tool_exec: %s(%s) project=%d", name, json.dumps(args, ensure_ascii=False)[:120], project_id)
+    logger.info("[PM] 工具执行: %s(%s) project=%d", name, json.dumps(args, ensure_ascii=False)[:120], project_id)
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -327,7 +327,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
     """Multi-turn chat with tool use support via OpenAI-compatible API."""
     import httpx
 
-    logger.info("[CHAT] user message: \"%s\" (project=%d, provider=%s, model=%s)", message[:80], project_id, provider or "default", model or "default")
+    logger.info("[CHAT] 用户消息: \"%s\" (project=%d, provider=%s, model=%s)", message[:80], project_id, provider or "default", model or "default")
 
     base_url = (_openai_base_url() or _anthropic_base_url()).rstrip("/")
     # Strip trailing /v1 if present — we add it ourselves in the URL
@@ -366,7 +366,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                 if resp.status_code != 200:
                     error_body = await resp.aread()
                     error_detail = error_body.decode("utf-8", errors="replace")[:500]
-                    logger.error("[PM] API 400 response body: %s", error_detail)
+                    logger.error("[PM] API 400 响应体: %s", error_detail)
                     resp.raise_for_status()
 
                 content_text = ""
@@ -437,7 +437,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
             except json.JSONDecodeError:
                 args = {}
             result = await _execute_tool(tc["name"], args, project_id)
-            logger.info("[PM] tool_call round=%d: %s(%s) → %s", round_idx + 1, tc["name"], json.dumps(args, ensure_ascii=False)[:80], result[:120])
+            logger.info("[PM] 工具调用 round=%d: %s(%s) → %s", round_idx + 1, tc["name"], json.dumps(args, ensure_ascii=False)[:80], result[:120])
             yield f"data: {json.dumps({'type': 'tool_done', 'name': tc['name']})}\n\n"
             messages.append({
                 "role": "tool",
@@ -445,7 +445,7 @@ async def _chat_with_tools(message: str, system_prompt: str, model: str, provide
                 "content": result,
             })
 
-    logger.info("[PM] done, %d tool rounds completed, tokens: in=%d out=%d",
+    logger.info("[PM] 完成, %d 轮工具调用, tokens: in=%d out=%d",
                 round_idx + 1 if tool_calls_acc else 0, total_usage["input"], total_usage["output"])
     if total_usage["input"] or total_usage["output"]:
         yield f"data: {json.dumps({'type': 'usage', 'input_tokens': total_usage['input'], 'output_tokens': total_usage['output'], 'total_tokens': total_usage['input'] + total_usage['output']})}\n\n"
@@ -903,4 +903,4 @@ async def _maybe_compact(project_id: int):
             (project_id, summary_text, len(summary_text) // 3),
         )
         await db.commit()
-        logger.info("[CHAT] compacted %d messages for project %d", len(ids_to_delete), project_id)
+        logger.info("[CHAT] 已压缩 %d 条消息, 项目 %d", len(ids_to_delete), project_id)

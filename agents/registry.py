@@ -58,13 +58,13 @@ class AgentRegistry:
 
     def _load_all(self):
         if not ROLES_DIR.exists():
-            logger.warning(f"Roles directory not found: {ROLES_DIR}")
+            logger.warning(f"角色目录未找到: {ROLES_DIR}")
             return
         for yaml_file in sorted(ROLES_DIR.glob("*.yaml")):
             try:
                 self._load_role(yaml_file)
             except Exception as e:
-                logger.error(f"Failed to load role {yaml_file.name}: {e}")
+                logger.error(f"加载角色 {yaml_file.name} 失败: {e}")
 
     def _load_role(self, path: Path):
         with open(path) as f:
@@ -83,7 +83,7 @@ class AgentRegistry:
             triggers=[TriggerRule(**t) for t in data.get("triggers", [])],
         )
         self._roles[role.role] = role
-        logger.info(f"Loaded agent role: {role.role} ({role.display_name})")
+        logger.info(f"已加载 agent 角色: {role.role} ({role.display_name})")
 
     def get(self, role_name: str) -> AgentRole | None:
         return self._roles.get(role_name)

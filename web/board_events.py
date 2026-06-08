@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.web.board_events")
 router = APIRouter()
 
 _subscribers: list[asyncio.Queue] = []

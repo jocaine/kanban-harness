@@ -31,6 +31,20 @@ DB_PATH = os.getenv("DB_PATH", "data/kanban.db")
 AGENT_ROLE = os.getenv("KH_AGENT_ROLE", "pm")
 PROJECT_ID = int(os.getenv("KH_PROJECT_ID", "0"))
 
+ROLE_STATUS_MAP = {
+    "pm": "organizing",
+    "industry": "research",
+    "coach_dev": "dev",
+    "coach_review": "testing",
+}
+
+ROLE_ALLOWED_TARGETS = {
+    "pm": ("dev", "done", "research"),
+    "industry": ("organizing",),
+    "coach_dev": ("testing", "organizing"),
+    "coach_review": ("done", "dev"),
+}
+
 mcp = FastMCP("kanban", instructions="Granular kanban tools for AI agent roles.")
 
 
@@ -196,9 +210,9 @@ async def move_requirement(requirement_id: int, status: str) -> str:
 
     Args:
         requirement_id: 需求 ID
-        status: 目标状态 (research/organizing/dev/testing/done/blocked)
+        status: 目标状态 (research/organizing/dev/testing/done)
     """
-    valid_statuses = ("research", "organizing", "dev", "testing", "done", "blocked")
+    valid_statuses = ("research", "organizing", "dev", "testing", "done")
     if status not in valid_statuses:
         return f"错误：无效状态 '{status}'，必须是 {valid_statuses} 之一"
 
@@ -243,7 +257,7 @@ async def move_requirement(requirement_id: int, status: str) -> str:
         )
         await db.commit()
 
-        logger.info("Moved [%s] %s → %s (by %s)", code, old_status, status, AGENT_ROLE)
+        logger.info("已移动 [%s] %s → %s (操作者 %s)", code, old_status, status, AGENT_ROLE)
         return f"已移动 [{code}] {old_status} → {status}"
     finally:
         await db.close()
@@ -546,7 +560,7 @@ async def _atomic_decision(
                 "ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
             (f"等待 CEO: {questions[0][:50]}", ceo_dec, requirement_id),
             )
-            logger.info("CEO-ASK [%s] by %s: %s", code, role, questions[0][:80])
+            logger.info("CEO-ASK [%s] 由 %s 发起: %s", code, role, questions[0][:80])
 
         elif new_status and new_status != current_status:
             col_assignee = COL_ASSIGNEE.get(new_status, "")
@@ -563,7 +577,7 @@ async def _atomic_decision(
                  json.dumps({"old_status": current_status, "new_status": new_status,
                              "moved_by": role})),
             )
-            logger.info("ATOMIC-MOVE [%s] %s → %s by %s", code, current_status, new_status, role)
+            logger.info("ATOMIC-MOVE [%s] %s → %s 由 %s", code, current_status, new_status, role)
 
         await db.commit()
 
@@ -577,11 +591,11 @@ async def _atomic_decision(
         await db.close()
 
 
-# --- PM Decision Tools (organizing column) ---
+# --- Unified Decision Tools ---
 
 @mcp.tool()
-async def pm_approve(requirement_id: int, comment: str, target: str = "dev", detail: str = "") -> str:
-    """PM 审批通过：发表评论并将卡片推进到下一阶段。
+async def decide(requirement_id: int, comment: str, target: str, detail: str = "") -> str:
+    """做出决策：发表评论并将卡片移动到目标状态。
 
     comment 和 detail 是同一内容的两种粒度：
     - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
@@ -592,56 +606,37 @@ async def pm_approve(requirement_id: int, comment: str, target: str = "dev", det
     Args:
         requirement_id: 需求 ID
         comment: 内容精简版（≤500字）
-        target: 目标状态，"dev"（进入开发）或 "done"（调研类需求完成）
+        target: 目标状态（当前角色允许的目标由权限决定）
         detail: 内容完整版（当你的输出较长时必须填写）
     """
-    if target not in ("dev", "done"):
-        return "错误：target 必须是 'dev' 或 'done'"
+    targets = ROLE_ALLOWED_TARGETS.get(AGENT_ROLE)
+    if not targets:
+        return f"错误：角色 '{AGENT_ROLE}' 无目标配置"
+    if target not in targets:
+        return f"错误：当前角色允许的目标是 {targets}"
     return await _atomic_decision(
         requirement_id=requirement_id,
         comment=comment,
         detail=detail,
         new_status=target,
         ceo_question=None,
-        expected_current_status="organizing",
-        role="pm",
+        expected_current_status=ROLE_STATUS_MAP[AGENT_ROLE],
+        role=AGENT_ROLE,
     )
 
 
 @mcp.tool()
-async def pm_send_to_research(requirement_id: int, comment: str, detail: str = "") -> str:
-    """PM 退回调研：发表评论并将卡片移回 research 列，由行业顾问补充调研。
-
-    comment 和 detail 是同一内容的两种粒度：
-    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
-    - detail: 完整版 — 需要深入了解时才展开加载
-
-    短评论（≤800字）不需要 detail。长内容必须拆分。
+async def ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
+    """请求 CEO 决策：发表评论并设置等待 CEO。卡片留在当前列。
 
     Args:
         requirement_id: 需求 ID
-        comment: 内容精简版（≤500字）
-        detail: 内容完整版（当你的输出较长时必须填写）
-    """
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail=detail,
-        new_status="research",
-        ceo_question=None,
-        expected_current_status="organizing",
-        role="pm",
-    )
-
-
-@mcp.tool()
-async def pm_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
-    """PM 请求 CEO 决策：发表评论并设置等待 CEO 决策。卡片留在 organizing 列。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 当前分析和需要 CEO 决策的背景说明
-        question: 需要 CEO 回答的具体问题。可以是单个字符串，也可以是问题列表（每个问题 CEO 将逐一回答）
+        comment: 当前进展和需要 CEO 决策的背景说明（CEO 不需要翻历史就能理解上下文）
+        question: 需要 CEO 回答的具体问题。要求：
+            1. 写成可直接回答的问句（不是"请决定"这种祈使句）
+            2. 包含选项或约束（如"A方案 vs B方案，考虑因素是X"）
+            3. 一个问题对应一个决策点，多个决策点传列表
+            可以是单个字符串，也可以是问题列表（每个问题 CEO 将逐一回答）。
     """
     if isinstance(question, list):
         if not question or not any(q.strip() for q in question):
@@ -657,168 +652,17 @@ async def pm_ask_ceo(requirement_id: int, comment: str, question: str | list[str
         detail="",
         new_status=None,
         ceo_question=questions if len(questions) > 1 else questions[0],
-        expected_current_status="organizing",
-        role="pm",
+        expected_current_status=ROLE_STATUS_MAP[AGENT_ROLE],
+        role=AGENT_ROLE,
     )
 
 
-# --- Industry Decision Tools (research column) ---
-
-@mcp.tool()
-async def industry_complete(requirement_id: int, comment: str, detail: str = "") -> str:
-    """行业顾问调研完成：发表结论并将卡片转给 PM（research → organizing）。"""
-    logger.info(">>> industry_complete CALLED: req_id=%d, comment_len=%d", requirement_id, len(comment))
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail=detail,
-        new_status="organizing",
-        ceo_question=None,
-        expected_current_status="research",
-        role="industry",
-    )
 
 
-@mcp.tool()
-async def industry_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
-    """行业顾问请求 CEO 补充信息：发表评论并设置等待 CEO。卡片留在 research 列。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 当前调研进展和缺失信息说明
-        question: 需要 CEO 补充的具体信息。可以是单个字符串或问题列表
-    """
-    if isinstance(question, list):
-        if not question or not any(q.strip() for q in question):
-            return "错误：question 列表不能为空"
-        questions = [q.strip() for q in question if q.strip()]
-    else:
-        if not question.strip():
-            return "错误：question 不能为空"
-        questions = [question.strip()]
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail="",
-        new_status=None,
-        ceo_question=questions if len(questions) > 1 else questions[0],
-        expected_current_status="research",
-        role="industry",
-    )
-
-
-# --- Coach-Review Decision Tools (testing column) ---
-
-@mcp.tool()
-async def review_pass(requirement_id: int, comment: str, detail: str = "") -> str:
-    """QA 审查通过：发表评论并将卡片移到 done。
-
-    comment 和 detail 是同一内容的两种粒度：
-    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
-    - detail: 完整版 — 需要深入了解时才展开加载
-
-    短评论（≤800字）不需要 detail。长内容必须拆分。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 内容精简版（≤500字）
-        detail: 内容完整版（当你的输出较长时必须填写）
-    """
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail=detail,
-        new_status="done",
-        ceo_question=None,
-        expected_current_status="testing",
-        role="coach_review",
-    )
-
-
-@mcp.tool()
-async def review_reject(requirement_id: int, comment: str, detail: str = "") -> str:
-    """QA 审查不通过：发表评论并将卡片打回 dev 列。
-
-    comment 和 detail 是同一内容的两种粒度：
-    - comment: 精简版（≤500字）— 其他角色处理卡片时只读这个
-    - detail: 完整版 — 需要深入了解时才展开加载
-
-    短评论（≤800字）不需要 detail。长内容必须拆分。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 内容精简版（≤500字）
-        detail: 内容完整版（当你的输出较长时必须填写）
-    """
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail=detail,
-        new_status="dev",
-        ceo_question=None,
-        expected_current_status="testing",
-        role="coach_review",
-    )
-
-
-@mcp.tool()
-async def review_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
-    """QA 请求 CEO 决策：发表评论并设置等待 CEO。卡片留在 testing 列。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 审查中遇到的无法自行判断的问题
-        question: 需要 CEO 裁决的具体问题。可以是单个字符串或问题列表
-    """
-    if isinstance(question, list):
-        if not question or not any(q.strip() for q in question):
-            return "错误：question 列表不能为空"
-        questions = [q.strip() for q in question if q.strip()]
-    else:
-        if not question.strip():
-            return "错误：question 不能为空"
-        questions = [question.strip()]
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail="",
-        new_status=None,
-        ceo_question=questions if len(questions) > 1 else questions[0],
-        expected_current_status="testing",
-        role="coach_review",
-    )
-
-
-@mcp.tool()
-async def dev_ask_ceo(requirement_id: int, comment: str, question: str | list[str]) -> str:
-    """开发请求 CEO 决策：发表评论并设置等待 CEO。卡片留在 dev 列。
-
-    Args:
-        requirement_id: 需求 ID
-        comment: 开发中遇到的需要 CEO 裁决的问题背景
-        question: 需要 CEO 裁决的具体问题。可以是单个字符串或问题列表
-    """
-    if isinstance(question, list):
-        if not question or not any(q.strip() for q in question):
-            return "错误：question 列表不能为空"
-        questions = [q.strip() for q in question if q.strip()]
-    else:
-        if not question.strip():
-            return "错误：question 不能为空"
-        questions = [question.strip()]
-    return await _atomic_decision(
-        requirement_id=requirement_id,
-        comment=comment,
-        detail="",
-        new_status=None,
-        ceo_question=questions if len(questions) > 1 else questions[0],
-        expected_current_status="dev",
-        role="coach_dev",
-    )
 
 
 if __name__ == "__main__":
-    logger.info("Agent MCP server starting (role=%s, project=%d, db=%s)", AGENT_ROLE, PROJECT_ID, DB_PATH)
+    logger.info("Agent MCP 服务启动 (role=%s, project=%d, db=%s)", AGENT_ROLE, PROJECT_ID, DB_PATH)
     mcp.run()
 
 

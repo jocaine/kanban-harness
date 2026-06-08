@@ -28,7 +28,7 @@ class ChatTaskManager:
             )
             await db.commit()
         task_buffers.create(task_id)
-        logger.info("[TASK] created %s for project %d", task_id[:8], project_id)
+        logger.info("[TASK] %s 已创建, 项目 %d", task_id[:8], project_id)
         return task_id
 
     async def run_task(self, task_id: str, gen: AsyncGenerator[str, None], project_id: int):
@@ -65,12 +65,12 @@ class ChatTaskManager:
                 )
                 await db.commit()
 
-            logger.info("[TASK] %s completed (%d chunks, %d chars, tokens: in=%d out=%d)",
+            logger.info("[TASK] %s 已完成 (%d chunks, %d 字符, tokens: in=%d out=%d)",
                         task_id[:8], chunk_count, len(text), usage["input"], usage["output"])
             return text
 
         except Exception as e:
-            logger.error("[TASK] %s failed: %s", task_id[:8], e, exc_info=True)
+            logger.error("[TASK] %s 失败: %s", task_id[:8], e, exc_info=True)
             error_event = f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
             task_buffers.append_chunk(task_id, error_event)
             task_buffers.mark_done(task_id)
@@ -137,7 +137,7 @@ class ChatTaskManager:
                     "completed_at=datetime('now','localtime') WHERE status='running'"
                 )
                 await db.commit()
-                logger.warning("Recovered %d orphan chat tasks from previous run", count)
+                logger.warning("恢复了 %d 个上次运行残留的聊天任务", count)
 
     async def cleanup_expired(self):
         """Delete chat_tasks past their expires_at."""
@@ -147,7 +147,7 @@ class ChatTaskManager:
             )
             await db.commit()
             if cursor.rowcount:
-                logger.info("Cleaned up %d expired chat tasks", cursor.rowcount)
+                logger.info("清理了 %d 个过期聊天任务", cursor.rowcount)
 
 
 # Singleton

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 from core.database import get_db, DB_PATH
+from core.card_logger import card_log
 
 logger = logging.getLogger("kh.core.session")
 
@@ -23,6 +24,11 @@ class SessionManager:
         self._timeout_task: asyncio.Task | None = None
         self._heartbeats: dict[int, float] = {}  # session_id → monotonic timestamp
         self._processes: dict[int, asyncio.subprocess.Process] = {}  # session_id → process
+        self._on_retry: callable = None  # callback(session_id, session_dict) → launches agent
+
+    def set_retry_handler(self, handler: callable):
+        """Register callback that actually launches the agent for retry/continuation sessions."""
+        self._on_retry = handler
 
     async def start_timeout_checker(self, interval: int = 30):
         self._timeout_task = asyncio.create_task(self._reconcile_loop(interval))
@@ -74,7 +80,7 @@ class SessionManager:
             )
             await db.commit()
             session_id = cursor.lastrowid
-            logger.info(f"Session {session_id} created: {agent_role} for project {project_id}")
+            logger.info(f"会话 {session_id} 已创建: {agent_role}, 项目 {project_id}")
             return session_id
 
     async def complete_session(self, session_id: int, output_summary: str = "", tokens: dict | None = None) -> dict:
@@ -97,7 +103,9 @@ class SessionManager:
             await db.commit()
             row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
             result = dict(await row.fetchone())
-            logger.info(f"Session {session_id} completed")
+            logger.info(f"会话 {session_id} 已完成")
+            if result.get("requirement_id"):
+                await card_log(result["requirement_id"], f"会话 {session_id} 已完成", source="session")
             return result
 
     async def fail_session(self, session_id: int, error: str = "") -> dict:
@@ -122,7 +130,7 @@ class SessionManager:
                 )
                 await db.commit()
                 logger.info(
-                    "Session %d failed (attempt %d/%d), retry in %ds: %s",
+                    "会话 %d 失败 (第 %d/%d 次尝试), %d秒后重试: %s",
                     session_id, session["retry_count"] + 1, MAX_RETRIES, delay, error,
                 )
                 retry_id = await self._schedule_retry(session, delay)
@@ -134,7 +142,9 @@ class SessionManager:
                     (error, session_id),
                 )
                 await db.commit()
-                logger.warning("[FAULT:AGENT] session %d blocked after %d retries", session_id, MAX_RETRIES)
+                logger.warning("[FAULT:AGENT] 会话 %d 重试 %d 次后被阻塞", session_id, MAX_RETRIES)
+                if session.get("requirement_id"):
+                    await card_log(session["requirement_id"], f"会话 {session_id} 重试 {MAX_RETRIES} 次后被阻塞: {error}", level="error", source="session")
                 row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
                 return dict(await row.fetchone())
 
@@ -155,7 +165,7 @@ class SessionManager:
             )
             await db.commit()
 
-        logger.info("Session %d completed (incomplete work), scheduling continuation", session_id)
+        logger.info("会话 %d 已完成(工作未结束), 调度后续执行", session_id)
         continuation_id = await self.create_session(
             project_id=session["project_id"],
             agent_role=session["agent_role"],
@@ -163,15 +173,20 @@ class SessionManager:
             input_context=session["input_context"],
             timeout_seconds=session["timeout_seconds"],
             parent_session_id=session_id,
-            retry_count=0,  # continuation resets retry count
+            retry_count=0,
+            requirement_id=session.get("requirement_id"),
         )
+        if self._on_retry:
+            await self._on_retry(continuation_id, session)
+        else:
+            logger.warning("会话 %d continuation 已创建但无 retry handler, 将变为孤立", continuation_id)
         return {"status": "continuation", "new_session_id": continuation_id}
 
     async def _schedule_retry(self, session: dict, delay: int) -> int:
-        """Schedule a retry after delay seconds."""
+        """Schedule a retry after delay seconds, then launch the agent."""
         async def _delayed_create():
             await asyncio.sleep(delay)
-            await self.create_session(
+            new_id = await self.create_session(
                 project_id=session["project_id"],
                 agent_role=session["agent_role"],
                 trigger_type=f"retry:{session['id']}",
@@ -179,10 +194,14 @@ class SessionManager:
                 timeout_seconds=session["timeout_seconds"],
                 parent_session_id=session["id"],
                 retry_count=session["retry_count"] + 1,
+                requirement_id=session.get("requirement_id"),
             )
+            if self._on_retry:
+                await self._on_retry(new_id, session)
+            else:
+                logger.warning("会话 %d 重试已创建但无 retry handler, 将变为孤立", new_id)
 
         asyncio.create_task(_delayed_create())
-        # Return a placeholder — the actual session_id is created after delay
         return -1
 
     async def get_session(self, session_id: int) -> dict | None:
@@ -221,7 +240,7 @@ class SessionManager:
                         (row[0],),
                     )
                 await db.commit()
-                logger.info("Recovered %d stale sessions on startup", len(rows))
+                logger.info("启动时恢复了 %d 个残留会话", len(rows))
 
     async def reconcile_sessions(self):
         async with aiosqlite.connect(DB_PATH) as db:
@@ -241,7 +260,7 @@ class SessionManager:
             # 1. Process crashed or was killed externally
             if proc is not None and proc.returncode is not None:
                 logger.warning(
-                    "[RECONCILE] session %d: process gone (rc=%s), agent=%s",
+                    "[RECONCILE] 会话 %d: 进程已消失 (rc=%s), agent=%s",
                     sid, proc.returncode, session["agent_role"],
                 )
                 await self._kill_and_fail(sid, f"process_gone:rc={proc.returncode}")
@@ -250,7 +269,7 @@ class SessionManager:
             # 2. Orphaned - no process, no heartbeat (scheduler restarted)
             if proc is None and sid not in self._heartbeats:
                 logger.warning(
-                    "[RECONCILE] session %d: orphaned, agent=%s",
+                    "[RECONCILE] 会话 %d: 已孤立, agent=%s",
                     sid, session["agent_role"],
                 )
                 await self.fail_session(sid, error="orphaned")
@@ -264,7 +283,7 @@ class SessionManager:
             elapsed = (now_dt - started).total_seconds()
             if elapsed > session["timeout_seconds"]:
                 logger.warning(
-                    "[RECONCILE] session %d: budget exhausted (%ds > %ds), agent=%s",
+                    "[RECONCILE] 会话 %d: 预算耗尽 (%d秒 > %d秒), agent=%s",
                     sid, int(elapsed), session["timeout_seconds"], session["agent_role"],
                 )
                 await self._kill_and_fail(sid, "budget_exhausted")
@@ -276,7 +295,7 @@ class SessionManager:
                 silent = now_mono - last_beat
                 if silent > DEFAULT_STALL_TIMEOUT:
                     logger.warning(
-                        "[RECONCILE] session %d: stall (%ds no output), agent=%s",
+                        "[RECONCILE] 会话 %d: 停滞 (%d秒无输出), agent=%s",
                         sid, int(silent), session["agent_role"],
                     )
                     await self._kill_and_fail(sid, f"stall:{int(silent)}s")
@@ -287,7 +306,7 @@ class SessionManager:
         if proc and proc.returncode is None:
             try:
                 proc.kill()
-                logger.info("Cancelled session %d: killed process (pid=%d)", session_id, proc.pid)
+                logger.info("取消会话 %d: 已终止进程 (pid=%d)", session_id, proc.pid)
             except ProcessLookupError:
                 pass
         self.unregister_process(session_id)
@@ -302,7 +321,7 @@ class SessionManager:
             await db.commit()
             row = await db.execute("SELECT * FROM agent_sessions WHERE id=?", (session_id,))
             result = await row.fetchone()
-            logger.info("Session %d cancelled: %s", session_id, reason)
+            logger.info("会话 %d 已取消: %s", session_id, reason)
             return dict(result) if result else {}
 
     async def _kill_and_fail(self, session_id: int, error: str):
@@ -311,7 +330,7 @@ class SessionManager:
         if proc and proc.returncode is None:
             try:
                 proc.kill()
-                logger.info("Killed process for session %d (pid=%d)", session_id, proc.pid)
+                logger.info("已终止会话 %d 的进程 (pid=%d)", session_id, proc.pid)
             except ProcessLookupError:
                 pass
         self.unregister_process(session_id)
@@ -322,5 +341,5 @@ class SessionManager:
             try:
                 await self.reconcile_sessions()
             except Exception as e:
-                logger.error("[FAULT:OBSERVE] reconcile error: %s", e)
+                logger.error("[FAULT:OBSERVE] 会话对账出错: %s", e)
             await asyncio.sleep(interval)

@@ -93,11 +93,11 @@ def init_telemetry() -> bool:
 
     if has_otel_deps:
         logger.info(
-            "OTel GenAI telemetry initialized (endpoint=%s)",
+            "OTel GenAI 遥测已初始化 (endpoint=%s)",
             otel_endpoint or "none/in-memory",
         )
     else:
-        logger.info("OTel deps not installed — using in-memory stats only")
+        logger.info("OTel 依赖未安装 - 仅使用内存统计")
 
     return has_otel_deps
 
@@ -128,9 +128,9 @@ def _try_init_otel(endpoint: str | None) -> bool:
                 endpoint=f"{endpoint.rstrip('/')}/v1/traces",
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
-            logger.info("OTLP exporter configured: %s", endpoint)
+            logger.info("OTLP 导出器已配置: %s", endpoint)
         except ImportError:
-            logger.warning("OTLP exporter package missing, traces won't export")
+            logger.warning("OTLP 导出器包缺失, 追踪数据无法导出")
 
     _heartbeat_processor = _HeartbeatSpanProcessor()
     provider.add_span_processor(_heartbeat_processor)
@@ -145,9 +145,9 @@ def _try_instrument_anthropic():
     try:
         from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
         AnthropicInstrumentor().instrument()
-        logger.info("AnthropicInstrumentor activated")
+        logger.info("AnthropicInstrumentor 已激活")
     except ImportError:
-        logger.debug("AnthropicInstrumentor not available")
+        logger.debug("AnthropicInstrumentor 不可用")
 
 
 class _HeartbeatSpanProcessor:

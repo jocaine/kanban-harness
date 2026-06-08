@@ -8,6 +8,7 @@ from datetime import date, datetime
 import aiosqlite
 
 from core.database import DB_PATH
+from core.card_logger import card_log
 from core.workflow_config import workflow_config
 from agents.registry import registry
 from web.board_events import broadcast
@@ -34,7 +35,8 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
                 if is_scaffold:
-                    logger.info(f"[{card['code']}] scaffold complete, staying in dev for implementation round")
+                    logger.info(f"[{card['code']}] 脚手架已完成, 留在 dev 进行实现轮次")
+                    await card_log(card["id"], "coach_dev 完成(脚手架), 留在 dev", source="coach_dev")
                 else:
                     await db.execute(
                         "UPDATE requirements SET status='testing', assignee='Coach-Review', "
@@ -65,24 +67,27 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
                         (card["project_id"], "status_changed", card["id"],
                          json.dumps({"old_status": "dev", "new_status": "testing"})),
                     )
-                    logger.info(f"[{card['code']}] moved to testing, commit {commit_hash[:8]} linked")
+                    logger.info(f"[{card['code']}] 已移至 testing, 关联 commit {commit_hash[:8]}")
+                    await card_log(card["id"], "coach_dev 完成, 已移至 testing", source="coach_dev")
                 await db.commit()
                 if not is_scaffold:
                     broadcast("card_moved", {"id": card["id"], "old_status": "dev", "new_status": "testing"})
         else:
-            logger.info(f"[{card['code']}] no commits produced, scheduling continuation")
+            logger.info(f"[{card['code']}] 未产生 commit, 调度后续执行")
+            await card_log(card["id"], "coach_dev 未产生 commit, 调度后续执行", level="warning", source="coach_dev")
             await session_manager.continuation_retry(session_id)
 
     except Exception as e:
-        logger.error("[FAULT:AGENT] coach_dev failed for [%s]: %s", card['code'], e)
+        logger.error("[FAULT:AGENT] coach_dev 失败 [%s]: %s", card['code'], e)
+        await card_log(card["id"], f"coach_dev 失败: {e}", level="error", source="coach_dev")
         session_manager.unregister_process(session_id)
         await session_manager.fail_session(session_id, str(e))
 
 async def handle_comment_agent_result(session_manager, session_id: int, role_name: str, card: dict, project_id: int = 0):
     """Execute a comment agent and validate its decision via DB state.
 
-    With atomic decision tools, agents call a single tool (e.g. pm_approve,
-    industry_complete) that combines comment + state transition. The harness
+    With atomic decision tools, agents call a single tool (e.g. complete,
+    reject, ask_ceo) that combines comment + state transition. The harness
     just validates the final invariant: did the card move or get escalated?
     """
     try:
@@ -100,13 +105,13 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
         register_cb = lambda proc: session_manager.register_process(session_id, proc)
 
         agent = CommentAgent(role_name, project_id=project_id)
-        logger.info("[SCHED] running comment_agent '%s' for [%s] (status=%s)",
+        logger.info("[SCHED] 运行 comment_agent '%s': [%s] (状态=%s)",
                     role_name, card.get("code", ""), card.get("status", ""))
         result = await agent.execute(card, comments, on_heartbeat=heartbeat_cb, on_process_started=register_cb)
         session_manager.unregister_process(session_id)
 
         # Fallback: if industry agent completed but card didn't move,
-        # directly call industry_complete on its behalf
+        # directly call complete on its behalf
         if role_name == "industry":
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
@@ -115,7 +120,7 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
             if row and row["status"] == "research":
                 comment_text = result.get("comment") or "调研完成（agent 未显式提交，由 harness 代为提交）"
                 detail_text = result.get("detail", "")
-                logger.info("[DECISION-FALLBACK] industry didn't call tool, auto-submitting for [%s]", card.get("code"))
+                logger.info("[DECISION-FALLBACK] industry 未调用工具, 自动提交 [%s]", card.get("code"))
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute(
                         "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
@@ -136,7 +141,8 @@ async def handle_comment_agent_result(session_manager, session_id: int, role_nam
         await _validate_agent_decision(session_manager, session_id, card, role_name, project_id, tokens=result.get("tokens"))
 
     except Exception as e:
-        logger.error("[FAULT:AGENT] comment_agent '%s' failed: %s", role_name, e)
+        logger.error("[FAULT:AGENT] comment_agent '%s' 失败: %s", role_name, e)
+        await card_log(card["id"], f"comment_agent '{role_name}' 失败: {e}", level="error", source=role_name)
         session_manager.unregister_process(session_id)
         await session_manager.fail_session(session_id, str(e))
 
@@ -159,7 +165,7 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
         current = await cursor.fetchone()
 
     if not current:
-        logger.warning("[DECISION-SKIP] card %d deleted during agent run, cancelling session", req_id)
+        logger.warning("[DECISION-SKIP] 卡片 %d 在 agent 运行期间被删除, 取消会话", req_id)
         await session_manager.cancel_session(session_id, f"card_deleted:{req_id}")
         return
 
@@ -169,8 +175,9 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
     req_type = current["type"] or "dev"
 
     if status_changed or has_ceo_decision:
-        logger.info("[DECISION-OK] %s completed [%s]: status %s->%s, ceo_escalated=%s",
+        logger.info("[DECISION-OK] %s 已完成 [%s]: 状态 %s→%s, ceo_escalated=%s",
                     role_name, card.get("code"), old_status, current_status, has_ceo_decision)
+        await card_log(req_id, f"{role_name} 决策完成: 状态 {old_status}→{current_status}", source=role_name)
 
         # Handle research conclusion archival
         if role_name == "pm" and current_status == "done" and req_type == "research":
@@ -186,7 +193,7 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
                 parsed = parse_pm_research_conclusion(latest_pm["content"])
                 if parsed:
                     await append_research_to_memory(project_id, card.get("code", ""), parsed)
-                    logger.info("[PRODUCT-MEMORY] appended for [%s]", card.get("code", ""))
+                    logger.info("[PRODUCT-MEMORY] 已追加 [%s]", card.get("code", ""))
 
             # Trigger wiki archiver (non-blocking)
             import asyncio
@@ -197,8 +204,10 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
         await session_manager.complete_session(session_id, f"{role_name} decided [{card.get('code', '')}]", tokens=tokens)
     else:
         # Agent did NOT make a decision - immediate escalation
-        logger.warning("[DECISION-FAIL] %s did NOT decide for [%s]. Escalating to CEO.",
+        logger.warning("[DECISION-FAIL] %s 未做出决策 [%s], 升级给 CEO",
                        role_name, card.get("code"))
+        await card_log(req_id, f"{role_name} 未做出决策, 升级给 CEO", level="warning", source=role_name)
+        escalation_comment = f"{role_name} 执行完毕但未调用决策工具，系统自动升级给 CEO。"
         ceo_dec = json.dumps({
             "role": role_name,
             "reason": "agent_no_decision",
@@ -207,6 +216,10 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
             "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, ensure_ascii=False)
         async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                (req_id, f"[系统] {role_name}", escalation_comment),
+            )
             await db.execute(
                 "UPDATE requirements SET ceo_decision=?, updated_at=datetime('now','localtime') WHERE id=?",
                 (ceo_dec, req_id),
@@ -291,7 +304,7 @@ async def append_research_to_memory(project_id: int, card_code: str, parsed: dic
         )
         await db.commit()
 
-    logger.info("[PRODUCT-MEMORY] research conclusions appended for card=[%s] project=%d",
+    logger.info("[PRODUCT-MEMORY] 研究结论已追加: card=[%s] project=%d",
                 card_code, project_id)
 
 
@@ -309,12 +322,12 @@ async def _trigger_wiki_archive(project_id: int, card: dict, req_id: int) -> Non
             comments = [dict(row) for row in await cursor.fetchall()]
 
         if not comments:
-            logger.warning("[WIKI-ARCHIVE] no comments for [%s], skipping", card.get("code", ""))
+            logger.warning("[WIKI-ARCHIVE] [%s] 无评论, 跳过", card.get("code", ""))
             return
 
         agent = CommentAgent("wiki_archiver", project_id=project_id)
         await agent.execute(card, comments)
-        logger.info("[WIKI-ARCHIVE] completed for [%s]", card.get("code", ""))
+        logger.info("[WIKI-ARCHIVE] [%s] 归档完成", card.get("code", ""))
 
     except Exception as e:
-        logger.warning("[WIKI-ARCHIVE] failed for [%s]: %s", card.get("code", ""), e)
+        logger.warning("[WIKI-ARCHIVE] [%s] 归档失败: %s", card.get("code", ""), e)

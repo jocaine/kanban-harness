@@ -36,7 +36,7 @@ async def get_project_repo_path(project_id: int, git_remote_url: str = "") -> st
     os.makedirs(WORKSPACE_BASE, exist_ok=True)
 
     if git_remote_url:
-        logger.info(f"Cloning {git_remote_url} → {workspace_dir}")
+        logger.info(f"克隆 {git_remote_url} → {workspace_dir}")
         proc = await asyncio.create_subprocess_exec(
             "git", "clone", git_remote_url, workspace_dir,
             stdout=asyncio.subprocess.PIPE,
@@ -45,11 +45,11 @@ async def get_project_repo_path(project_id: int, git_remote_url: str = "") -> st
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             err = stderr.decode(errors="replace").strip()
-            logger.error(f"Clone failed: {err}")
+            logger.error(f"克隆失败: {err}")
             raise RuntimeError(f"git clone failed: {err}")
     else:
         os.makedirs(workspace_dir, exist_ok=True)
-        logger.info(f"Initializing empty repo at {workspace_dir}")
+        logger.info(f"初始化空仓库: {workspace_dir}")
         proc = await asyncio.create_subprocess_exec(
             "git", "init", workspace_dir,
             stdout=asyncio.subprocess.PIPE,

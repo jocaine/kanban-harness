@@ -17,10 +17,12 @@ logging:
 mcp_servers:
   kanban:
     args:
-    - /app/mcp_server/server.py
+    - /app/mcp_server/agent_server.py
     command: /usr/local/bin/python3
     env:
-      KH_BASE_URL: http://localhost:8000
+      DB_PATH: data/kanban.db
+      KH_AGENT_ROLE: industry
+      KH_PROJECT_ID: '0'
     type: stdio
 memory:
   memory_enabled: false

@@ -688,7 +688,6 @@ function getQueueReason(r) {
         organizing:  '等待 PM 需求整理',
         dev:      schedulerMode === 'paused' ? '调度器已暂停，待恢复后自动分配' : '等待 Coach-Dev 开发实现',
         testing:  '等待 Coach-Review 测试验收',
-        blocked:  '已阻塞，需要人工介入',
     };
     return defaults[r.status] || '排队等待中';
 }
@@ -868,6 +867,7 @@ function showReqModal(editId) {
         renderAttachments(r.attachments || []);
         loadComments(editId);
         loadCommits(editId);
+        loadCardLogs(editId);
         // Default to preview mode when opening existing card
         if (r.description) {
             const preview = document.getElementById('req-desc-preview');
@@ -1458,6 +1458,29 @@ function renderDiff(diffText) {
 async function loadComments(rid) {
     const comments = await api('/api/requirements/' + rid + '/comments');
     renderComments(comments);
+}
+
+async function loadCardLogs(rid) {
+    const el = document.getElementById('card-log-list');
+    if (!el) return;
+    el.innerHTML = '<div style="color:#888;padding:8px">加载中...</div>';
+    try {
+        const resp = await fetch(`/api/requirements/${rid}/logs?limit=200`);
+        const data = await resp.json();
+        if (!data.logs || data.logs.length === 0) {
+            el.innerHTML = '<div style="color:#888;padding:8px">暂无日志</div>';
+            return;
+        }
+        const levelColors = {info: '#6b7280', warning: '#f59e0b', error: '#ef4444'};
+        el.innerHTML = data.logs.map(log => {
+            const color = levelColors[log.level] || '#6b7280';
+            const src = log.source ? `<span style="color:#8b5cf6">[${log.source}]</span> ` : '';
+            const ts = log.created_at ? log.created_at.slice(5, 19) : '';
+            return `<div style="padding:3px 8px;border-bottom:1px solid #f3f4f6"><span style="color:#9ca3af">${ts}</span> <span style="color:${color};font-weight:500">${log.level.toUpperCase()}</span> ${src}${log.message}</div>`;
+        }).join('');
+    } catch(e) {
+        el.innerHTML = `<div style="color:#ef4444;padding:8px">加载失败: ${e.message}</div>`;
+    }
 }
 
 function renderComments(comments) {
@@ -2719,7 +2742,7 @@ function renderTeamWorkflow() {
                 <span class="wf-esc-arrow">→</span>
                 <span class="wf-esc-step">PM 修改重推<span class="wf-esc-sub">organizing→dev</span></span>
                 <span class="wf-esc-arrow">→</span>
-                <span class="wf-esc-step wf-esc-blocked">仍有分歧→阻塞<span class="wf-esc-sub">dev→blocked</span></span>
+                <span class="wf-esc-step wf-esc-blocked">仍有分歧→ask_ceo<span class="wf-esc-sub">CEO 裁决</span></span>
                 <span class="wf-esc-arrow">→</span>
                 <span class="wf-esc-step wf-esc-ceo">CEO 裁决</span>
             </div>
@@ -2776,7 +2799,7 @@ function renderTeamGrid(agents, schedulerState) {
         const toolsHtml = [...uniqueTools, ...commonTools].map(t =>
             `<span class="tool-tag${COMMON_TOOLS.includes(t) ? ' common' : ''}">${esc(TOOL_LABELS[t] || t)}</span>`
         ).join('');
-        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞').replace('->', ' → ')).join(' · ') || '—';
+        const moves = (info.permissions?.can_move || []).map(m => m.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('->', ' → ')).join(' · ') || '—';
         const TRIGGER_LABELS = {
             'requirement_created': '新需求触发',
             'status_changed': '状态变更触发',
@@ -2790,24 +2813,21 @@ function renderTeamGrid(agents, schedulerState) {
             'organizing->dev': '分配任务给开发',
             'dev->testing': '提交代码送测',
             'dev->organizing': '退回需求给PM',
-            'dev->blocked': '请求CEO裁决',
             'testing->done': '验收通过完成',
             'testing->dev': '打回修改',
-            'blocked->organizing': '解除阻塞重排',
         };
         const STATUS_ROLE = {
             'organizing': 'pm',
             'dev': 'coach_dev',
             'testing': 'coach_review',
             'done': '',
-            'blocked': '',
         };
         const movesHtml = (info.permissions?.can_move || []).map(m => {
             const parts = m.split('->');
             const fromStatus = parts[0];
             const toStatus = parts[1];
-            const fromLabel = fromStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
-            const toLabel = toStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成').replace('blocked', '阻塞');
+            const fromLabel = fromStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成');
+            const toLabel = toStatus.replace('research', '调研').replace('organizing', '需求整理').replace('dev', '开发').replace('testing', '测试').replace('done', '完成');
             const explain = MOVE_EXPLAIN[m] || '';
             const fromRole = STATUS_ROLE[fromStatus] || '';
             const toRole = STATUS_ROLE[toStatus] || '';

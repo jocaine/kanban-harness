@@ -9,6 +9,7 @@ from datetime import datetime
 import aiosqlite
 
 from core.database import DB_PATH
+from core.card_logger import card_log
 from core.workspace import get_project_repo_path
 from core.session_manager import SessionManager, DEFAULT_TIMEOUT
 from core.workflow_config import workflow_config
@@ -44,10 +45,11 @@ class SchedulerEngine:
             return
         self.running = True
         self._started_at = datetime.now()
+        self.session_manager.set_retry_handler(self._handle_retry)
         await self.session_manager.recover_stale_sessions()
         await self.session_manager.start_timeout_checker()
         self._task = asyncio.create_task(self._poll_loop())
-        logger.info("Scheduler started")
+        logger.info("调度器已启动")
 
     async def stop(self):
         self.running = False
@@ -58,15 +60,15 @@ class SchedulerEngine:
             except asyncio.CancelledError:
                 pass
         await self.session_manager.stop()
-        logger.info("Scheduler stopped")
+        logger.info("调度器已停止")
 
     def pause(self):
         self.paused = True
-        logger.info("Scheduler paused")
+        logger.info("调度器已暂停")
 
     def resume(self):
         self.paused = False
-        logger.info("Scheduler resumed")
+        logger.info("调度器已恢复")
 
     async def _poll_loop(self):
         while self.running:
@@ -86,20 +88,21 @@ class SchedulerEngine:
         cards = await self._find_actionable_cards()
         events = await self._peek_pending_events()
         if cards or events:
-            logger.info("[SCHED] tick #%d: %d dev cards, %d pending events", self._tick_count, len(cards), len(events))
+            logger.info("[SCHED] tick #%d: %d 张开发卡, %d 个待处理事件", self._tick_count, len(cards), len(events))
 
         if cards:
             running_count = len(await self.session_manager.get_running_sessions())
             for card in cards:
                 if running_count >= workflow_config.max_concurrent_sessions:
-                    logger.info("[SCHED] concurrent limit reached (%d), deferring remaining cards", workflow_config.max_concurrent_sessions)
+                    logger.info("[SCHED] 并发上限已达 (%d), 延迟剩余卡片", workflow_config.max_concurrent_sessions)
                     break
                 has_running = await self._has_running_session(card["id"])
                 if has_running:
                     continue
                 if not await self._repo_is_ready(card["project_id"], card.get("git_remote_url", "")):
                     continue
-                logger.info("[SCHED] → trigger coach_dev for [%s] %s", card["code"], card["title"])
+                logger.info("[SCHED] → 触发 coach_dev: [%s] %s", card["code"], card["title"])
+                await card_log(card["id"], "调度触发 coach_dev", source="sched")
                 await self._trigger_coach_dev(card)
                 running_count += 1
 
@@ -136,7 +139,7 @@ class SchedulerEngine:
 
             if card_status in self.TERMINAL_STATUSES:
                 logger.info(
-                    "[RECONCILE] session %d (%s): card %d is '%s' → cancelling",
+                    "[RECONCILE] 会话 %d (%s): 卡片 %d 状态为 '%s' → 取消",
                     sid, role, req_id, card_status,
                 )
                 await self.session_manager.cancel_session(sid, f"card_status:{card_status}")
@@ -145,7 +148,7 @@ class SchedulerEngine:
             expected = self.AGENT_EXPECTED_STATUS.get(role)
             if expected and card_status not in expected:
                 logger.info(
-                    "[RECONCILE] session %d (%s): card %d moved to '%s' (expected %s) → cancelling",
+                    "[RECONCILE] 会话 %d (%s): 卡片 %d 已移至 '%s' (预期 %s) → 取消",
                     sid, role, req_id, card_status, expected,
                 )
                 await self.session_manager.cancel_session(sid, f"card_moved:{card_status}")
@@ -173,7 +176,7 @@ class SchedulerEngine:
                     return "archived"
                 return row[0]
         except Exception as e:
-            logger.error("[FAULT:DB] reconcile query card %d: %s", requirement_id, e)
+            logger.error("[FAULT:DB] 对账查询卡片 %d 失败: %s", requirement_id, e)
             return None
 
     # ==================== CEO Decision Reconciliation ====================
@@ -223,7 +226,8 @@ class SchedulerEngine:
                 continue
 
             await self._set_ceo_decision(card, elapsed)
-            logger.info("[CEO-DECISION] escalated [%s] (status=%s, idle %.0fs)",
+            await card_log(card["id"], "空闲过久, 升级给 CEO", level="warning", source="sched")
+            logger.info("[CEO-DECISION] 已升级 [%s] (状态=%s, 空闲 %.0f秒)",
                         card.get("code", ""), card["status"], elapsed)
 
     async def _has_running_session_for_role(self, role: str) -> bool:
@@ -237,6 +241,9 @@ class SchedulerEngine:
     async def _set_ceo_decision(self, card: dict, elapsed: float = 0):
         role = self.ROLE_FOR_STATUS.get(card["status"], "unknown")
         minutes = int(elapsed // 60) if elapsed else 0
+        escalation_comment = (
+            f"卡片在 {card['status']} 列停滞 {minutes} 分钟，系统自动升级给 CEO。"
+        )
         decision = json.dumps({
             "role": role,
             "reason": "stuck_timeout",
@@ -245,6 +252,10 @@ class SchedulerEngine:
             "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, ensure_ascii=False)
         async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO comments (requirement_id, author, content) VALUES (?,?,?)",
+                (card["id"], f"[系统] {role}", escalation_comment),
+            )
             await db.execute(
                 "UPDATE requirements SET ceo_decision=? WHERE id=?",
                 (decision, card["id"]),
@@ -299,7 +310,7 @@ class SchedulerEngine:
                 stderr=asyncio.subprocess.PIPE,
             )
             await proc.communicate()
-            logger.info("[SCHED] init'd local workspace for project_%d at %s", project_id, repo_path)
+            logger.info("[SCHED] 已初始化项目_%d 本地工作区: %s", project_id, repo_path)
 
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", repo_path, "rev-list", "--count", "HEAD",
@@ -319,7 +330,7 @@ class SchedulerEngine:
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             await proc.communicate()
-            logger.info("[SCHED] made initial commit for project_%d", project_id)
+            logger.info("[SCHED] 已为项目_%d 创建初始提交", project_id)
 
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", repo_path, "branch", "--list", "master",
@@ -331,9 +342,9 @@ class SchedulerEngine:
                 "git", "-C", repo_path, "branch", "-m", "master", "main",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            logger.info("[SCHED] renamed master→main for project_%d", project_id)
+            logger.info("[SCHED] 已为项目_%d 重命名 master→main", project_id)
 
-        logger.info("[SCHED] project_%d: local workspace ready for coach_dev", project_id)
+        logger.info("[SCHED] 项目_%d: 本地工作区就绪", project_id)
         return True
 
     async def _trigger_coach_dev(self, card: dict):
@@ -385,10 +396,10 @@ class SchedulerEngine:
         for event in events:
             try:
                 context = json.loads(event.get("context", "{}"))
-                logger.info("[SCHED] processing event #%d: type=%s, req=%s, context=%s",
+                logger.info("[SCHED] 处理事件 #%d: type=%s, req=%s, context=%s",
                             event["id"], event["event_type"], event.get("requirement_id"), context)
                 roles = registry.roles_for_trigger(event["event_type"], context)
-                logger.info("[SCHED] matched roles for event #%d: %s", event["id"], roles or "(none)")
+                logger.info("[SCHED] 事件 #%d 匹配的角色: %s", event["id"], roles or "(无)")
 
                 for role_name in roles:
                     if role_name == "coach_dev" and event["event_type"] != "ceo_replied":
@@ -396,7 +407,7 @@ class SchedulerEngine:
                     await self._trigger_comment_agent(role_name, event, context)
 
             except Exception as e:
-                logger.error("[FAULT:DB] event processing failed for event %d: %s", event['id'], e)
+                logger.error("[FAULT:DB] 事件 %d 处理失败: %s", event['id'], e)
 
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute(
@@ -409,7 +420,8 @@ class SchedulerEngine:
         if not requirement_id:
             return
 
-        logger.info("[SCHED] → trigger comment_agent '%s' for req=%d, event=%s", role_name, requirement_id, event["event_type"])
+        logger.info("[SCHED] → 触发 comment_agent '%s': req=%d, event=%s", role_name, requirement_id, event["event_type"])
+        await card_log(requirement_id, f"触发 comment_agent '{role_name}'", source="sched")
 
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
@@ -451,6 +463,35 @@ class SchedulerEngine:
 
         asyncio.create_task(handlers.handle_comment_agent_result(self.session_manager, session_id, role_name, card, event["project_id"]))
 
+    async def _handle_retry(self, new_session_id: int, original_session: dict):
+        """Retry handler — re-launches agent for a retried/continued session."""
+        role_name = original_session["agent_role"]
+        project_id = original_session["project_id"]
+        requirement_id = original_session.get("requirement_id")
+
+        if not requirement_id:
+            logger.warning("重试会话 %d 无 requirement_id, 跳过", new_session_id)
+            await self.session_manager.fail_session(new_session_id, "no_requirement_id")
+            return
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,))
+            card_row = await cursor.fetchone()
+            if not card_row:
+                logger.warning("重试会话 %d 的卡片 %d 不存在, 跳过", new_session_id, requirement_id)
+                await self.session_manager.fail_session(new_session_id, "card_not_found")
+                return
+            card = dict(card_row)
+
+        if role_name == "coach_dev":
+            repo_path = await get_project_repo_path(project_id, card.get("git_remote_url", ""))
+            asyncio.create_task(handlers.handle_coach_dev_result(
+                self.session_manager, new_session_id, card, repo_path))
+        else:
+            asyncio.create_task(handlers.handle_comment_agent_result(
+                self.session_manager, new_session_id, role_name, card, project_id))
+
     # ==================== Stuck card recovery ====================
 
     STUCK_ROLE_MAP = {
@@ -486,8 +527,9 @@ class SchedulerEngine:
             if await self._has_running_session(card["id"]):
                 continue
 
-            logger.info("[SCHED-RECOVER] stuck card [%s] in '%s' → triggering %s",
+            logger.info("[SCHED-RECOVER] 卡住的卡片 [%s] 状态='%s' → 触发 %s",
                         card.get("code", ""), card["status"], role_name)
+            await card_log(card["id"], f"检测到卡住, 触发恢复: {role_name}", level="warning", source="sched")
 
             event = {
                 "id": 0,

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 import logging
 
 # Ensure project root is in sys.path so `mcp_server.kh_client` resolves
@@ -22,7 +23,7 @@ logging.basicConfig(
 
 from mcp_server.kh_client import KHClient
 
-logger.info("MCP server module loaded, KH_BASE_URL=%s", os.getenv("KH_BASE_URL", "http://localhost:8000"))
+logger.info("MCP 服务模块已加载, KH_BASE_URL=%s", os.getenv("KH_BASE_URL", "http://localhost:8000"))
 
 mcp = FastMCP(
     "Kanban Harness",
@@ -30,13 +31,13 @@ mcp = FastMCP(
 )
 
 client = KHClient()
-logger.info("MCP FastMCP instance created, client targeting %s", client.base_url)
+logger.info("MCP FastMCP 实例已创建, 目标地址 %s", client.base_url)
 
 
 @mcp.tool()
 async def kh_brief() -> str:
     """返回 KH 团队状态摘要：各角色状态、待审批项、进行中的卡片。"""
-    logger.info("tool:kh_brief called")
+    logger.info("tool:kh_brief 已调用")
     projects = await client.list_projects()
     agents = await client.get_agents_status()
     scheduler = await client.get_scheduler_status()
@@ -89,7 +90,7 @@ async def kh_submit_idea(idea: str, project_id: int = 0, priority: str = "P2") -
         project_id: 目标项目 ID（0 则使用第一个活跃项目）
         priority: 优先级 P0/P1/P2/P3
     """
-    logger.info("tool:kh_submit_idea idea=%r project_id=%d priority=%s", idea[:60], project_id, priority)
+    logger.info("tool:kh_submit_idea 提交想法=%r project_id=%d priority=%s", idea[:60], project_id, priority)
     if not idea.strip():
         return "错误：idea 不能为空"
 
@@ -131,7 +132,7 @@ async def kh_notify_event(event_type: str, detail: str) -> str:
         event_type: 事件类型 (deploy_done, bug_report, user_feedback, ci_failed, release_ready)
         detail: 事件详情描述
     """
-    logger.info("tool:kh_notify_event type=%s detail=%r", event_type, detail[:80])
+    logger.info("tool:kh_notify_event 类型=%s 详情=%r", event_type, detail[:80])
     valid_types = ("deploy_done", "bug_report", "user_feedback", "ci_failed", "release_ready")
     if event_type not in valid_types:
         return f"错误：event_type 必须是 {valid_types} 之一"
@@ -164,7 +165,7 @@ async def kh_ask_pm(question: str) -> str:
     Args:
         question: 要问 PM 的问题
     """
-    logger.info("tool:kh_ask_pm question=%r", question[:80])
+    logger.info("tool:kh_ask_pm 问题=%r", question[:80])
     projects = await client.list_projects()
     all_reqs = []
     for proj in projects:
@@ -206,7 +207,7 @@ async def kh_approve(item_id: int) -> str:
     Args:
         item_id: 需求卡片 ID
     """
-    logger.info("tool:kh_approve item_id=%d", item_id)
+    logger.info("tool:kh_approve 审批=%d", item_id)
     try:
         result = await client.move_requirement(item_id, status="done")
         return f"已批准：[{result['code']}] {result['title']} → done"
@@ -222,7 +223,7 @@ async def kh_reject(item_id: int, reason: str) -> str:
         item_id: 需求卡片 ID
         reason: 驳回原因
     """
-    logger.info("tool:kh_reject item_id=%d reason=%r", item_id, reason[:60])
+    logger.info("tool:kh_reject 拒绝=%d 原因=%r", item_id, reason[:60])
     try:
         await client.move_requirement(item_id, status="dev")
         await client.add_comment(item_id, content=f"**驳回原因：** {reason}", author="reviewer")
@@ -242,7 +243,7 @@ async def kh_web_search(query: str, limit: int = 5) -> str:
     import httpx
     import json
 
-    logger.info("tool:kh_web_search query=%r limit=%d", query[:60], limit)
+    logger.info("tool:kh_web_search 搜索=%r limit=%d", query[:60], limit)
     searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8888").rstrip("/")
 
     try:
@@ -284,7 +285,7 @@ async def kh_web_extract(url: str) -> str:
     """
     import httpx
 
-    logger.info("tool:kh_web_extract url=%r", url[:80])
+    logger.info("tool:kh_web_extract 提取=%r", url[:80])
 
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as http:
@@ -325,7 +326,7 @@ async def kh_load_guideline(name: str) -> str:
     """
     from pathlib import Path
 
-    logger.info("tool:kh_load_guideline name=%r", name)
+    logger.info("tool:kh_load_guideline 指南=%r", name)
 
     # Search in both skill directories
     base = Path(__file__).parent.parent / "skills"
@@ -353,6 +354,51 @@ async def kh_load_guideline(name: str) -> str:
     return f"错误：指南 '{name}' 不存在。可用: {', '.join(sorted(available))}"
 
 
+# ─── Resources ───────────────────────────────────────────────────────────────
+
+@mcp.resource("kanban://board", description="看板全貌：项目→版本→各状态列的卡片（JSON）")
+async def resource_board() -> str:
+    logger.info("resource:board 已调用")
+    projects = await client.list_projects()
+    result = []
+    for proj in projects:
+        proj_data = {"id": proj["id"], "name": proj["name"], "versions": []}
+        versions = await client.list_versions(proj["id"])
+        for ver in versions:
+            if ver["status"] in ("active", "testing", "planning"):
+                reqs = await client.list_requirements(ver["id"])
+                columns = {"research": [], "organizing": [], "dev": [], "testing": [], "done": []}
+                for req in reqs:
+                    columns.setdefault(req["status"], []).append({
+                        "code": req["code"],
+                        "title": req["title"],
+                        "priority": req["priority"],
+                        "assignee": req.get("assignee", ""),
+                    })
+                proj_data["versions"].append({
+                    "id": ver["id"],
+                    "name": ver["name"],
+                    "status": ver["status"],
+                    "columns": columns,
+                })
+        result.append(proj_data)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.resource("kanban://agents", description="各 AI agent 角色当前状态")
+async def resource_agents() -> str:
+    logger.info("resource:agents 已调用")
+    data = await client.get_agents_status()
+    return json.dumps(data, ensure_ascii=False)
+
+
+@mcp.resource("kanban://scheduler", description="调度器运行状态（模式、autopilot 级别）")
+async def resource_scheduler() -> str:
+    logger.info("resource:scheduler 已调用")
+    data = await client.get_scheduler_status()
+    return json.dumps(data, ensure_ascii=False)
+
+
 if __name__ == "__main__":
-    logger.info("MCP server starting in stdio mode (pid=%d)", os.getpid())
+    logger.info("MCP 服务启动 stdio 模式 (pid=%d)", os.getpid())
     mcp.run()

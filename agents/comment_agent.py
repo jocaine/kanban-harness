@@ -86,7 +86,7 @@ class CommentAgent:
                 "tokens": tokens,
             }
         except Exception as e:
-            logger.error(f"CommentAgent({self.role_config.role}) failed: {e}")
+            logger.error(f"CommentAgent({self.role_config.role}) 失败: {e}")
             return {"task_done": False, "signal": "", "success": False, "comment": "", "detail": "", "summary": str(e)}
 
     DETAIL_SEPARATOR = "---DETAIL---"
@@ -116,7 +116,7 @@ class CommentAgent:
             split_point = self._find_detail_boundary(response)
             if split_point > 0:
                 logger.warning(
-                    "Model output missing DETAIL_SEPARATOR (%d chars), heuristic split at %d",
+                    "模型输出缺少 DETAIL_SEPARATOR (%d 字符), 启发式分割位置 %d",
                     len(response), split_point,
                 )
                 return response[:split_point].strip(), response[split_point:].strip()
@@ -182,7 +182,7 @@ class CommentAgent:
         """Load skill file content for prompt injection, stripping frontmatter."""
         skill_path = Path(__file__).parent.parent / "skills" / "pm" / skill_name / "SKILL.md"
         if not skill_path.exists():
-            logger.warning("Skill file not found: %s", skill_path)
+            logger.warning("技能文件未找到: %s", skill_path)
             return ""
         content = skill_path.read_text(encoding="utf-8")
         if content.startswith("---"):
@@ -206,7 +206,7 @@ class CommentAgent:
                     "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策。\n\n"
                     f"{skill_content}\n\n"
                     "**操作步骤：**\n"
-                    "调用决策工具: pm_approve(通过) 或 pm_send_to_research(退回) 或 pm_ask_ceo(问CEO)\n"
+                    "调用决策工具: decide(target=dev/done 通过) 或 decide(target=research 退回) 或 ask_ceo(问CEO)\n"
                     "（决策工具会自动移动卡片，无需单独调用 move_requirement）\n"
                     "\n"
                     "\n\n"
@@ -221,7 +221,7 @@ class CommentAgent:
                     "2. 需求涉及不确定因素（市场数据、竞品情况、技术可行性未知）→ 移到 `research`\n"
                     "3. 需求太大需要拆分 → 移到 `research`，评论中说明拆分建议\n\n"
                     "**操作步骤：**\n"
-                    "调用决策工具: pm_approve(通过) 或 pm_send_to_research(退回) 或 pm_ask_ceo(问CEO)\n"
+                    "调用决策工具: decide(target=dev/done 通过) 或 decide(target=research 退回) 或 ask_ceo(问CEO)\n"
                     "（决策工具会自动移动卡片）\n\n"
                     "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
@@ -237,8 +237,8 @@ class CommentAgent:
                 "- 不能教其他角色怎么做\n\n"
                 "✅ 你只能说以下三种之一：\n"
                 "1. 直接输出调研结果（数据、分析、对比表）\n"
-                "2. 调用 industry_ask_ceo(requirement_id, comment, question)\n"
-                "3. 调用 industry_complete(requirement_id, comment, detail)\n\n"
+                "2. 调用 ask_ceo(requirement_id, comment, question)\n"
+                "3. 调用 decide(requirement_id, comment, target='organizing', detail)\n\n"
                 "记住：你不需要 PM 告诉你做什么，你是行业专家。如果信息不足，用 [需要补充] 找 CEO。"
             )
 
@@ -317,7 +317,7 @@ class CommentAgent:
             base_url = base
             provider = "custom"
 
-        logger.info("Calling hermes AIAgent in-process: model=%s", model_name)
+        logger.info("调用 hermes AIAgent (进程内): model=%s", model_name)
 
         def _heartbeat_cb(*_args, **_kwargs):
             if on_heartbeat:
@@ -389,9 +389,9 @@ class CommentAgent:
                     _row = _cur.fetchone()
                     _conn.close()
                     if _row and _row["status"] == "research":
-                        logger.info("CommentAgent(industry) nudging agent to call decision tool")
+                        logger.info("CommentAgent(industry) 推动 agent 调用决策工具")
                         result = agent.chat(
-                            "调研阶段已结束，请将你的调研结论通过 mcp_kanban_industry_complete 工具提交。"
+                            "调研阶段已结束，请将你的调研结论通过 mcp_kanban_decide 工具提交。"
                             " requirement_id 是 %d。" % requirement_id
                         ) or ""
                 return result
@@ -408,10 +408,10 @@ class CommentAgent:
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            logger.error("CommentAgent(%s) hermes timeout after %ds", self.role_config.role, timeout)
+            logger.error("CommentAgent(%s) hermes 超时 (%d秒)", self.role_config.role, timeout)
             raise TimeoutError(f"hermes agent exceeded {timeout}s timeout")
 
-        logger.info("CommentAgent(%s) raw output length=%d, first 500: %s",
+        logger.info("CommentAgent(%s) 原始输出长度=%d, 前500: %s",
                     self.role_config.role, len(output), output[:500])
 
         output = re.sub(r'<HermesTool:[^>]*>.*?</HermesTool[^>]*>', '', output, flags=re.DOTALL)
@@ -453,7 +453,7 @@ class CommentAgent:
             env["ANTHROPIC_BASE_URL"] = base
 
         role = self.role_config.role
-        logger.info("CommentAgent(%s) starting CLI (timeout=%ds)", role, timeout)
+        logger.info("CommentAgent(%s) 启动 CLI (超时=%d秒)", role, timeout)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -513,21 +513,21 @@ class CommentAgent:
             except Exception:
                 proc.kill()
                 await proc.wait()
-            logger.error("CommentAgent(%s) timed out after %ds", role, elapsed)
+            logger.error("CommentAgent(%s) 超时 (%d秒)", role, elapsed)
             raise RuntimeError(f"CommentAgent({role}) timed out after {elapsed}s")
 
         elapsed = int(_time.monotonic() - start_t)
         if proc.returncode != 0:
             err = (await proc.stderr.read()).decode(errors="replace").strip()
             logger.warning(
-                "CommentAgent(%s) CLI failed (exit=%d, %ds). stderr: %s",
-                role, proc.returncode, elapsed, err[:300] or "(empty)",
+                "CommentAgent(%s) CLI 失败 (exit=%d, %d秒). stderr: %s",
+                role, proc.returncode, elapsed, err[:300] or "(空)",
             )
             if not result_text:
                 raise RuntimeError(
                     f"CommentAgent({role}) exit {proc.returncode}: {err[:200] or 'no output'}"
                 )
         else:
-            logger.info("CommentAgent(%s) done (%ds)", role, elapsed)
+            logger.info("CommentAgent(%s) 完成 (%d秒)", role, elapsed)
 
         return result_text, usage

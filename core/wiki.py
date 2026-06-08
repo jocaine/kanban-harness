@@ -262,7 +262,7 @@ def ensure_wiki_structure(project_id: int) -> Path:
         f"# Log\n\n## [{today}] init | Wiki initialized\n"
     )
     (base / "log.md").write_text(log_content, encoding="utf-8")
-    logger.info("[WIKI] initialized wiki structure for project_%d", project_id)
+    logger.info("[WIKI] 已初始化项目_%d 的 wiki 结构", project_id)
     return base
 
 
@@ -277,7 +277,7 @@ def write_wiki_page(project_id: int, page_path: str, content: str, log_message: 
     full_path.write_text(updated_content, encoding="utf-8")
     msg = log_message or f"Updated {page_path}"
     _append_log(project_id, "write", msg)
-    logger.info("[WIKI] wrote %s for project_%d", page_path, project_id)
+    logger.info("[WIKI] 已写入 %s, 项目_%d", page_path, project_id)
     return relative
 
 
@@ -374,7 +374,7 @@ def write_raw(project_id: int, topic: str, slug: str, content: str,
     full_path.write_text(content, encoding="utf-8")
     relative = f"raw/{topic}/{filename}"
     _append_log(project_id, "raw", f"Collected {topic}/{filename}")
-    logger.info("[WIKI] wrote raw %s for project_%d", relative, project_id)
+    logger.info("[WIKI] 已写入原始文件 %s, 项目_%d", relative, project_id)
     return relative
 
 

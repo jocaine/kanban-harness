@@ -70,7 +70,7 @@ async def _recover_orphan_sessions():
             )
             await db.commit()
             logging.getLogger("kh.startup").warning(
-                "Recovered %d orphan sessions from previous run", count
+                "启动时恢复了 %d 个残留会话", count
             )
 
 

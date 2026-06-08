@@ -6,7 +6,7 @@ from typing import Optional
 import os
 import aiosqlite
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("kh.web.api")
 
 from core.database import get_db, next_code, generate_prefix
 from agents.registry import registry
@@ -327,7 +327,7 @@ async def update_requirement(rid: int, data: ReqUpdate, db: aiosqlite.Connection
 
 @router.put("/requirements/{rid}/move")
 async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosqlite.Connection = Depends(get_db)):
-    valid = ("research", "organizing", "dev", "testing", "done", "blocked")
+    valid = ("research", "organizing", "dev", "testing", "done")
     if data.status not in valid:
         raise HTTPException(400, f"status must be one of {valid}")
 
@@ -340,12 +340,6 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
     old_status = row["status"]
     req_type = row["type"]
 
-    # Type-based state machine rules
-    if req_type == "dev" and old_status == "organizing" and data.status == "done":
-        raise HTTPException(400, "开发需求不能直接从 organizing 移到 done，须经过 dev→testing→done 流程")
-    if req_type == "research" and data.status in ("dev", "testing"):
-        raise HTTPException(400, "调研需求不能移到 dev/testing 列，审计通过后直接到 done")
-
     if agent_role:
         if not registry.check_move(agent_role, old_status, data.status):
             allowed = registry.get_permissions(agent_role).can_move if registry.get_permissions(agent_role) else []
@@ -353,16 +347,6 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
                 403,
                 f"Role '{agent_role}' cannot move {old_status}->{data.status}, allowed: {allowed}"
             )
-        # Dev moving to organizing/blocked MUST provide a reason
-        if agent_role == "coach_dev" and data.status in ("organizing", "blocked") and not data.reason:
-            raise HTTPException(
-                400,
-                f"Role 'coach_dev' must provide a reason when moving to '{data.status}'"
-            )
-    else:
-        # 人类操作必须提供移动原因
-        if not data.reason.strip():
-            raise HTTPException(400, "移动卡片必须提供原因说明")
 
     # 进入对应列时自动设 assignee，前端据此判断活跃/排队中
     STATUS_ASSIGNEE_MAP = {
@@ -482,6 +466,18 @@ def _classify_log_layer(msg: str) -> str:
     m = re.match(r'^.*\[([a-z_]+(?:\.[a-z_]+)*)\]\s+(?:INFO|WARNING|ERROR|DEBUG|WARN):', msg)
     if m:
         mod = m.group(1)
+        if mod.startswith('kh.'):
+            seg = mod.split('.')[1] if '.' in mod[3:] else mod[3:]
+            if seg in ('core', 'telemetry'):
+                return 'core'
+            if seg in ('web', 'startup'):
+                return 'web'
+            if seg in ('agent',):
+                return 'agent'
+            if seg in ('sched',):
+                return 'sched'
+            if seg in ('mcp',):
+                return 'mcp'
         if mod.startswith('scheduler.'):
             return 'sched'
         if mod.startswith('agents.'):
@@ -490,20 +486,18 @@ def _classify_log_layer(msg: str) -> str:
             return 'web'
         if mod.startswith('core.'):
             return 'core'
-        if mod.startswith('kh.'):
-            return 'mcp'
     # Agent role tags
     if '[SCHED]' in msg:
         return 'sched'
     if '[PM]' in msg or '[CHAT]' in msg or '[hermes]' in msg:
         return 'web'
-    if 'Coach-Dev' in msg or 'CommentAgent' in msg or 'Loaded agent role' in msg:
+    if 'Coach-Dev' in msg or 'CommentAgent' in msg or '已加载 agent 角色' in msg:
         return 'agent'
     # MCP
     if 'MCP' in msg and ('server' in msg.lower() or 'client' in msg.lower()):
         return 'mcp'
     # DB migrations
-    if 'Migrating' in msg or 'database' in msg.lower():
+    if '迁移' in msg or 'database' in msg.lower():
         return 'core'
     # Everything else (HTTP access, uvicorn lifecycle, startup, etc.) → web
     return 'web'
@@ -889,7 +883,7 @@ async def put_product_memory_section(pid: int, db: aiosqlite.Connection = Depend
 
     # Audit log: insert a system comment in the project's product memory changes
     agent = body.get("agent", "system")
-    logger.info("Product memory updated: project=%d section=%s sub_section=%s agent=%s", pid, section, sub_section, agent)
+    logger.info("产品记忆已更新: project=%d section=%s sub_section=%s agent=%s", pid, section, sub_section, agent)
 
     return {"ok": True, "section": section, "sub_section": sub_section}
 
@@ -1106,6 +1100,20 @@ async def trigger_task(task_type: str):
         "status": "accepted",
         "hint": "Manual trigger — will execute on next tick"
     }
+
+
+# ==================== 2c. Card Lifecycle Logs ====================
+
+@router.get("/requirements/{rid}/logs")
+async def requirement_logs(rid: int, limit: int = 100, db: aiosqlite.Connection = Depends(get_db)):
+    """返回卡片的生命周期日志（持久化，跨重启保留）。"""
+    cursor = await db.execute(
+        "SELECT id, level, source, message, created_at FROM requirement_logs "
+        "WHERE requirement_id=? ORDER BY created_at ASC LIMIT ?",
+        (rid, limit),
+    )
+    rows = [dict(row) for row in await cursor.fetchall()]
+    return {"logs": rows, "total": len(rows)}
 
 
 # ==================== 2b. Card Debug Endpoint (KH-107) ====================
@@ -1668,14 +1676,14 @@ async def reload_config():
     from dotenv import load_dotenv
     # Re-read .env with override
     load_dotenv(override=True)
-    logger.info("Reloaded .env file")
+    logger.info("已重载 .env 文件")
 
     try:
         from web.hermes_chat import ensure_hermes_config
         await ensure_hermes_config()
-        logger.info("Re-synced hermes config")
+        logger.info("已重新同步 hermes 配置")
     except Exception as e:
-        logger.error("Failed to sync hermes config: %s", e)
+        logger.error("同步 hermes 配置失败: %s", e)
         return {"ok": True, "dotenv": "reloaded", "hermes_sync": f"failed: {e}"}
 
     return {"ok": True, "dotenv": "reloaded", "hermes_sync": "ok"}

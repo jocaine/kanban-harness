@@ -48,13 +48,13 @@ class CoachDev:
         if not real_repo.startswith(real_workspace + os.sep) and real_repo != real_workspace:
             raise RuntimeError(f"repo_path outside workspace: {real_repo} (workspace: {real_workspace})")
 
-        logger.info(f"Coach-Dev starting: [{code}] {title}")
+        logger.info(f"Coach-Dev 启动: [{code}] {title}")
 
         # Recovery: if on a stale feature branch (from crash before merge-back),
         # checkout main so _is_scaffold_mode() and _setup_worktree() work correctly
         current_branch = await self._get_current_branch()
         if current_branch and current_branch.startswith("feature/"):
-            logger.info(f"Coach-Dev: on stale branch {current_branch}, switching to main")
+            logger.info(f"Coach-Dev: 在旧分支 {current_branch}, 切换到 main")
             await self._run_git("checkout", "main")
 
         # Detect scaffold mode — empty repo works directly, no worktree needed
@@ -64,7 +64,7 @@ class CoachDev:
             if is_scaffold:
                 architecture = await self._get_architecture()
                 prompt = self._build_scaffold_prompt(card, architecture)
-                logger.info(f"Coach-Dev scaffold mode for [{code}] (arch: {len(architecture)} chars)")
+                logger.info(f"Coach-Dev 脚手架模式: [{code}] (架构文档: {len(architecture)} 字符)")
                 work_path = self.repo_path
                 # Branch may exist from a previous scaffold run that merged back
                 branch_list = await self._run_git("branch", "--list", branch_name)
@@ -84,7 +84,7 @@ class CoachDev:
                 commit_hash = await self._get_latest_commit(work_path)
                 commit_message = await self._get_commit_message(work_path)
                 summary = f"Branch: {branch_name}, commit: {commit_hash[:8]}"
-                logger.info(f"Coach-Dev completed: [{code}] {summary}")
+                logger.info(f"Coach-Dev 完成: [{code}] {summary}")
                 tokens = {
                     "input": usage.get("input_tokens", 0),
                     "output": usage.get("output_tokens", 0),
@@ -100,7 +100,7 @@ class CoachDev:
                     "tokens": tokens,
                 }
             else:
-                logger.warning(f"Coach-Dev produced no commits for [{code}]")
+                logger.warning(f"Coach-Dev 未产生 commit: [{code}]")
                 tokens = {
                     "input": usage.get("input_tokens", 0),
                     "output": usage.get("output_tokens", 0),
@@ -113,10 +113,10 @@ class CoachDev:
                 }
 
         except asyncio.TimeoutError:
-            logger.error("[FAULT:AGENT] coach_dev timed out for [%s]", code)
+            logger.error("[FAULT:AGENT] coach_dev 超时: [%s]", code)
             raise
         except Exception as e:
-            logger.error("[FAULT:AGENT] coach_dev failed for [%s]: %s", code, e)
+            logger.error("[FAULT:AGENT] coach_dev 失败: [%s]: %s", code, e)
             raise
         finally:
             if is_scaffold:
@@ -185,7 +185,7 @@ class CoachDev:
             if os.path.exists(worktree_path):
                 await self._run_git("worktree", "remove", "--force", worktree_path)
         except Exception as e:
-            logger.warning("[FAULT:WORKSPACE] worktree cleanup failed: %s", e)
+            logger.warning("[FAULT:WORKSPACE] worktree 清理失败: %s", e)
             # Fallback: just delete the directory
             if os.path.exists(worktree_path):
                 shutil.rmtree(worktree_path, ignore_errors=True)
