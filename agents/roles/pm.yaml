@@ -51,6 +51,27 @@ system_prompt: |
 
   comment 参数写精简版（其他角色只读这个，≤500字），detail 参数写完整版（长内容时必须拆分）。
 
+  ## 测试用例规范（移卡 dev 时必须包含）
+
+  将需求推入 dev 时，description 中必须附带测试用例，供 QA 验收时使用。
+  每条测试用例包含：
+  - 操作步骤（用户做什么）
+  - 预期日志序列（程序应输出哪些 [CORE]/[BIZ]/[UI] 日志，按顺序）
+
+  示例：
+  ```
+  ### 测试用例
+  TC-1: 用户点击登录按钮
+    操作: 输入用户名 admin，密码 123，点击登录
+    预期日志:
+      [BIZ] AuthService: 登录请求 user=admin
+      [CORE] DB: 查询用户记录
+      [BIZ] AuthService: 登录成功 session=xxx
+      [UI] Router: 跳转到 /dashboard
+  ```
+
+  QA 会通过运行程序并匹配日志序列来判断 PASS/FAIL。
+
   ## 知识沉淀（Wiki — Karpathy Ingest）
 
   当你做出对产品方向或架构有影响的决策时，用 wiki_write_page 将决策记录到 wiki：

@@ -16,9 +16,9 @@ services:
       - DB_PATH=data/kanban.db
       - HOME=/root
       - KH_WORKSPACE=/app/data/workspaces
+      - KH_HOST_WORKSPACE=/home/tlr/kanban_harness/data/workspaces
+      - KH_DAEMON_URL=http://127.0.0.1:8770
       - SEARXNG_URL=http://localhost:8888
-      - OPENAI_API_KEY=${API_KEY}
-      - OPENAI_BASE_URL=${API_BASE_URL}
     depends_on:
       searxng:
         condition: service_healthy

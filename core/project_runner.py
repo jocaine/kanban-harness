@@ -2,20 +2,88 @@
 
 Coach-Dev is required to maintain a start.sh in every project.
 This module only reads start.sh — no heuristic fallback.
+
+When a host daemon is available (KH_DAEMON_URL), delegates execution to the host.
+Falls back to in-container execution when daemon is unreachable.
 """
 
 import asyncio
 import logging
 import os
 import re
+import time
 
 logger = logging.getLogger("kh.core.project_runner")
 
 WORKSPACE_BASE = os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces"))
+HOST_WORKSPACE_BASE = os.getenv("KH_HOST_WORKSPACE", WORKSPACE_BASE)
+DAEMON_URL = os.getenv("KH_DAEMON_URL", "http://127.0.0.1:8770")
 
 _running: dict[int, dict] = {}
 _output: dict[int, list[str]] = {}
 _OUTPUT_MAX_LINES = 500
+
+# --- Daemon Client ---
+
+_daemon_cache: dict[str, float | bool] = {"available": False, "checked_at": 0.0}
+_DAEMON_CACHE_TTL = 30.0
+
+
+async def _daemon_available() -> bool:
+    now = time.time()
+    if now - _daemon_cache["checked_at"] < _DAEMON_CACHE_TTL:
+        return _daemon_cache["available"]
+
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{DAEMON_URL}/health", timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                _daemon_cache["available"] = resp.status == 200
+    except Exception:
+        _daemon_cache["available"] = False
+
+    _daemon_cache["checked_at"] = now
+    return _daemon_cache["available"]
+
+
+async def _daemon_request(method: str, path: str, json_data: dict | None = None) -> dict | None:
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            kwargs = {"timeout": aiohttp.ClientTimeout(total=10)}
+            if json_data:
+                kwargs["json"] = json_data
+            async with session.request(method, f"{DAEMON_URL}{path}", **kwargs) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return {"_error": resp.status, "_body": await resp.text()}
+    except Exception as e:
+        logger.warning("Daemon request failed: %s %s — %s", method, path, e)
+        return None
+
+
+async def start_terminal(project_id: int) -> dict | None:
+    """Start a PTY terminal session for a CLI project via daemon."""
+    if not await _daemon_available():
+        return None
+
+    host_path = os.path.join(HOST_WORKSPACE_BASE, f"project_{project_id}")
+    result = await _daemon_request("POST", "/terminal", {"workspace": host_path})
+    if result and "_error" not in result:
+        return {"term_id": result["id"], "pid": result.get("pid", 0), "daemon_url": DAEMON_URL}
+    return None
+
+
+async def _daemon_get_bytes(path: str) -> bytes | None:
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{DAEMON_URL}{path}", timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+                return None
+    except Exception:
+        return None
 
 
 def parse_start_script(project_path: str) -> dict | None:
@@ -80,21 +148,31 @@ async def _read_output(project_id: int, proc: asyncio.subprocess.Process):
 
 
 async def start_project(project_id: int) -> dict:
-    """Start a project by executing its start.sh."""
+    """Start a project by executing its start.sh. Delegates to host daemon if available."""
     if project_id in _running:
-        proc = _running[project_id]["proc"]
-        if proc.returncode is None:
-            entry = _running[project_id]
+        entry = _running[project_id]
+        proc = entry.get("proc")
+        # Local process still running
+        if proc and proc.returncode is None:
             return {
                 "status": "already_running",
-                "pid": proc.pid,
+                "pid": entry.get("pid") or proc.pid,
                 "command": entry["cmd"],
                 "port": entry.get("port"),
                 "path": entry.get("path", ""),
                 "type": entry.get("type"),
             }
-        else:
-            del _running[project_id]
+        # Daemon-managed process still running
+        if entry.get("daemon_id") and entry.get("daemon_running", False):
+            return {
+                "status": "already_running",
+                "pid": entry.get("pid", 0),
+                "command": entry["cmd"],
+                "port": entry.get("port"),
+                "path": entry.get("path", ""),
+                "type": entry.get("type"),
+            }
+        del _running[project_id]
 
     project_path = os.path.join(WORKSPACE_BASE, f"project_{project_id}")
     if not os.path.isdir(project_path):
@@ -111,30 +189,30 @@ async def start_project(project_id: int) -> dict:
 
     logger.info("[RUNNER] start project_%d: %s (type=%s, port=%s)", project_id, cmd, proj_type, port)
 
-    _output[project_id] = []
+    # 统一宿主机执行，daemon 不在线则报错
+    if not await _daemon_available():
+        return {"status": "error", "message": "host daemon not running (start: python3 scripts/host_daemon.py)"}
 
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
-        cwd=project_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        preexec_fn=os.setsid,
-    )
-
-    asyncio.create_task(_read_output(project_id, proc))
-
-    _running[project_id] = {
-        "proc": proc, "cmd": cmd, "pid": proc.pid,
-        "port": port, "path": path, "type": proj_type,
-    }
-    return {
-        "status": "running",
-        "pid": proc.pid,
-        "command": cmd,
-        "port": port,
-        "path": path,
-        "type": proj_type,
-    }
+    host_path = os.path.join(HOST_WORKSPACE_BASE, f"project_{project_id}")
+    result = await _daemon_request("POST", "/start", {"workspace": host_path, "cmd": cmd})
+    if result and "_error" not in result:
+        run_id = result["id"]
+        _running[project_id] = {
+            "proc": None, "daemon_id": run_id, "daemon_running": True,
+            "cmd": cmd, "pid": result.get("pid", 0),
+            "port": port, "path": path, "type": proj_type,
+        }
+        logger.info("[RUNNER] delegated to daemon: %s", run_id)
+        return {
+            "status": "running",
+            "pid": result.get("pid", 0),
+            "command": cmd,
+            "port": port,
+            "path": path,
+            "type": proj_type,
+            "daemon": True,
+        }
+    return {"status": "error", "message": f"daemon rejected start: {result}"}
 
 
 async def stop_project(project_id: int) -> dict:
@@ -142,12 +220,26 @@ async def stop_project(project_id: int) -> dict:
     if project_id not in _running:
         return {"status": "not_running"}
 
-    proc = _running[project_id]["proc"]
+    entry = _running[project_id]
+
+    # Daemon-managed process
+    if entry.get("daemon_id"):
+        if not entry.get("daemon_running", False):
+            del _running[project_id]
+            return {"status": "already_exited"}
+        result = await _daemon_request("POST", "/stop", {"id": entry["daemon_id"]})
+        entry["daemon_running"] = False
+        del _running[project_id]
+        if result and result.get("ok"):
+            return {"status": "stopped", "returncode": result.get("returncode")}
+        return {"status": "stopped"}
+
+    # Local process
+    proc = entry["proc"]
     if proc.returncode is not None:
         del _running[project_id]
         return {"status": "already_exited"}
 
-    # Kill the entire process group (bash + child processes like python3 http.server)
     import signal
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -173,8 +265,21 @@ def get_project_status(project_id: int) -> dict:
         return {"running": False}
 
     entry = _running[project_id]
-    proc = entry["proc"]
 
+    # Daemon-managed process
+    if entry.get("daemon_id"):
+        return {
+            "running": entry.get("daemon_running", False),
+            "pid": entry.get("pid", 0),
+            "command": entry["cmd"],
+            "port": entry.get("port"),
+            "path": entry.get("path", ""),
+            "type": entry.get("type"),
+            "daemon": True,
+        }
+
+    # Local process
+    proc = entry["proc"]
     if proc.returncode is not None:
         del _running[project_id]
         return {"running": False, "exited": True, "returncode": proc.returncode}
@@ -189,8 +294,16 @@ def get_project_status(project_id: int) -> dict:
     }
 
 
-def get_project_output(project_id: int, since: int = 0) -> dict:
+async def get_project_output(project_id: int, since: int = 0) -> dict:
     """Return buffered output lines starting from index `since`."""
+    if project_id in _running and _running[project_id].get("daemon_id"):
+        entry = _running[project_id]
+        result = await _daemon_request("GET", f"/logs/{entry['daemon_id']}?since={since}")
+        if result and "_error" not in result:
+            return result
+        return {"lines": [], "total": 0, "running": entry.get("daemon_running", False), "returncode": None}
+
+    # Local process
     lines = _output.get(project_id, [])
     running = False
     returncode = None
@@ -210,3 +323,39 @@ def get_project_output(project_id: int, since: int = 0) -> dict:
         "running": running,
         "returncode": returncode,
     }
+
+
+async def get_project_screenshot(project_id: int) -> bytes | None:
+    """Get a screenshot of the project's GUI window via daemon."""
+    if project_id not in _running:
+        return None
+
+    entry = _running[project_id]
+    if not entry.get("daemon_id"):
+        return None
+
+    return await _daemon_get_bytes(f"/screenshot/{entry['daemon_id']}")
+
+
+async def send_project_input(project_id: int, text: str | None = None, keys: str | None = None) -> dict:
+    """Send input to a running project via daemon."""
+    if project_id not in _running:
+        return {"error": "not_running"}
+
+    entry = _running[project_id]
+    if not entry.get("daemon_id"):
+        return {"error": "input only supported via daemon"}
+
+    payload = {}
+    if text is not None:
+        payload["text"] = text
+    if keys is not None:
+        payload["keys"] = keys
+
+    if not payload:
+        return {"error": "text or keys required"}
+
+    result = await _daemon_request("POST", f"/input/{entry['daemon_id']}", payload)
+    if result and "_error" not in result:
+        return result
+    return {"error": "daemon request failed"}

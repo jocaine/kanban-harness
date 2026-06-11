@@ -167,11 +167,24 @@ async def update_project(pid: int, data: ProjectUpdate, db: aiosqlite.Connection
 
 @router.post("/projects/{pid}/run")
 async def run_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    from core.project_runner import start_project
+    from core.project_runner import start_project, start_terminal, parse_start_script
     cursor = await db.execute("SELECT id FROM projects WHERE id=?", (pid,))
     row = await cursor.fetchone()
     if not row:
         raise HTTPException(404, "project not found")
+
+    # Check if CLI project — try terminal mode first
+    workspace = os.path.join(
+        os.getenv("KH_WORKSPACE", os.path.expanduser("~/.kh/workspaces")),
+        f"project_{pid}"
+    )
+    info = parse_start_script(workspace)
+    if info and info.get("type") == "cli":
+        term = await start_terminal(pid)
+        if term:
+            return {"status": "terminal", "term_id": term["term_id"], "pid": term["pid"],
+                    "ws_url": f"ws://{os.getenv('KH_DAEMON_URL', 'http://127.0.0.1:8770').replace('http://', '')}/ws/terminal/{term['term_id']}"}
+
     result = await start_project(pid)
     if result["status"] == "error":
         raise HTTPException(400, result["message"])
@@ -193,7 +206,27 @@ async def project_run_status(pid: int):
 @router.get("/projects/{pid}/output")
 async def project_output(pid: int, since: int = 0):
     from core.project_runner import get_project_output
-    return get_project_output(pid, since)
+    return await get_project_output(pid, since)
+
+
+@router.get("/projects/{pid}/screenshot")
+async def project_screenshot(pid: int):
+    from core.project_runner import get_project_screenshot
+    from fastapi.responses import Response
+    data = await get_project_screenshot(pid)
+    if data is None:
+        raise HTTPException(404, "no screenshot available")
+    return Response(content=data, media_type="image/png")
+
+
+@router.post("/projects/{pid}/input")
+async def project_input(pid: int, request: Request):
+    from core.project_runner import send_project_input
+    body = await request.json()
+    result = await send_project_input(pid, text=body.get("text"), keys=body.get("keys"))
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
 
 
 @router.get("/projects/{pid}/versions")
@@ -1610,12 +1643,16 @@ def _write_env_file(provider: str, api_key: str, api_base_url: str, chat_model: 
             f"CHAT_MODEL={chat_model}\n"
         )
     else:
+        # Derive OpenAI-compatible base URL for chat (strip /anthropic suffix if present)
+        openai_base = api_base_url.rstrip("/")
+        if openai_base.endswith("/anthropic"):
+            openai_base = openai_base[:-len("/anthropic")]
         content = (
             f"API_PROVIDER=anthropic\n"
             f"API_KEY={api_key}\n"
             f"ANTHROPIC_API_KEY={api_key}\n"
             f"ANTHROPIC_AUTH_TOKEN={api_key}\n"
-            f"API_BASE_URL={api_base_url}\n"
+            f"API_BASE_URL={openai_base}\n"
             f"ANTHROPIC_BASE_URL={api_base_url}\n"
             f"CHAT_MODEL={chat_model}\n"
         )

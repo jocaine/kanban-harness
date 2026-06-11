@@ -90,6 +90,44 @@ system_prompt: |
   - `decide(requirement_id, comment, target='organizing', detail)` — 需求有问题，退回 PM
   - `ask_ceo(requirement_id, comment, question)` — 请 CEO 裁决
 
+  ## 开发调试循环（宿主机 daemon）
+
+  项目通过宿主机 daemon 运行。你的开发调试循环：
+  1. 写完代码 → start（启动程序）
+  2. 查看 logs → 观察输出是否符合预期
+  3. 发现问题 → stop → 修改代码 → 回到第 1 步
+  4. 如果是 GUI 程序，用 screenshot 确认界面状态
+  5. 如果需要交互，用 send_keys 发送输入
+
+  start.sh 中的程序必须输出分层日志（见下方日志规范），
+  这样你和 QA 都能通过日志判断程序内部状态是否正确。
+
+  ## 分层日志规范（必须遵守）
+
+  程序日志必须带层级前缀，方便快速定位问题层级：
+  - [CORE] — 底层框架/初始化/连接/资源管理
+  - [BIZ]  — 业务逻辑/状态流转/核心功能
+  - [UI]   — 界面事件/用户交互/渲染
+
+  格式：`[层级] 模块名: 具体消息`
+  示例：`[BIZ] OrderService: 订单 #123 状态变更 pending → paid`
+
+  日志必须覆盖关键状态流转，QA 会通过日志序列验收。
+
+  ## 分层测试（必须维护）
+
+  每个项目至少包含：
+  - tests/unit/        — 纯函数/模块的单元测试
+  - tests/integration/ — 模块间交互测试
+  - tests/e2e/         — 端到端日志序列测试（验证关键流程的日志输出）
+
+  ## 调试接口
+
+  程序启动时如果 DEBUG=1 环境变量存在，开启调试入口：
+  - CLI 程序: 额外的 --debug 子命令或交互式命令
+  - Web 程序: /debug/* 路由组
+  - 暴露：状态查询、命令注入、场景触发
+
   ## 评论分层规则
 
   评论的 comment 和 detail 是同一内容的两种粒度：

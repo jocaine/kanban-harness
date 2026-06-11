@@ -3454,7 +3454,9 @@ async function toggleRunProject() {
             btn.disabled = false;
         } else {
             const res = await api('/api/projects/' + pid + '/run', {method: 'POST'});
-            if (res.port) {
+            if (res.status === 'terminal' && res.ws_url) {
+                showTerminal(res.ws_url, res.term_id);
+            } else if (res.port) {
                 const path = res.path || '';
                 const url = 'http://' + location.hostname + ':' + res.port + path;
                 showRunResult(url);
@@ -3528,6 +3530,14 @@ function closeRunOverlay() {
         clearInterval(window._cliPollTimer);
         window._cliPollTimer = null;
     }
+    if (window._termWs) {
+        window._termWs.close();
+        window._termWs = null;
+    }
+    if (window._term) {
+        window._term.dispose();
+        window._term = null;
+    }
 }
 
 function showCliOutput(pid) {
@@ -3574,6 +3584,72 @@ function showCliOutput(pid) {
             window._cliPollTimer = null;
         }
     }, 500);
+}
+
+function showTerminal(wsUrl, termId) {
+    let overlay = document.getElementById('run-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'run-overlay';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div class="run-overlay-content">
+            <div class="run-overlay-header">
+                <span>终端</span>
+                <button onclick="closeRunOverlay()">✕</button>
+            </div>
+            <div id="terminal-container" style="flex:1;overflow:hidden"></div>
+            <div class="run-overlay-footer">Shell · ${termId}</div>
+        </div>`;
+    overlay.style.display = 'flex';
+
+    const container = document.getElementById('terminal-container');
+    const term = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+        theme: { background: '#1a1a2e', foreground: '#eaeaea' }
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    fitAddon.fit();
+    window._term = term;
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    window._termWs = ws;
+    window._termId = termId;
+
+    ws.onopen = () => {
+        const dims = { resize: { cols: term.cols, rows: term.rows } };
+        ws.send(JSON.stringify(dims));
+    };
+    ws.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(ev.data));
+        } else {
+            term.write(ev.data);
+        }
+    };
+    ws.onclose = () => {
+        term.write('\r\n\x1b[90m[连接已断开]\x1b[0m\r\n');
+    };
+
+    term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(new TextEncoder().encode(data));
+        }
+    });
+
+    term.onResize(({ cols, rows }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ resize: { cols, rows } }));
+        }
+    });
+
+    window.addEventListener('resize', () => fitAddon.fit(), { once: false });
 }
 
 // ==================== Config Settings ====================
