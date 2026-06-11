@@ -30,6 +30,7 @@ logger = logging.getLogger("kh.mcp.agent")
 DB_PATH = os.getenv("DB_PATH", "data/kanban.db")
 AGENT_ROLE = os.getenv("KH_AGENT_ROLE", "pm")
 PROJECT_ID = int(os.getenv("KH_PROJECT_ID", "0"))
+REQUIREMENT_ID = int(os.getenv("KH_REQUIREMENT_ID", "0"))
 
 ROLE_STATUS_MAP = {
     "pm": "organizing",
@@ -104,12 +105,13 @@ async def list_requirements(version_id: int) -> str:
 
 
 @mcp.tool()
-async def create_requirements(version_id: int, requirements: str) -> str:
+async def create_requirements(version_id: int, requirements: str, parent_id: int = 0) -> str:
     """批量创建需求卡片。
 
     Args:
         version_id: 目标版本 ID
-        requirements: JSON 数组字符串，每条至少含 title。可选: description, priority, status
+        requirements: JSON 数组字符串，每条至少含 title。可选: description, priority, type(research/dev)
+        parent_id: 父卡片 ID（从想法卡或调研卡派生时传入，0 表示无父卡）
     """
     from agents.registry import registry
     if not registry.check_permission(AGENT_ROLE, "create", "requirements"):
@@ -126,26 +128,44 @@ async def create_requirements(version_id: int, requirements: str) -> str:
     db = await _get_db()
     try:
         from core.database import next_code
+        cursor = await db.execute("SELECT project_id FROM versions WHERE id=?", (version_id,))
+        vrow = await cursor.fetchone()
+        if not vrow:
+            return f"错误：版本 {version_id} 不存在"
+        project_id = vrow["project_id"]
+
         created = []
         for req in reqs:
             title = req.get("title", "").strip()
             if not title:
                 continue
+            req_type = req.get("type", "dev")
+            if req_type not in ("research", "dev"):
+                req_type = "dev"
+            init_status = "research" if req_type == "research" else "organizing"
             code = await next_code(db, version_id)
-            await db.execute(
-                "INSERT INTO requirements (version_id, title, description, priority, status, code, position) "
-                "VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position),0)+1 FROM requirements WHERE version_id=?))",
+            cur = await db.execute(
+                "INSERT INTO requirements (version_id, title, description, priority, type, status, code, position, parent_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(position),0)+1 FROM requirements WHERE version_id=?), ?)",
                 (
                     version_id,
                     title,
                     req.get("description", ""),
                     req.get("priority", "P2"),
-                    req.get("status", "organizing"),
+                    req_type,
+                    init_status,
                     code,
                     version_id,
+                    parent_id if parent_id else None,
                 ),
             )
-            created.append({"code": code, "title": title})
+            rid = cur.lastrowid
+            await db.execute(
+                "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
+                (project_id, "requirement_created", rid,
+                 json.dumps({"status": init_status, "priority": req.get("priority", "P2"), "type": req_type})),
+            )
+            created.append({"code": code, "title": title, "type": req_type, "status": init_status})
         await db.commit()
         return json.dumps({"created": created, "count": len(created)}, ensure_ascii=False)
     finally:
@@ -387,42 +407,6 @@ async def read_comment_detail(comment_id: int) -> str:
         return f"**{row['author']}** 的完整版：\n\n{row['detail']}"
     finally:
         await db.close()
-    """获取项目背景信息：产品记忆 + 架构文档。
-
-    Args:
-        project_id: 项目 ID（默认使用环境变量中的项目）
-    """
-    pid = project_id or PROJECT_ID
-    if not pid:
-        return "错误：未指定 project_id"
-
-    db = await _get_db()
-    try:
-        sections = []
-
-        cursor = await db.execute(
-            "SELECT name, prefix, product_memory FROM projects WHERE id=?",
-            (pid,),
-        )
-        proj = await cursor.fetchone()
-        if not proj:
-            return f"错误：项目 {pid} 不存在"
-
-        sections.append(f"# 项目：{proj['name']} ({proj['prefix']})")
-
-        if proj["product_memory"]:
-            sections.append(f"\n## 产品记忆\n\n{proj['product_memory']}")
-
-        cursor = await db.execute(
-            "SELECT content FROM project_architecture WHERE project_id=?", (pid,)
-        )
-        arch = await cursor.fetchone()
-        if arch and arch["content"]:
-            sections.append(f"\n## 架构概要\n\n{arch['content']}")
-
-        return "\n".join(sections)
-    finally:
-        await db.close()
 
 
 def _get_allowed_moves() -> str:
@@ -489,6 +473,12 @@ async def _atomic_decision(
 
     Either moves the card (new_status) or sets ceo_decision (ceo_question), never both.
     """
+    # Scope enforcement: if REQUIREMENT_ID is set, only allow operations on that card
+    if REQUIREMENT_ID and requirement_id != REQUIREMENT_ID:
+        return (
+            f"错误：作用域限制。当前 agent 只能操作需求 {REQUIREMENT_ID}，"
+            f"不能操作需求 {requirement_id}。"
+        )
     from datetime import datetime
     from agents.registry import registry
 
@@ -827,3 +817,85 @@ async def wiki_lint(project_id: int) -> str:
     import json
     result = lint_wiki(pid)
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Web tools (shared with server.py, needed by industry agent)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def kh_web_search(query: str, limit: int = 5) -> str:
+    """搜索互联网信息，返回标题、URL、摘要。用于行业调研、竞品分析、数据验证。
+
+    Args:
+        query: 搜索关键词，尽量具体（包含年份、品牌名、指标等）
+        limit: 返回结果数量，默认5条
+    """
+    import httpx
+    import json
+
+    logger.info("tool:kh_web_search 搜索=%r limit=%d", query[:60], limit)
+    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8888").rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                f"{searxng_url}/search",
+                params={"q": query, "format": "json", "pageno": 1, "language": "zh-CN"},
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return f"搜索失败：SearXNG 返回 HTTP {e.response.status_code}"
+    except httpx.RequestError as e:
+        return f"搜索失败：无法连接 SearXNG ({searxng_url}): {e}"
+
+    data = resp.json()
+    raw_results = data.get("results", [])
+    sorted_results = sorted(raw_results, key=lambda r: float(r.get("score", 0)), reverse=True)[:limit]
+
+    results = []
+    for i, r in enumerate(sorted_results, 1):
+        results.append({
+            "position": i,
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "description": r.get("content", ""),
+            "engine": r.get("engine", ""),
+        })
+
+    return json.dumps({"success": True, "query": query, "results": results}, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def kh_web_extract(url: str) -> str:
+    """提取指定网页的正文内容（用于深入阅读搜索结果）。
+
+    Args:
+        url: 要提取内容的网页 URL（必须是 kh_web_search 返回的真实 URL）
+    """
+    import httpx
+    import re
+
+    logger.info("tool:kh_web_extract 提取=%r", url[:80])
+
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as http:
+            resp = await http.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; KHBot/1.0)"})
+            resp.raise_for_status()
+            html = resp.text
+    except httpx.RequestError as e:
+        return f"提取失败：无法访问 {url}: {e}"
+    except httpx.HTTPStatusError as e:
+        return f"提取失败：HTTP {e.response.status_code}"
+
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    if len(text) > 5000:
+        text = text[:5000] + f"\n...(截断，共 {len(text)} 字符)"
+
+    return text if text else "提取失败：页面内容为空"

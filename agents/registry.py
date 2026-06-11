@@ -45,6 +45,7 @@ class AgentRole:
     model: ModelConfig
     system_prompt: str
     allowed_tools: list[str]
+    workspace_tools: list[str]
     permissions: Permissions
     triggers: list[TriggerRule]
 
@@ -79,6 +80,7 @@ class AgentRegistry:
             model=ModelConfig(**data.get("model", {})),
             system_prompt=data.get("system_prompt", ""),
             allowed_tools=data.get("allowed_tools", []),
+            workspace_tools=data.get("workspace_tools", []),
             permissions=Permissions(**data.get("permissions", {})),
             triggers=[TriggerRule(**t) for t in data.get("triggers", [])],
         )

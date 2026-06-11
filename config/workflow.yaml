@@ -1,6 +1,6 @@
 polling:
   interval_seconds: 30
-  stuck_cooldown_seconds: 30
+  stuck_cooldown_seconds: 120
 
 agent:
   max_concurrent_sessions: 5

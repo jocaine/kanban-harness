@@ -214,6 +214,8 @@ async function selectProject(pid) {
     currentVersion = null;
     requirements = [];
     document.getElementById('chat-fab').style.display = '';
+    document.getElementById('run-fab').style.display = '';
+    updateRunButton();
     renderProjects();
     await loadVersions(pid);
     document.getElementById('version-section').style.display = '';
@@ -322,9 +324,8 @@ function renderProjectOverview() {
                 <span>完成度: ${pct}%</span>
             </div>
             <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-                <button class="btn-arch" onclick="showDocView('arch')">架构文档</button>
+                <button class="btn-arch" onclick="showDocView('wiki')">Wiki</button>
                 <button class="btn-arch" onclick="showDocView('team')">AI 团队</button>
-                <button class="btn-arch" onclick="showDocView('memory')">产品记忆</button>
             </div>
             ${renderGitSection(currentProject)}
             <h3 style="margin:0 0 10px;font-size:15px">版本列表</h3>
@@ -398,6 +399,7 @@ async function deleteProject(pid) {
         document.getElementById('version-section').style.display = 'none';
         document.getElementById('board-view').style.display = 'none';
         document.getElementById('chat-fab').style.display = 'none';
+        document.getElementById('run-fab').style.display = 'none';
         document.getElementById('chat-panel').style.display = 'none';
         renderWelcomeDefault();
     }
@@ -458,20 +460,7 @@ async function selectVersion(vid) {
 }
 
 async function loadProductizationTarget() {
-    if (!currentProject) return;
-    const badge = document.getElementById('prod-target-badge');
-    try {
-        const data = await api('/api/projects/' + currentProject.id + '/product-memory');
-        const match = (data.content || '').match(/productization_target:\s*(L\d)/);
-        if (match) {
-            badge.textContent = '🎯 ' + match[1];
-            badge.style.display = 'inline';
-        } else {
-            badge.style.display = 'none';
-        }
-    } catch(e) {
-        badge.style.display = 'none';
-    }
+    // Removed: productization target was part of product_memory
 }
 
 function showVersionModal(editId) {
@@ -641,6 +630,9 @@ function renderRequirements() {
     // Done panel — fixed right-side drawer
     const doneCards = filtered.filter(r => r.status === 'done');
     const doneInfo = STATUS_MAP.done;
+    const doneIdeas = doneCards.filter(r => r.type === 'idea');
+    const doneResearch = doneCards.filter(r => r.type === 'research');
+    const doneDev = doneCards.filter(r => r.type === 'dev');
 
     let doneDrawer = document.getElementById('done-drawer');
     let doneTab = document.getElementById('done-tab');
@@ -656,6 +648,13 @@ function renderRequirements() {
         doneDrawer = document.createElement('div');
         doneDrawer.id = 'done-drawer';
         document.body.appendChild(doneDrawer);
+
+        document.addEventListener('mousedown', (e) => {
+            if (!doneDrawer.classList.contains('open')) return;
+            if (doneDrawer.contains(e.target) || doneTab.contains(e.target)) return;
+            doneDrawer.classList.remove('open');
+            doneTab.classList.remove('active');
+        });
     }
     doneTab.innerHTML = `<span class="done-tab-dot" style="background:${doneInfo.dot}"></span>已完成<span class="done-tab-count">${doneCards.length}</span>`;
 
@@ -665,6 +664,12 @@ function renderRequirements() {
             <span>已完成</span>
             <span class="col-count">${doneCards.length}</span>
             <button class="done-drawer-close" title="关闭">&times;</button>
+        </div>
+        <div class="done-type-tabs">
+            <button class="done-type-tab active" data-dtype="all" onclick="switchDoneTab('all')">全部 ${doneCards.length}</button>
+            <button class="done-type-tab" data-dtype="idea" onclick="switchDoneTab('idea')">想法 ${doneIdeas.length}</button>
+            <button class="done-type-tab" data-dtype="research" onclick="switchDoneTab('research')">调研 ${doneResearch.length}</button>
+            <button class="done-type-tab" data-dtype="dev" onclick="switchDoneTab('dev')">开发 ${doneDev.length}</button>
         </div>
         <div class="done-drawer-cards" data-status="done"></div>
     `;
@@ -681,6 +686,20 @@ function renderRequirements() {
     }
 }
 
+function switchDoneTab(dtype) {
+    const drawer = document.getElementById('done-drawer');
+    if (!drawer) return;
+    drawer.querySelectorAll('.done-type-tab').forEach(t => t.classList.toggle('active', t.dataset.dtype === dtype));
+    const cards = drawer.querySelectorAll('.done-drawer-cards .card');
+    cards.forEach(card => {
+        const id = parseInt(card.dataset.id);
+        const req = requirements.find(r => r.id === id);
+        if (!req) { card.style.display = 'none'; return; }
+        if (dtype === 'all') { card.style.display = ''; return; }
+        card.style.display = req.type === dtype ? '' : 'none';
+    });
+}
+
 function getQueueReason(r) {
     if (r.queue_reason) return r.queue_reason;
     const defaults = {
@@ -694,7 +713,7 @@ function getQueueReason(r) {
 
 function createCardEl(r) {
     const el = document.createElement('div');
-    el.className = 'card';
+    el.className = 'card' + (r.type === 'idea' ? ' card-idea' : r.type === 'research' ? ' card-research' : '');
     el.draggable = true;
     el.dataset.id = r.id;
 
@@ -710,7 +729,8 @@ function createCardEl(r) {
     const queueReasonHtml = r.queue_reason ? '<span class="queue-reason-badge" title="排队原因">' + esc(r.queue_reason) + '</span>' : '';
 
     const reviewBadge = r.reviewed === false ? '<span class="review-badge unreviewed">未审议</span>' : '';
-    const typeBadge = r.type === 'research' ? '<span class="type-badge research">调研</span>' : '';
+    const typeBadge = r.type === 'research' ? '<span class="type-badge research">调研</span>'
+        : r.type === 'idea' ? '<span class="type-badge idea">想法</span>' : '';
 
     el.innerHTML = `
         <div class="card-top">
@@ -916,13 +936,14 @@ function handleFileSelect(input) {
 }
 
 async function saveRequirement() {
-    // 新建模式：快速输入
+    // 新建模式：快速输入（想法卡）
     if (!editingReqId) {
         const idea = document.getElementById('req-idea-input').value.trim();
         if (!idea) { document.getElementById('req-idea-input').focus(); return; }
         const body = {
             version_id: currentVersion.id,
-            title: '待 PM 整理',
+            title: idea.slice(0, 60),
+            type: 'idea',
             priority: document.getElementById('req-quick-priority').value,
             initial_comment: idea,
         };
@@ -1199,10 +1220,7 @@ async function showReqModalFromTag(rid, tag) {
 let docContent = '';
 let currentDocTab = 'team';
 
-const DOC_CONFIG = {
-    arch: {label: '架构文档', apiPath: '/architecture', emptyMsg: '暂无架构文档，点击「编辑」添加项目架构与技术栈说明'},
-    memory: {label: '产品记忆', apiPath: '/product-memory', emptyMsg: '暂无产品记忆文档，点击「编辑」开始记录产品决策历史'},
-};
+const DOC_CONFIG = {};
 
 async function loadDoc() {
     if (!currentProject) return;
@@ -1463,23 +1481,116 @@ async function loadComments(rid) {
 async function loadCardLogs(rid) {
     const el = document.getElementById('card-log-list');
     if (!el) return;
-    el.innerHTML = '<div style="color:#888;padding:8px">加载中...</div>';
+    el.innerHTML = '<div class="card-log-empty">加载中...</div>';
     try {
         const resp = await fetch(`/api/requirements/${rid}/logs?limit=200`);
         const data = await resp.json();
         if (!data.logs || data.logs.length === 0) {
-            el.innerHTML = '<div style="color:#888;padding:8px">暂无日志</div>';
+            el.innerHTML = '<div class="card-log-empty">暂无日志</div>';
             return;
         }
-        const levelColors = {info: '#6b7280', warning: '#f59e0b', error: '#ef4444'};
+        const levelIcons = {info: '●', warning: '▲', error: '✖'};
+        const levelCls = {info: 'log-info', warning: 'log-warn', error: 'log-error'};
         el.innerHTML = data.logs.map(log => {
-            const color = levelColors[log.level] || '#6b7280';
-            const src = log.source ? `<span style="color:#8b5cf6">[${log.source}]</span> ` : '';
+            const cls = levelCls[log.level] || 'log-info';
+            const icon = levelIcons[log.level] || '●';
+            const src = log.source ? `<span class="log-source">${log.source}</span>` : '';
             const ts = log.created_at ? log.created_at.slice(5, 19) : '';
-            return `<div style="padding:3px 8px;border-bottom:1px solid #f3f4f6"><span style="color:#9ca3af">${ts}</span> <span style="color:${color};font-weight:500">${log.level.toUpperCase()}</span> ${src}${log.message}</div>`;
+            return `<div class="card-log-item ${cls}">
+                <span class="log-ts">${ts}</span>
+                <span class="log-icon">${icon}</span>
+                ${src}
+                <span class="log-msg">${log.message}</span>
+            </div>`;
         }).join('');
+        el.scrollTop = el.scrollHeight;
     } catch(e) {
-        el.innerHTML = `<div style="color:#ef4444;padding:8px">加载失败: ${e.message}</div>`;
+        el.innerHTML = `<div class="card-log-empty" style="color:var(--danger)">加载失败: ${e.message}</div>`;
+    }
+}
+
+function chainNavTo(rid) {
+    showReqModal(rid);
+}
+
+function openChainOverlay(rid) {
+    const targetId = rid || editingReqId;
+    if (!targetId) return;
+    window._chainOriginId = targetId;
+    hideModal('req-modal');
+    const overlay = document.getElementById('chain-overlay');
+    overlay.style.display = 'flex';
+    loadChainTree(targetId);
+}
+
+function closeChainOverlay() {
+    document.getElementById('chain-overlay').style.display = 'none';
+    if (window._chainOriginId) {
+        showReqModal(window._chainOriginId);
+        window._chainOriginId = null;
+    }
+}
+
+async function loadChainTree(rid) {
+    const el = document.getElementById('chain-tree');
+    if (!el) return;
+    el.innerHTML = '<p class="text-muted">加载中...</p>';
+    try {
+        const resp = await fetch(`/api/requirements/${rid}/chain`);
+        const data = await resp.json();
+        if (!data.chain || data.chain.length <= 1) {
+            el.innerHTML = '<p class="text-muted">无派生关系</p>';
+            return;
+        }
+        const typeIcon = {idea: '\u{1F4A1}', research: '\u{1F52C}', dev: '⚙️'};
+        const typeLabel = {idea: '想法', research: '调研', dev: '开发'};
+        const statusLabel = {research: '调研中', organizing: '整理中', dev: '开发中', testing: '测试中', done: '已完成', blocked: '阻塞'};
+        const nodes = data.chain;
+        const childrenMap = {};
+        nodes.forEach(n => {
+            const pid = n.parent_id || 'root';
+            if (!childrenMap[pid]) childrenMap[pid] = [];
+            childrenMap[pid].push(n);
+        });
+
+        function renderCard(node) {
+            const icon = typeIcon[node.type] || '📋';
+            const isCurrent = node.id === data.current_id;
+            const isDone = node.status === 'done';
+            const cardCls = 'chain-card' + (isCurrent ? ' current' : '') + (isDone ? ' done' : '') + ' type-' + node.type;
+            return `<div class="${cardCls}" onclick="chainNavTo(${node.id})">
+                <div class="chain-card-header">
+                    <span class="chain-card-icon">${icon}</span>
+                    <span class="chain-card-code">${node.code}</span>
+                    <span class="chain-card-type">${typeLabel[node.type] || node.type}</span>
+                </div>
+                <div class="chain-card-title">${esc(node.title)}</div>
+                <div class="chain-card-status">${statusLabel[node.status] || node.status}</div>
+            </div>`;
+        }
+
+        function renderBranch(node) {
+            const children = childrenMap[node.id] || [];
+            let html = renderCard(node);
+            if (children.length > 0) {
+                html += '<div class="chain-connector"><div class="chain-connector-line"></div><div class="chain-connector-arrow">▼</div></div>';
+                html += '<div class="chain-children">';
+                children.forEach(child => {
+                    html += '<div class="chain-branch">' + renderBranch(child) + '</div>';
+                });
+                html += '</div>';
+            }
+            return html;
+        }
+
+        const root = nodes.find(n => n.id === data.root_id);
+        if (root) {
+            el.innerHTML = '<div class="chain-flow">' + renderBranch(root) + '</div>';
+        } else {
+            el.innerHTML = '<p class="text-muted">无法构建卡片链</p>';
+        }
+    } catch(e) {
+        el.innerHTML = `<p class="text-muted" style="color:var(--danger)">加载失败: ${e.message}</p>`;
     }
 }
 
@@ -1604,6 +1715,7 @@ async function markReleased(vid) {
 function hideModal(id) {
     document.getElementById(id).classList.add('hidden');
     if (id === 'req-modal') {
+        
         document.getElementById('req-desc-preview').classList.add('hidden');
         document.getElementById('req-desc').style.display = '';
         document.getElementById('btn-desc-preview').textContent = '预览';
@@ -1790,6 +1902,7 @@ function renderLogLines() {
         const hint = _logCardFilter ? `没有找到包含 "${escapeHtml(_logCardFilter)}" 的日志` : '所有过滤器已关闭，点击上方按钮显示日志';
         el.innerHTML = '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">' + hint + '</div>';
     }
+    el.scrollTop = el.scrollHeight;
 }
 
 function filterLogByCard(value) {
@@ -2007,6 +2120,7 @@ function renderLayerView() {
     }
 
     el.innerHTML = html || '<div class="log-line" style="justify-content:center;padding:40px;color:var(--text3)">无日志数据</div>';
+    el.scrollTop = el.scrollHeight;
 }
 
 function toggleLayerSection(header) {
@@ -2361,6 +2475,15 @@ function toggleChat() {
     }
 }
 
+document.addEventListener('click', function(e) {
+    const panel = document.getElementById('chat-panel');
+    const fab = document.getElementById('chat-fab');
+    if (panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== fab) {
+        panel.style.display = 'none';
+        localStorage.setItem('kh_chat_open', '0');
+    }
+});
+
 function restoreChatPanel() {
     if (!currentProject) return;
     document.getElementById('chat-fab').style.display = '';
@@ -2676,33 +2799,7 @@ function formatTokens(n) {
 }
 
 async function loadProductMemorySummary() {
-    const el = document.getElementById('product-memory-summary');
-    if (!el || !currentProject) return;
-    try {
-        const data = await api('/api/projects/' + currentProject.id + '/product-memory');
-        const content = data.content || '';
-        if (!content) {
-            el.innerHTML = '<div class="arch-empty">暂无产品记忆</div>';
-            return;
-        }
-        // Extract key sections
-        const sections = [];
-        const miMatch = content.match(/## 一、市场分析.*?(?=## |\Z)/s);
-        if (miMatch) {
-            const lines = miMatch[0].split('\n').filter(l => l.trim()).slice(0, 8);
-            sections.push('<details class="arch-collapse"><summary>📊 市场分析</summary><div class="memory-preview">' +
-                renderMd(lines.join('\n')) + '</div></details>');
-        }
-        const dcMatch = content.match(/## 二、方向把控.*?(?=## |\Z)/s);
-        if (dcMatch) {
-            const lines = dcMatch[0].split('\n').filter(l => l.trim()).slice(0, 12);
-            sections.push('<details class="arch-collapse"><summary>🎯 方向把控</summary><div class="memory-preview">' +
-                renderMd(lines.join('\n')) + '</div></details>');
-        }
-        el.innerHTML = sections.join('') || '<div class="arch-empty">产品记忆为空</div>';
-    } catch(e) {
-        el.innerHTML = '<div class="arch-empty">加载失败</div>';
-    }
+    // Removed: product memory merged into wiki
 }
 
 function renderTeamWorkflow() {
@@ -3340,3 +3437,239 @@ document.addEventListener('keydown', (e) => {
 // Poll decisions every 10 seconds
 setInterval(pollDecisions, 10000);
 setTimeout(pollDecisions, 2000);
+
+// ==================== Project Runner ====================
+
+async function toggleRunProject() {
+    if (!currentProject) { showToast('请先选择项目'); return; }
+    const pid = currentProject.id;
+    const btn = document.getElementById('run-fab');
+    try {
+        const status = await api('/api/projects/' + pid + '/run-status');
+        if (status.running) {
+            btn.disabled = true;
+            await api('/api/projects/' + pid + '/stop', {method: 'POST'});
+            showToast('已停止');
+            closeRunOverlay();
+            btn.disabled = false;
+        } else {
+            const res = await api('/api/projects/' + pid + '/run', {method: 'POST'});
+            if (res.port) {
+                const path = res.path || '';
+                const url = 'http://' + location.hostname + ':' + res.port + path;
+                showRunResult(url);
+            } else {
+                showCliOutput(pid);
+            }
+        }
+    } catch (e) {
+        const msg = e.message || '';
+        if (msg.includes('no_start_sh')) {
+            showToast('项目缺少 start.sh，请让 Dev 补充');
+        } else {
+            showToast('运行失败: ' + msg);
+        }
+        btn.disabled = false;
+    }
+    updateRunButton();
+}
+
+async function updateRunButton() {
+    const btn = document.getElementById('run-fab');
+    if (!btn || !currentProject) return;
+    try {
+        const status = await api('/api/projects/' + currentProject.id + '/run-status');
+        if (status.running) {
+            btn.textContent = '⏹';
+            btn.title = '停止项目 (pid=' + status.pid + ')';
+            btn.classList.add('running');
+        } else {
+            btn.textContent = '▶';
+            btn.title = '运行项目';
+            btn.classList.remove('running');
+        }
+    } catch (e) {
+        btn.textContent = '▶';
+        btn.classList.remove('running');
+    }
+}
+
+function showRunResult(url) {
+    let overlay = document.getElementById('run-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'run-overlay';
+        overlay.innerHTML = `
+            <div class="run-overlay-content">
+                <div class="run-overlay-header">
+                    <span>项目已启动</span>
+                    <button onclick="closeRunOverlay()">✕</button>
+                </div>
+                <iframe id="run-iframe" src=""></iframe>
+                <div class="run-overlay-footer">
+                    <a id="run-link" href="" target="_blank">在新标签页打开</a>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+    }
+    overlay.style.display = 'flex';
+    document.getElementById('run-iframe').src = url;
+    document.getElementById('run-link').href = url;
+}
+
+function closeRunOverlay() {
+    const overlay = document.getElementById('run-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        const iframe = document.getElementById('run-iframe');
+        if (iframe) iframe.src = '';
+    }
+    if (window._cliPollTimer) {
+        clearInterval(window._cliPollTimer);
+        window._cliPollTimer = null;
+    }
+}
+
+function showCliOutput(pid) {
+    let overlay = document.getElementById('run-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'run-overlay';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div class="run-overlay-content">
+            <div class="run-overlay-header">
+                <span>终端输出</span>
+                <button onclick="closeRunOverlay()">✕</button>
+            </div>
+            <pre id="cli-output"></pre>
+            <div class="run-overlay-footer" id="cli-status">运行中...</div>
+        </div>`;
+    overlay.style.display = 'flex';
+
+    let since = 0;
+    const pre = document.getElementById('cli-output');
+    const statusEl = document.getElementById('cli-status');
+
+    window._cliPollTimer = setInterval(async () => {
+        try {
+            const data = await api('/api/projects/' + pid + '/output?since=' + since);
+            if (data.lines.length) {
+                pre.textContent += data.lines.join('\n') + '\n';
+                since = data.total;
+                pre.scrollTop = pre.scrollHeight;
+            }
+            if (!data.running && data.returncode !== null) {
+                statusEl.textContent = '退出码: ' + data.returncode;
+                statusEl.classList.toggle('exit-ok', data.returncode === 0);
+                statusEl.classList.toggle('exit-err', data.returncode !== 0);
+                clearInterval(window._cliPollTimer);
+                window._cliPollTimer = null;
+                updateRunButton();
+            }
+        } catch (e) {
+            statusEl.textContent = '轮询失败';
+            clearInterval(window._cliPollTimer);
+            window._cliPollTimer = null;
+        }
+    }, 500);
+}
+
+// ==================== Config Settings ====================
+
+async function showConfigModal() {
+    document.getElementById('config-modal').classList.remove('hidden');
+    try {
+        const cfg = await api('/api/config');
+        const provider = cfg.provider || 'openai';
+        const radios = document.querySelectorAll('input[name="cfg-provider"]');
+        radios.forEach(r => { r.checked = r.value === provider; });
+        document.getElementById('cfg-api-key').value = '';
+        document.getElementById('cfg-api-key').placeholder = cfg.api_key_masked || 'sk-...';
+        document.getElementById('cfg-key-hint').textContent = cfg.configured ? '留空则保持原 Key 不变' : '';
+        document.getElementById('cfg-api-url').value = cfg.api_base_url || '';
+        document.getElementById('cfg-model').value = cfg.chat_model || '';
+    } catch (e) {
+        console.error('加载配置失败', e);
+    }
+}
+
+function onProviderChange() {}
+
+function toggleKeyVisibility() {
+    const input = document.getElementById('cfg-api-key');
+    input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function saveConfig() {
+    const checked = document.querySelector('input[name="cfg-provider"]:checked');
+    const provider = checked ? checked.value : 'openai';
+    const apiKey = document.getElementById('cfg-api-key').value;
+    const apiUrl = document.getElementById('cfg-api-url').value.trim();
+    const model = document.getElementById('cfg-model').value.trim();
+
+    if (!apiUrl) { alert('请填写 API URL'); return; }
+    if (!model) { alert('请填写 Model 名称'); return; }
+
+    try {
+        const body = { provider, api_base_url: apiUrl, chat_model: model };
+        if (apiKey) body.api_key = apiKey;
+        await api('/api/config', { method: 'PUT', body });
+        hideModal('config-modal');
+        showToast('配置已保存并生效');
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+}
+
+async function testConnection() {
+    const btn = document.getElementById('cfg-test-btn');
+    const checked = document.querySelector('input[name="cfg-provider"]:checked');
+    const provider = checked ? checked.value : 'openai';
+    const apiKey = document.getElementById('cfg-api-key').value;
+    const apiUrl = document.getElementById('cfg-api-url').value.trim();
+    const model = document.getElementById('cfg-model').value.trim();
+
+    if (!apiUrl) { alert('请填写 API URL'); return; }
+    if (!model) { alert('请填写 Model 名称'); return; }
+
+    btn.disabled = true;
+    btn.textContent = '测试中...';
+    btn.classList.remove('test-ok', 'test-fail');
+
+    try {
+        const body = { provider, api_base_url: apiUrl, chat_model: model };
+        if (apiKey) body.api_key = apiKey;
+        const res = await api('/api/config/test', { method: 'POST', body });
+        if (res.ok) {
+            btn.textContent = '连接成功';
+            btn.classList.add('test-ok');
+        } else {
+            btn.textContent = res.message || '连接失败';
+            btn.classList.add('test-fail');
+        }
+    } catch (e) {
+        btn.textContent = '请求失败';
+        btn.classList.add('test-fail');
+    }
+
+    btn.disabled = false;
+    setTimeout(() => {
+        btn.textContent = '测试连接';
+        btn.classList.remove('test-ok', 'test-fail');
+    }, 3000);
+}
+
+function showToast(msg) {
+    let el = document.getElementById('toast-msg');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'toast-msg';
+        el.className = 'toast-msg';
+        document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2500);
+}

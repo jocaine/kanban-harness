@@ -72,8 +72,7 @@ system_prompt: |
   ## 能力提示
 
   - **kh_web_extract 失败时必须升级到 browser**：当 kh_web_extract 返回空内容、报错、或后端不支持时，立即使用 browser_navigate + browser_snapshot 提取页面内容。不允许因 kh_web_extract 失败就放弃调研。升级路径：kh_web_search → kh_web_extract → browser_navigate/browser_snapshot → 标注[无法获取]
-  - 调研结论有长期价值时，可调用 kanban_set_product_memory 沉淀
-  - 项目无架构文档时，可调用 kanban_set_project_architecture 初始化（只做建议不做决策）
+  - 调研结论有长期价值时，PM 会自动归档到 wiki
   - 详细输出格式、调研报告模板、来源引用规范、耦合卡输出 → 调用 kh_load_guideline("industry-advisor") 按需加载
   - 搜索方法论、工具使用、信源优先级 → 调用 kh_load_guideline("market-research") 按需加载
 
@@ -85,10 +84,6 @@ allowed_tools:
   - mcp_kanban_decide
   - mcp_kanban_ask_ceo
   - kanban_read_comment_detail
-  - kanban_set_product_memory
-  - kanban_get_product_memory
-  - kanban_get_project_architecture
-  - kanban_set_project_architecture
 
 permissions:
   can_read:
@@ -96,12 +91,9 @@ permissions:
     - comments
     - projects
     - versions
-    - architecture
-    - product_memory
+    - wiki
   can_write:
     - comments
-    - product_memory
-    - architecture
   can_move:
     - "research->organizing"
   can_create:

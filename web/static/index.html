@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>需求管理系统</title>
-    <link rel="stylesheet" href="static/style.css?v=50">
+    <link rel="stylesheet" href="static/style.css?v=53">
     <script src="static/lib/marked.min.js"></script>
     <script src="static/lib/purify.min.js"></script>
 </head>
@@ -41,10 +41,15 @@
             <div class="activity-info" id="activity-info">
                 <span class="activity-idle">AI 团队空闲</span>
             </div>
-            <button class="scheduler-toggle running" id="scheduler-toggle" onclick="toggleScheduler()">
-                <span class="toggle-dot"></span>
-                <span class="toggle-label">AI 运行中</span>
-            </button>
+            <div class="activity-bar-right">
+                <button class="btn-settings-top" onclick="showConfigModal()" title="系统设置">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-1.42 3.42 2 2 0 0 1-1.42-.58l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-3.42-1.42 2 2 0 0 1 .58-1.42l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 1.42-3.42 2 2 0 0 1 1.42.58l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 3.42 1.42 2 2 0 0 1-.58 1.42l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"/></svg>
+                </button>
+                <button class="scheduler-toggle running" id="scheduler-toggle" onclick="toggleScheduler()">
+                    <span class="toggle-dot"></span>
+                    <span class="toggle-label">AI 运行中</span>
+                </button>
+            </div>
         </div>
 
         <!-- 欢迎页 -->
@@ -53,7 +58,7 @@
             <h2>需求管理系统</h2>
             <p>选择左侧项目和版本，或创建一个新项目开始</p>
             <button class="btn-primary" onclick="showProjectModal()">创建第一个项目</button>
-            <button class="btn-arch" id="btn-welcome-arch" style="display:none" onclick="showDocView('arch')">查看架构文档</button>
+            <button class="btn-arch" id="btn-welcome-arch" style="display:none" onclick="showDocView('wiki')">查看 Wiki</button>
         </div>
 
         <!-- 需求看板视图 -->
@@ -95,7 +100,7 @@
             </div>
         </div>
 
-        <!-- 项目文档视图（架构/Advisor Skill/产品记忆） -->
+        <!-- 项目文档视图 -->
         <div class="arch-view" id="arch-view" style="display:none">
             <div class="arch-header">
                 <h2 id="arch-title"></h2>
@@ -103,19 +108,11 @@
             </div>
             <div class="doc-tabs" id="doc-tabs">
                 <button class="doc-tab active" data-tab="team" onclick="switchDocTab('team')">AI 团队</button>
-                <button class="doc-tab" data-tab="memory" onclick="switchDocTab('memory')">产品记忆</button>
-                <button class="doc-tab" data-tab="arch" onclick="switchDocTab('arch')">架构文档</button>
                 <button class="doc-tab" data-tab="wiki" onclick="switchDocTab('wiki')">Wiki</button>
             </div>
             <div class="team-view" id="team-view">
                 <div class="team-workflow" id="team-workflow"></div>
                 <div class="token-cost-card" id="token-cost-card"></div>
-                <div class="team-memory-section">
-                    <div class="section-title" style="padding:16px 0 8px;font-size:13px;font-weight:600;color:var(--text2)">
-                        📋 产品记忆摘要
-                    </div>
-                    <div id="product-memory-summary" class="memory-summary"></div>
-                </div>
                 <div class="team-grid" id="team-grid"></div>
             </div>
             <div class="arch-content md-content" id="arch-content" style="display:none"></div>
@@ -238,6 +235,7 @@
                     <button class="req-tab" data-tab="notes" onclick="switchReqTab('notes')">备注</button>
                     <button class="req-tab" data-tab="meta" onclick="switchReqTab('meta')">优先级与附件</button>
                     <button class="req-tab" data-tab="logs" onclick="switchReqTab('logs')">日志</button>
+                    <button class="req-tab chain-btn" onclick="openChainOverlay()">卡片链 ↗</button>
                 </div>
 
                 <!-- Tab: 描述 -->
@@ -289,6 +287,7 @@
                             <select id="req-type">
                                 <option value="dev">开发需求</option>
                                 <option value="research">调研需求</option>
+                                <option value="idea">想法卡</option>
                             </select>
                         </div>
                         <div class="form-group"></div>
@@ -356,7 +355,7 @@
 
                 <!-- Tab: 日志 -->
                 <div class="req-tab-content" id="tab-logs">
-                    <div id="card-log-list" class="card-log-list" style="max-height:400px;overflow-y:auto;font-size:12px;font-family:monospace;"></div>
+                    <div id="card-log-list" class="card-log-list"></div>
                 </div>
                 </div><!-- end req-full-form -->
             </div>
@@ -385,6 +384,7 @@
         </div>
     </div>
     <button class="chat-fab" id="chat-fab" onclick="toggleChat()" title="AI 对话" style="display:none">💬</button>
+    <button class="run-fab" id="run-fab" onclick="toggleRunProject()" title="运行项目" style="display:none">▶</button>
 
     <!-- Reigns-style CEO Decision Overlay -->
     <div class="decision-overlay" id="decision-overlay">
@@ -438,6 +438,74 @@
     <!-- Detail Overlay -->
     <div id="detail-overlay" style="display:none"></div>
 
-    <script src="static/app.js?v=50"></script>
+    <!-- 卡片链全屏浮层 -->
+    <div id="chain-overlay" class="chain-overlay" style="display:none">
+        <div class="chain-overlay-header">
+            <span class="chain-overlay-title">卡片链</span>
+            <button class="chain-overlay-close" onclick="closeChainOverlay()">&times;</button>
+        </div>
+        <div id="chain-tree" class="chain-tree"></div>
+    </div>
+
+    <!-- Config Modal -->
+    <div class="modal-overlay hidden" id="config-modal" onclick="closeModal('config-modal', event)">
+        <div class="config-dialog" onclick="event.stopPropagation()">
+            <div class="config-dialog-header">
+                <div class="config-dialog-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-1.42 3.42 2 2 0 0 1-1.42-.58l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-3.42-1.42 2 2 0 0 1 .58-1.42l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 1.42-3.42 2 2 0 0 1 1.42.58l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 3.42 1.42 2 2 0 0 1-.58 1.42l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"/></svg>
+                    <span>LLM 配置</span>
+                </div>
+                <button class="config-close-btn" onclick="hideModal('config-modal')">&times;</button>
+            </div>
+            <div class="config-dialog-body">
+                <div class="config-section">
+                    <label class="config-label">Provider</label>
+                    <div class="config-provider-group">
+                        <label class="config-radio" id="cfg-radio-openai">
+                            <input type="radio" name="cfg-provider" value="openai" checked onchange="onProviderChange()">
+                            <span class="config-radio-box">
+                                <span class="config-radio-title">OpenAI</span>
+                                <span class="config-radio-desc">兼容 OpenAI 格式的代理</span>
+                            </span>
+                        </label>
+                        <label class="config-radio" id="cfg-radio-anthropic">
+                            <input type="radio" name="cfg-provider" value="anthropic" onchange="onProviderChange()">
+                            <span class="config-radio-box">
+                                <span class="config-radio-title">Anthropic</span>
+                                <span class="config-radio-desc">兼容 Anthropic 格式的代理</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+                <div class="config-field">
+                    <label class="config-label">API Key</label>
+                    <div class="config-input-wrap">
+                        <input type="password" id="cfg-api-key" class="config-input" placeholder="sk-..." autocomplete="off">
+                        <button class="config-eye-btn" onclick="toggleKeyVisibility()" title="显示/隐藏">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                    <span class="config-hint" id="cfg-key-hint"></span>
+                </div>
+                <div class="config-field">
+                    <label class="config-label">API Base URL</label>
+                    <input type="text" id="cfg-api-url" class="config-input" placeholder="https://api.openai.com/v1">
+                </div>
+                <div class="config-field">
+                    <label class="config-label">Model</label>
+                    <input type="text" id="cfg-model" class="config-input" placeholder="gpt-4o, deepseek-chat, claude-sonnet-4-6...">
+                </div>
+            </div>
+            <div class="config-dialog-footer">
+                <button class="btn-test-conn" id="cfg-test-btn" onclick="testConnection()">测试连接</button>
+                <div class="config-footer-right">
+                    <button class="btn-cancel" onclick="hideModal('config-modal')">取消</button>
+                    <button class="btn-primary" onclick="saveConfig()">保存并生效</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/app.js?v=55"></script>
 </body>
 </html>

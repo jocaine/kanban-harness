@@ -97,12 +97,10 @@ permissions:
     - comments
     - projects
     - versions
-    - architecture
-    - product_memory
+    - wiki
   can_write:
     - requirements
     - comments
-    - product_memory
     - wiki
   can_move:
     - "research->organizing"

@@ -16,6 +16,21 @@ from web.board_events import broadcast
 logger = logging.getLogger("kh.sched.handlers")
 
 
+async def _verify_commit_exists(repo_path: str, commit_hash: str) -> str:
+    """Verify commit object exists in repo. Returns hash if valid, empty string if not."""
+    import asyncio as _asyncio
+    proc = await _asyncio.create_subprocess_exec(
+        "git", "-C", repo_path, "cat-file", "-t", commit_hash,
+        stdout=_asyncio.subprocess.PIPE,
+        stderr=_asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    if "commit" in stdout.decode():
+        return commit_hash
+    logger.error("[VERIFY] commit %s 不存在于 %s", commit_hash[:8], repo_path)
+    return ""
+
+
 async def handle_coach_dev_result(session_manager, session_id: int, card: dict, repo_path: str):
     """Execute coach_dev agent and handle its result."""
     try:
@@ -26,12 +41,18 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
         result = await agent.execute(card)
         session_manager.unregister_process(session_id)
 
-        if result.get("task_done", result.get("success")):
+        if result.get("task_done") and result.get("success"):
             await session_manager.complete_session(session_id, result.get("summary", ""), tokens=result.get("tokens"))
             is_scaffold = result.get("is_scaffold", False)
             commit_hash = result.get("commit", "")
             commit_msg = result.get("commit_message", "")
             branch = result.get("branch", "")
+            verification = result.get("verification", {})
+            files_changed = verification.get("files_changed", 0)
+
+            # Independent commit verification
+            if commit_hash:
+                commit_hash = await _verify_commit_exists(repo_path, commit_hash)
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
                 if is_scaffold:
@@ -54,8 +75,9 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
                 comment = (
                     f"**Coach-Dev** 已完成开发{scaffold_label}\n\n"
                     f"- 分支: `{branch}`\n"
-                    f"- Commit: `{commit_hash[:8]}`\n"
-                    f"- 说明: {commit_msg}"
+                    f"- Commit: `{commit_hash[:8] if commit_hash else '(无)'}`\n"
+                    f"- 说明: {commit_msg}\n"
+                    f"- 验证: {files_changed} 个文件变更"
                 )
                 await db.execute(
                     "INSERT INTO comments (requirement_id, author, content) VALUES (?, ?, ?)",
@@ -67,11 +89,19 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
                         (card["project_id"], "status_changed", card["id"],
                          json.dumps({"old_status": "dev", "new_status": "testing"})),
                     )
-                    logger.info(f"[{card['code']}] 已移至 testing, 关联 commit {commit_hash[:8]}")
+                    logger.info(f"[{card['code']}] 已移至 testing, 关联 commit {commit_hash[:8] if commit_hash else 'none'}")
                     await card_log(card["id"], "coach_dev 完成, 已移至 testing", source="coach_dev")
                 await db.commit()
                 if not is_scaffold:
                     broadcast("card_moved", {"id": card["id"], "old_status": "dev", "new_status": "testing"})
+
+        elif result.get("task_done") and not result.get("success"):
+            # Verification failed — agent hallucinated or produced no real output
+            reason = result.get("summary", "verification failed")
+            logger.warning("[VERIFY-FAIL] [%s] %s", card['code'], reason)
+            await card_log(card["id"], f"coach_dev 验证失败: {reason}", level="warning", source="coach_dev")
+            await session_manager.fail_session(session_id, reason)
+
         else:
             logger.info(f"[{card['code']}] 未产生 commit, 调度后续执行")
             await card_log(card["id"], "coach_dev 未产生 commit, 调度后续执行", level="warning", source="coach_dev")
@@ -82,6 +112,32 @@ async def handle_coach_dev_result(session_manager, session_id: int, card: dict, 
         await card_log(card["id"], f"coach_dev 失败: {e}", level="error", source="coach_dev")
         session_manager.unregister_process(session_id)
         await session_manager.fail_session(session_id, str(e))
+
+
+async def handle_coach_review_result(session_manager, session_id: int, card: dict, repo_path: str, project_id: int = 0):
+    """Execute CoachReview agent with workspace access and validate decision."""
+    try:
+        from agents.coach_review import CoachReview
+
+        heartbeat_cb = lambda: session_manager.heartbeat(session_id)
+        agent = CoachReview(repo_path=repo_path, project_id=project_id, on_heartbeat=heartbeat_cb)
+
+        branch_name = f"feature/{card.get('code', 'unknown').lower()}"
+        result = await agent.execute(card, branch_name=branch_name)
+        session_manager.unregister_process(session_id)
+
+        # Validate decision was made (card moved or CEO escalated)
+        await _validate_agent_decision(
+            session_manager, session_id, card, "coach_review", project_id,
+            tokens=result.get("tokens"),
+        )
+
+    except Exception as e:
+        logger.error("[FAULT:AGENT] coach_review 失败 [%s]: %s", card.get('code', ''), e)
+        await card_log(card["id"], f"coach_review 失败: {e}", level="error", source="coach_review")
+        session_manager.unregister_process(session_id)
+        await session_manager.fail_session(session_id, str(e))
+
 
 async def handle_comment_agent_result(session_manager, session_id: int, role_name: str, card: dict, project_id: int = 0):
     """Execute a comment agent and validate its decision via DB state.
@@ -179,7 +235,7 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
                     role_name, card.get("code"), old_status, current_status, has_ceo_decision)
         await card_log(req_id, f"{role_name} 决策完成: 状态 {old_status}→{current_status}", source=role_name)
 
-        # Handle research conclusion archival
+        # Handle research conclusion archival → write to wiki
         if role_name == "pm" and current_status == "done" and req_type == "research":
             async with aiosqlite.connect(DB_PATH) as db:
                 db.row_factory = aiosqlite.Row
@@ -192,14 +248,8 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
             if latest_pm:
                 parsed = parse_pm_research_conclusion(latest_pm["content"])
                 if parsed:
-                    await append_research_to_memory(project_id, card.get("code", ""), parsed)
-                    logger.info("[PRODUCT-MEMORY] 已追加 [%s]", card.get("code", ""))
-
-            # Trigger wiki archiver (non-blocking)
-            import asyncio
-            asyncio.create_task(
-                _trigger_wiki_archive(project_id, card, req_id)
-            )
+                    _archive_research_to_wiki(project_id, card.get("code", ""), parsed)
+                    logger.info("[WIKI] 调研结论已归档 [%s]", card.get("code", ""))
 
         await session_manager.complete_session(session_id, f"{role_name} decided [{card.get('code', '')}]", tokens=tokens)
     else:
@@ -270,64 +320,37 @@ def parse_pm_research_conclusion(comment: str) -> dict | None:
     }
 
 
-async def append_research_to_memory(project_id: int, card_code: str, parsed: dict) -> None:
-    """Append PM's research conclusions to project product memory."""
-    entry = f"- **{card_code}** ({date.today().isoformat()}):\n"
+def _archive_research_to_wiki(project_id: int, card_code: str, parsed: dict) -> None:
+    """Write PM's research conclusions to wiki as a structured page."""
+    from core.wiki import write_wiki_page
+
+    today = date.today().isoformat()
+    slug = card_code.lower().replace("-", "_")
+
+    lines = [
+        "---",
+        "type: research",
+        f"updated: {today}",
+        f"tags: [research, {card_code}]",
+        f"source_card: {card_code}",
+        "---",
+        "",
+        f"# {card_code} 调研结论",
+        "",
+    ]
     if parsed.get("reliability"):
-        entry += f"  - 可靠性: {parsed['reliability']}\n"
-    entry += "  - 结论:\n"
+        lines.append(f"**可靠性:** {parsed['reliability']}")
+        lines.append("")
+    lines.append("## 核心结论")
+    lines.append("")
     for point in parsed["conclusions"]:
-        entry += f"    - {point}\n"
+        lines.append(f"- {point}")
     if parsed.get("archive_target"):
-        entry += f"  - 归档建议: {parsed['archive_target']}\n"
+        lines.append("")
+        lines.append("## 归档建议")
+        lines.append("")
+        lines.append(parsed["archive_target"])
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT product_memory FROM projects WHERE id=?", (project_id,)
-        )
-        row = await cursor.fetchone()
-        current = row[0] if row else ""
-
-        section_pattern = re.compile(
-            r"(### 调结论.*?)(?=\n### |\n## |\Z)", re.DOTALL,
-        )
-        match = section_pattern.search(current)
-        if match:
-            updated_section = match.group(1).rstrip() + f"\n{entry}"
-            updated = current[:match.start()] + updated_section + current[match.end():]
-        else:
-            updated = current.rstrip() + f"\n\n### 调研结论\n\n{entry}\n"
-
-        await db.execute(
-            "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (updated, project_id),
-        )
-        await db.commit()
-
-    logger.info("[PRODUCT-MEMORY] 研究结论已追加: card=[%s] project=%d",
-                card_code, project_id)
-
-
-async def _trigger_wiki_archive(project_id: int, card: dict, req_id: int) -> None:
-    """Trigger wiki_archiver agent to extract structured wiki page from research card."""
-    try:
-        from agents.comment_agent import CommentAgent
-
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT author, content FROM comments WHERE requirement_id=? ORDER BY created_at",
-                (req_id,),
-            )
-            comments = [dict(row) for row in await cursor.fetchall()]
-
-        if not comments:
-            logger.warning("[WIKI-ARCHIVE] [%s] 无评论, 跳过", card.get("code", ""))
-            return
-
-        agent = CommentAgent("wiki_archiver", project_id=project_id)
-        await agent.execute(card, comments)
-        logger.info("[WIKI-ARCHIVE] [%s] 归档完成", card.get("code", ""))
-
-    except Exception as e:
-        logger.warning("[WIKI-ARCHIVE] [%s] 归档失败: %s", card.get("code", ""), e)
+    content = "\n".join(lines) + "\n"
+    write_wiki_page(project_id, f"research/{slug}", content, f"归档调研结论 {card_code}")
+    logger.info("[WIKI] 调研结论已写入 research/%s, project=%d", slug, project_id)

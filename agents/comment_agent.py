@@ -195,21 +195,52 @@ class CommentAgent:
         """Build role-specific instruction suffix based on card state."""
         role = self.role_config.role
         status = card.get("status", "")
+        card_type = card.get("type", "dev")
+
+        # PM decomposing idea cards
+        if role == "pm" and status == "organizing" and card_type == "idea":
+            card_id = card.get("id", "")
+            return (
+                "## 你的任务\n\n"
+                "这是一张**想法卡**（CEO 的原始想法），你需要将它拆解为具体的执行卡片。\n\n"
+                "**操作步骤：**\n"
+                "1. 阅读 CEO 的原始想法（在评论中）\n"
+                f"2. 调用 `create_requirements(version_id, requirements, parent_id={card_id})` 创建 1-N 张子卡片，每张必须设置正确的 type：\n"
+                "   - 需要调研（市场数据、技术可行性未知、竞品情况）→ type='research'\n"
+                "   - 需求明确可直接开发 → type='dev'\n"
+                f"3. **必须传 parent_id={card_id}**（当前想法卡的 ID），建立派生关系\n"
+                "4. 每张子卡包含：title、description（功能目标+验收标准）、priority、type\n"
+                "5. 全部子卡创建完成后，调用 `decide(target=done)` 关闭这张想法卡\n\n"
+                "**注意：**\n"
+                "- 想法卡是元卡片，不进入开发流程，拆解完即关闭\n"
+                "- 子卡的 type 决定后续流转（research 触发行业顾问调研，dev 进入开发）\n"
+                "- 你必须通过工具完成操作，不要只输出文字。"
+            )
 
         # PM in organizing: two scenarios
         if role == "pm" and status == "organizing":
             has_industry = any(c.get("author") == "行业顾问" for c in comments)
             if has_industry:
                 skill_content = self._load_skill("pm-research-audit")
+                card_id = card.get("id", "")
                 return (
                     "## 你的任务\n\n"
                     "你正在评估行业顾问的调研结果。请判断调研材料是否足够支撑开发决策。\n\n"
                     f"{skill_content}\n\n"
-                    "**操作步骤：**\n"
-                    "调用决策工具: decide(target=dev/done 通过) 或 decide(target=research 退回) 或 ask_ceo(问CEO)\n"
-                    "（决策工具会自动移动卡片，无需单独调用 move_requirement）\n"
-                    "\n"
-                    "\n\n"
+                    "**操作步骤：**\n\n"
+                    "**情况 A：调研结论充分，可派生开发卡**\n"
+                    "1. 在评论中写出结构化审计结论（可靠性判断+关键发现）\n"
+                    f"2. 调用 `create_requirements(version_id, requirements, parent_id={card_id})` "
+                    "创建 dev 子卡，每张子卡的 description 中引用调研结论作为技术依据\n"
+                    "3. 子卡 type='dev'，parent_id 指向本调研卡，形成派生链\n"
+                    "4. 全部子卡创建完成后，调用 `decide(target=done)` 关闭本调研卡\n\n"
+                    "**情况 B：调研结论不充分，需补充**\n"
+                    "- 调用 `decide(target=research)` 退回给行业顾问继续调研\n\n"
+                    "**情况 C：调研结论表明不值得开发**\n"
+                    "- 调用 `ask_ceo()` 上报 CEO 决策是否放弃\n\n"
+                    "**派生逻辑说明：**\n"
+                    "调研卡完成后派生的 dev 子卡通过 parent_id 关联到调研卡，"
+                    "卡片链的树结构天然表达执行先后顺序（先调研后开发），无需额外依赖标记。\n\n"
                     "**注意：** 你必须通过工具完成操作，不要只输出文字。"
                 )
             else:
@@ -256,14 +287,18 @@ class CommentAgent:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT name, prefix, product_memory FROM projects WHERE id=?",
+                "SELECT name, prefix FROM projects WHERE id=?",
                 (self.project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 sections.append(f"## 项目：{proj['name']} ({proj['prefix']})")
-                if proj["product_memory"]:
-                    sections.append(f"\n## 产品记忆\n\n{proj['product_memory']}")
+
+            # Wiki context
+            from core.wiki import get_wiki_for_prompt
+            wiki_ctx = get_wiki_for_prompt(self.project_id)
+            if wiki_ctx:
+                sections.append(f"\n## 项目知识库\n\n{wiki_ctx}")
 
             cursor = await db.execute(
                 "SELECT r.code, r.title, r.status, r.priority "
@@ -353,12 +388,13 @@ class CommentAgent:
 
         def _run_agent():
             import logging as _logging
-            from core.telemetry import set_heartbeat_callback
-            set_heartbeat_callback(_heartbeat_cb)
             _logging.disable(_logging.WARNING)
             try:
                 os.environ["HERMES_YOLO_MODE"] = "1"
                 os.environ["HERMES_ACCEPT_HOOKS"] = "1"
+                os.environ["KH_AGENT_ROLE"] = self.role_config.role
+                os.environ["KH_PROJECT_ID"] = str(self.project_id)
+                os.environ["DB_PATH"] = os.path.abspath(os.getenv("DB_PATH", "data/kanban.db"))
                 from tools.mcp_tool import discover_mcp_tools
                 discover_mcp_tools()
                 from run_agent import AIAgent
@@ -399,7 +435,6 @@ class CommentAgent:
                 if _tool_heartbeat_timer[0]:
                     _tool_heartbeat_timer[0].cancel()
                 _logging.disable(_logging.NOTSET)
-                set_heartbeat_callback(None)
 
         loop = asyncio.get_event_loop()
         try:
@@ -426,7 +461,6 @@ class CommentAgent:
         """
         import json as _json
         import time as _time
-        from core.telemetry import get_stats
 
         config_dir = ensure_agent_mcp_config(self.role_config.role, self.project_id)
         tools = ",".join(
@@ -444,8 +478,8 @@ class CommentAgent:
         ]
 
         env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL": "1"}
-        if "API_KEY" in os.environ and "ANTHROPIC_AUTH_TOKEN" not in env:
-            env["ANTHROPIC_AUTH_TOKEN"] = os.environ["API_KEY"]
+        if "API_KEY" in os.environ and "ANTHROPIC_API_KEY" not in env:
+            env["ANTHROPIC_API_KEY"] = os.environ["API_KEY"]
         if "API_BASE_URL" in os.environ and "ANTHROPIC_BASE_URL" not in env:
             base = os.environ["API_BASE_URL"].rstrip("/")
             if base.endswith("/v1"):
@@ -493,14 +527,6 @@ class CommentAgent:
 
                 if event.get("type") == "result":
                     usage = event.get("usage", {})
-                    stats = get_stats()
-                    if stats and usage:
-                        stats.record_call(
-                            model=self.role_config.model.name or "claude-sonnet-4-6",
-                            input_tokens=usage.get("input_tokens", 0),
-                            output_tokens=usage.get("output_tokens", 0),
-                            latency_ms=event.get("duration_api_ms", 0),
-                        )
                     result_text = event.get("result", "")
 
             await proc.wait()

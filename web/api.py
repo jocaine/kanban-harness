@@ -164,6 +164,38 @@ async def update_project(pid: int, data: ProjectUpdate, db: aiosqlite.Connection
     row = await db.execute("SELECT * FROM projects WHERE id=?", (pid,))
     return dict(await row.fetchone())
 
+
+@router.post("/projects/{pid}/run")
+async def run_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
+    from core.project_runner import start_project
+    cursor = await db.execute("SELECT id FROM projects WHERE id=?", (pid,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "project not found")
+    result = await start_project(pid)
+    if result["status"] == "error":
+        raise HTTPException(400, result["message"])
+    return result
+
+
+@router.post("/projects/{pid}/stop")
+async def stop_project_endpoint(pid: int):
+    from core.project_runner import stop_project
+    return await stop_project(pid)
+
+
+@router.get("/projects/{pid}/run-status")
+async def project_run_status(pid: int):
+    from core.project_runner import get_project_status
+    return get_project_status(pid)
+
+
+@router.get("/projects/{pid}/output")
+async def project_output(pid: int, since: int = 0):
+    from core.project_runner import get_project_output
+    return get_project_output(pid, since)
+
+
 @router.get("/projects/{pid}/versions")
 async def list_versions(pid: int, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(
@@ -282,7 +314,7 @@ async def create_requirement(data: ReqCreate, request: Request, db: aiosqlite.Co
         await db.execute(
             "INSERT INTO agent_events (project_id, event_type, requirement_id, context) VALUES (?,?,?,?)",
             (vrow[0], "requirement_created", rid,
-             json.dumps({"status": init_status, "priority": data.priority})),
+             json.dumps({"status": init_status, "priority": data.priority, "type": data.type})),
         )
         await db.commit()
 
@@ -468,7 +500,7 @@ def _classify_log_layer(msg: str) -> str:
         mod = m.group(1)
         if mod.startswith('kh.'):
             seg = mod.split('.')[1] if '.' in mod[3:] else mod[3:]
-            if seg in ('core', 'telemetry'):
+            if seg in ('core',):
                 return 'core'
             if seg in ('web', 'startup'):
                 return 'web'
@@ -571,12 +603,32 @@ async def dev_logs(lines: int = 200):
 
 @router.get("/dev/telemetry")
 async def dev_telemetry():
-    """LLM call statistics — token usage, latency, call counts by model."""
-    from core.telemetry import get_stats
-    stats = get_stats()
-    if stats is None:
-        return {"status": "not_initialized", "stats": {}}
-    return {"status": "active", "stats": stats.snapshot()}
+    """LLM call statistics from agent_sessions DB table."""
+    import aiosqlite
+    from core.database import DB_PATH
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT agent_role, COUNT(*) as calls, "
+            "SUM(input_tokens) as input_tokens, "
+            "SUM(output_tokens) as output_tokens, "
+            "SUM(total_tokens) as total_tokens "
+            "FROM agent_sessions GROUP BY agent_role"
+        )
+        rows = await cur.fetchall()
+    by_role = {r["agent_role"]: {"calls": r["calls"], "input_tokens": r["input_tokens"] or 0, "output_tokens": r["output_tokens"] or 0, "total_tokens": r["total_tokens"] or 0} for r in rows}
+    total_calls = sum(v["calls"] for v in by_role.values())
+    total_input = sum(v["input_tokens"] for v in by_role.values())
+    total_output = sum(v["output_tokens"] for v in by_role.values())
+    return {
+        "status": "active",
+        "stats": {
+            "total_calls": total_calls,
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "by_role": by_role,
+        },
+    }
 
 
 LAYER_META = {
@@ -658,7 +710,6 @@ async def delete_project(pid: int, db: aiosqlite.Connection = Depends(get_db)):
     )
     await db.execute("DELETE FROM requirements WHERE version_id IN (SELECT id FROM versions WHERE project_id=?)", (pid,))
     await db.execute("DELETE FROM versions WHERE project_id=?", (pid,))
-    await db.execute("DELETE FROM project_architecture WHERE project_id=?", (pid,))
     await db.execute("DELETE FROM projects WHERE id=?", (pid,))
     await db.commit()
     return {"ok": True}
@@ -802,33 +853,6 @@ async def get_tag_requirements(tag: str, project_id: int = 0, db: aiosqlite.Conn
     }
 
 
-@router.get("/projects/{pid}/architecture")
-async def get_architecture(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT content FROM project_architecture WHERE project_id=?", (pid,))
-    row = await cursor.fetchone()
-    return {"content": row[0] if row else ""}
-
-
-@router.put("/projects/{pid}/architecture")
-async def put_architecture(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    from fastapi import Body
-    content = body.get("content", "")
-    cursor = await db.execute("SELECT 1 FROM project_architecture WHERE project_id=?", (pid,))
-    if await cursor.fetchone():
-        await db.execute("UPDATE project_architecture SET content=?, updated_at=datetime('now','localtime') WHERE project_id=?", (content, pid))
-    else:
-        await db.execute("INSERT INTO project_architecture (project_id, content) VALUES (?,?)", (pid, content))
-    await db.commit()
-    return {"ok": True}
-
-
-@router.get("/projects/{pid}/product-memory")
-async def get_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db)):
-    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
-    row = await cursor.fetchone()
-    return {"content": row[0] if row else ""}
-
-
 @router.get("/projects/{pid}/wiki")
 async def get_wiki_pages(pid: int):
     from core.wiki import list_wiki_pages
@@ -844,188 +868,6 @@ async def get_wiki_page(pid: int, subdir: str, slug: str):
     if not content:
         raise HTTPException(404, f"Wiki page not found: {page_path}")
     return {"content": content, "page": page_path}
-
-
-@router.put("/projects/{pid}/product-memory")
-async def put_product_memory(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    content = body.get("content", "")
-    await db.execute("UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?", (content, pid))
-    await db.commit()
-    return {"ok": True}
-
-
-@router.put("/projects/{pid}/product-memory/section")
-async def put_product_memory_section(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    """Update a specific section of the product memory document.
-
-    Body:
-      section: "market_intelligence" | "direction_control"
-      content: markdown content to insert/update in that section
-      sub_section: optional, for market_intelligence: "open_source" | "commercial" | "signal_conflict"
-    """
-    section = body.get("section", "")
-    content = body.get("content", "")
-    sub_section = body.get("sub_section", "")
-
-    if section not in ("market_intelligence", "direction_control"):
-        raise HTTPException(400, "section must be 'market_intelligence' or 'direction_control'")
-
-    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
-    row = await cursor.fetchone()
-    current = row[0] if row else ""
-
-    updated = _update_memory_section(current, section, content, sub_section)
-    await db.execute(
-        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
-        (updated, pid),
-    )
-    await db.commit()
-
-    # Audit log: insert a system comment in the project's product memory changes
-    agent = body.get("agent", "system")
-    logger.info("产品记忆已更新: project=%d section=%s sub_section=%s agent=%s", pid, section, sub_section, agent)
-
-    return {"ok": True, "section": section, "sub_section": sub_section}
-
-
-@router.post("/projects/{pid}/product-memory/decision")
-async def append_decision(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    """Append a decision history entry to the direction_control section.
-
-    Body:
-      date: date string (defaults to today)
-      decision: the decision made
-      reason: why it was made
-    """
-    from datetime import date
-    entry_date = body.get("date", date.today().isoformat())
-    decision = body.get("decision", "")
-    reason = body.get("reason", "")
-
-    if not decision:
-        raise HTTPException(400, "decision is required")
-
-    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
-    row = await cursor.fetchone()
-    current = row[0] if row else ""
-
-    entry = f"- {entry_date}：{decision}"
-    if reason:
-        entry += f"（{reason}）"
-
-    updated = _append_to_section(current, "架构决策历史", entry)
-    await db.execute(
-        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
-        (updated, pid),
-    )
-    await db.commit()
-    return {"ok": True}
-
-
-@router.put("/projects/{pid}/product-memory/target")
-async def set_productization_target(pid: int, db: aiosqlite.Connection = Depends(get_db), body: dict = {}):
-    """Set the productization target level.
-
-    Body:
-      level: "L0" | "L1" | "L2" | "L3" | "L4"
-    """
-    level = body.get("level", "")
-    if level not in ("L0", "L1", "L2", "L3", "L4"):
-        raise HTTPException(400, "level must be L0-L4")
-
-    cursor = await db.execute("SELECT product_memory FROM projects WHERE id=?", (pid,))
-    row = await cursor.fetchone()
-    current = row[0] if row else ""
-
-    import re
-    if re.search(r'productization_target:\s*L\d', current):
-        updated = re.sub(r'productization_target:\s*L\d', f'productization_target: {level}', current)
-    else:
-        updated = current + f"\nproductization_target: {level}\n"
-
-    await db.execute(
-        "UPDATE projects SET product_memory=?, updated_at=datetime('now','localtime') WHERE id=?",
-        (updated, pid),
-    )
-    await db.commit()
-    return {"ok": True, "level": level}
-
-
-def _update_memory_section(current: str, section: str, content: str, sub_section: str = "") -> str:
-    """Update a specific section of the product memory markdown document."""
-    import re
-
-    if section == "market_intelligence":
-        section_header = "## 一、市场分析（Market Intelligence）"
-        alt_header = "## 一、市场分析"
-    else:
-        section_header = "## 二、方向把控（Direction Control）"
-        alt_header = "## 二、方向把控"
-
-    # Find the target section boundaries
-    section_pattern = re.compile(
-        rf"({re.escape(section_header)}|{re.escape(alt_header)})"
-        r"(.*?)(?=\n## |\Z)",
-        re.DOTALL,
-    )
-    match = section_pattern.search(current)
-
-    if not match:
-        # Section doesn't exist, append it
-        if not current.endswith("\n"):
-            current += "\n"
-        current += f"\n{section_header}\n\n{content}\n"
-        return current
-
-    # Section exists, check for sub-section
-    if sub_section:
-        sub_map = {
-            "open_source": "### 开源视角",
-            "commercial": "### 商业视角",
-            "signal_conflict": "### 信号冲突记录",
-        }
-        sub_header = sub_map.get(sub_section, "")
-        if sub_header:
-            sub_pattern = re.compile(
-                rf"({re.escape(sub_header)})"
-                r"(.*?)(?=\n### |\n## |\Z)",
-                re.DOTALL,
-            )
-            sub_match = sub_pattern.search(match.group(0))
-            if sub_match:
-                # Replace sub-section content
-                old = sub_match.group(0)
-                new = f"{sub_header}\n\n{content}"
-                full = match.group(0).replace(old, new)
-            else:
-                # Append sub-section
-                full = match.group(0).rstrip() + f"\n\n{sub_header}\n\n{content}\n"
-            current = current[:match.start()] + match.expand(rf"\1{full.split(match.group(1),1)[1]}") + current[match.end():]
-            return current
-
-    # No sub-section, replace entire section content
-    # Keep the header, replace everything after it until the next section or end
-    header = match.group(1)
-    rest = match.group(2)
-    new_section = f"{header}\n\n{content}\n"
-    return current[:match.start()] + new_section + current[match.end():]
-
-
-def _append_to_section(current: str, sub_header: str, entry: str) -> str:
-    """Append an entry to a subsection within the product memory."""
-    import re
-    pattern = re.compile(
-        rf"(### {re.escape(sub_header)}.*?)(?=\n### |\n## |\Z)",
-        re.DOTALL,
-    )
-    match = pattern.search(current)
-    if match:
-        section_text = match.group(1)
-        updated_section = section_text.rstrip() + f"\n{entry}\n"
-        return current[:match.start()] + updated_section + current[match.end():]
-    else:
-        # No such subsection, append
-        return current.rstrip() + f"\n\n### {sub_header}\n\n{entry}\n"
 
 
 @router.get("/skill-template")
@@ -1114,6 +956,50 @@ async def requirement_logs(rid: int, limit: int = 100, db: aiosqlite.Connection 
     )
     rows = [dict(row) for row in await cursor.fetchall()]
     return {"logs": rows, "total": len(rows)}
+
+
+@router.get("/requirements/{rid}/chain")
+async def requirement_chain(rid: int, db: aiosqlite.Connection = Depends(get_db)):
+    """返回卡片所属的完整派生链（从根想法卡到所有后代）。"""
+    # 向上找根节点
+    root_id = rid
+    visited = {rid}
+    while True:
+        cursor = await db.execute(
+            "SELECT parent_id FROM requirements WHERE id=?", (root_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or not row["parent_id"]:
+            break
+        if row["parent_id"] in visited:
+            break
+        visited.add(row["parent_id"])
+        root_id = row["parent_id"]
+
+    # 从根节点 BFS 获取所有后代
+    chain = []
+    queue = [root_id]
+    seen = set()
+    while queue:
+        nid = queue.pop(0)
+        if nid in seen:
+            continue
+        seen.add(nid)
+        cursor = await db.execute(
+            "SELECT id, code, title, type, status, parent_id FROM requirements WHERE id=?",
+            (nid,),
+        )
+        node = await cursor.fetchone()
+        if node:
+            chain.append(dict(node))
+            cursor2 = await db.execute(
+                "SELECT id FROM requirements WHERE parent_id=? ORDER BY position",
+                (nid,),
+            )
+            children = await cursor2.fetchall()
+            queue.extend(c["id"] for c in children)
+
+    return {"chain": chain, "root_id": root_id, "current_id": rid}
 
 
 # ==================== 2b. Card Debug Endpoint (KH-107) ====================
@@ -1392,12 +1278,6 @@ async def scheduler_state(db: aiosqlite.Connection = Depends(get_db)):
         "priority": r["priority"],
     } for r in pending_rows]
 
-    from core.telemetry import get_stats
-    telemetry_stats = {}
-    ts = get_stats()
-    if ts:
-        telemetry_stats = ts.snapshot()
-
     return {
         "generated_at": now.isoformat(),
         "scheduler": {
@@ -1416,7 +1296,6 @@ async def scheduler_state(db: aiosqlite.Connection = Depends(get_db)):
         "stale": stale,
         "blocked": blocked,
         "pending": pending,
-        "telemetry": telemetry_stats,
     }
 
 
@@ -1687,3 +1566,170 @@ async def reload_config():
         return {"ok": True, "dotenv": "reloaded", "hermes_sync": f"failed: {e}"}
 
     return {"ok": True, "dotenv": "reloaded", "hermes_sync": "ok"}
+
+
+class ConfigUpdate(BaseModel):
+    provider: str  # "openai" or "anthropic"
+    api_key: Optional[str] = None
+    api_base_url: str
+    chat_model: str
+
+
+def _mask_key(key: str) -> str:
+    if not key or len(key) <= 8:
+        return "****"
+    return key[:3] + "****" + key[-4:]
+
+
+def _read_env_file() -> dict:
+    """Parse .env file into a dict."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    result = {}
+    if not os.path.exists(env_path):
+        return result
+    with open(env_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            result[k.strip()] = v.strip()
+    return result
+
+
+def _write_env_file(provider: str, api_key: str, api_base_url: str, chat_model: str):
+    """Write .env in the same format as kh config CLI."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if provider == "openai":
+        content = (
+            f"API_PROVIDER=openai\n"
+            f"OPENAI_API_KEY={api_key}\n"
+            f"OPENAI_BASE_URL={api_base_url}\n"
+            f"API_KEY={api_key}\n"
+            f"API_BASE_URL={api_base_url}\n"
+            f"CHAT_MODEL={chat_model}\n"
+        )
+    else:
+        content = (
+            f"API_PROVIDER=anthropic\n"
+            f"API_KEY={api_key}\n"
+            f"ANTHROPIC_API_KEY={api_key}\n"
+            f"ANTHROPIC_AUTH_TOKEN={api_key}\n"
+            f"API_BASE_URL={api_base_url}\n"
+            f"ANTHROPIC_BASE_URL={api_base_url}\n"
+            f"CHAT_MODEL={chat_model}\n"
+        )
+    # Preserve extra env vars not managed by config
+    existing = _read_env_file()
+    managed_keys = {
+        "API_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+        "API_KEY", "API_BASE_URL", "CHAT_MODEL",
+        "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    }
+    extras = []
+    for k, v in existing.items():
+        if k not in managed_keys:
+            extras.append(f"{k}={v}\n")
+    if extras:
+        content += "\n" + "".join(extras)
+    with open(env_path, "w") as f:
+        f.write(content)
+
+
+@router.get("/config")
+async def get_config():
+    """Read current API config with masked key."""
+    env = _read_env_file()
+    provider = env.get("API_PROVIDER", "")
+    api_key = env.get("API_KEY", "")
+    api_base_url = env.get("API_BASE_URL", "")
+    chat_model = env.get("CHAT_MODEL", "")
+    return {
+        "provider": provider,
+        "api_key_masked": _mask_key(api_key),
+        "api_base_url": api_base_url,
+        "chat_model": chat_model,
+        "configured": bool(api_key and api_base_url and chat_model),
+    }
+
+
+@router.put("/config")
+async def update_config(body: ConfigUpdate):
+    """Update API config and hot-reload env vars."""
+    from dotenv import load_dotenv
+
+    existing = _read_env_file()
+    api_key = body.api_key
+    if not api_key or "****" in api_key:
+        api_key = existing.get("API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, "API Key is required")
+
+    _write_env_file(body.provider, api_key, body.api_base_url, body.chat_model)
+    load_dotenv(override=True)
+    logger.info("配置已更新: provider=%s, model=%s", body.provider, body.chat_model)
+
+    try:
+        from web.hermes_chat import ensure_hermes_config
+        await ensure_hermes_config()
+    except Exception as e:
+        logger.warning("hermes 配置同步失败: %s", e)
+
+    return {"ok": True, "message": "配置已保存并生效"}
+
+
+class ConfigTest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    api_base_url: str
+    chat_model: str
+
+
+@router.post("/config/test")
+async def test_config(body: ConfigTest):
+    """Test if API key + URL + model can connect successfully."""
+    import httpx
+
+    api_key = body.api_key
+    if not api_key or "****" in api_key:
+        env = _read_env_file()
+        api_key = env.get("API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, "API Key is required for testing")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if body.provider == "anthropic":
+                url = body.api_base_url.rstrip("/") + "/v1/messages"
+                resp = await client.post(url, headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                }, json={
+                    "model": body.chat_model,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                })
+            else:
+                url = body.api_base_url.rstrip("/") + "/chat/completions"
+                resp = await client.post(url, headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }, json={
+                    "model": body.chat_model,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                })
+
+            if resp.status_code in (200, 201):
+                return {"ok": True, "message": "连接成功"}
+            else:
+                detail = resp.text[:200]
+                return {"ok": False, "message": f"HTTP {resp.status_code}: {detail}"}
+
+    except httpx.TimeoutException:
+        return {"ok": False, "message": "连接超时 (15s)"}
+    except httpx.ConnectError as e:
+        return {"ok": False, "message": f"无法连接: {e}"}
+    except Exception as e:
+        return {"ok": False, "message": f"错误: {e}"}

@@ -18,7 +18,7 @@ _CONFIG_PATH = Path(os.getenv(
 _DEFAULTS = {
     "polling": {
         "interval_seconds": 30,
-        "stuck_cooldown_seconds": 30,
+        "stuck_cooldown_seconds": 120,
     },
     "agent": {
         "max_concurrent_sessions": 5,
@@ -32,7 +32,7 @@ _DEFAULTS = {
 @dataclass
 class WorkflowConfig:
     poll_interval: int = 30
-    stuck_cooldown: int = 30
+    stuck_cooldown: int = 120
     max_concurrent_sessions: int = 5
     default_timeout: int = 600
     max_research_rounds: int = 10

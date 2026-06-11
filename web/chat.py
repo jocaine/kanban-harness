@@ -244,23 +244,18 @@ async def _build_pm_system_prompt(project_id: int) -> str:
 
         if project_id:
             cursor = await db.execute(
-                "SELECT name, description, prefix, product_memory FROM projects WHERE id=?",
+                "SELECT name, description, prefix FROM projects WHERE id=?",
                 (project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 sections.append(f"\n## 当前项目\n\n**{proj['name']}** (prefix: {proj['prefix']})\n{proj['description'] or ''}")
-                if proj["product_memory"]:
-                    sections.append(f"\n## 产品记忆（决策历史）\n\n{proj['product_memory'][:1500]}")
 
-            # Architecture doc
-            cursor = await db.execute(
-                "SELECT content FROM project_architecture WHERE project_id=?",
-                (project_id,),
-            )
-            arch_row = await cursor.fetchone()
-            if arch_row and arch_row["content"]:
-                sections.append(f"\n## 项目架构\n\n{arch_row['content'][:2000]}")
+            # Wiki context
+            from core.wiki import get_wiki_for_prompt
+            wiki_ctx = get_wiki_for_prompt(project_id)
+            if wiki_ctx:
+                sections.append(f"\n## 项目知识库\n\n{wiki_ctx}")
 
             cursor = await db.execute(
                 "SELECT r.code, r.title, r.status, r.priority "

@@ -17,8 +17,6 @@ ROUTE_RULES: list[tuple[str, str, str, str]] = [
     ("POST", "/comments", "create", "comments"),
     ("PUT", "/move", "move", "requirements"),
     ("PUT", "/requirements", "write", "requirements"),
-    ("PUT", "/architecture", "write", "architecture"),
-    ("PUT", "/product-memory", "write", "product_memory"),
     ("DELETE", "/requirements", "write", "requirements"),
     ("DELETE", "/comments", "write", "comments"),
 ]

@@ -45,7 +45,6 @@ class SchedulerEngine:
             return
         self.running = True
         self._started_at = datetime.now()
-        self.session_manager.set_retry_handler(self._handle_retry)
         await self.session_manager.recover_stale_sessions()
         await self.session_manager.start_timeout_checker()
         self._task = asyncio.create_task(self._poll_loop())
@@ -375,6 +374,54 @@ class SchedulerEngine:
 
         asyncio.create_task(handlers.handle_coach_dev_result(self.session_manager, session_id, card, repo_path))
 
+    async def _trigger_coach_review(self, event: dict, context: dict):
+        """Trigger CoachReview with workspace access instead of CommentAgent."""
+        requirement_id = event.get("requirement_id")
+        if not requirement_id:
+            return
+        if await self._has_running_session(requirement_id):
+            return
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,))
+            card_row = await cursor.fetchone()
+            if not card_row:
+                return
+            card = dict(card_row)
+            cursor2 = await db.execute(
+                "SELECT v.project_id, p.git_remote_url FROM versions v "
+                "JOIN projects p ON v.project_id=p.id WHERE v.id=?",
+                (card["version_id"],),
+            )
+            proj_row = await cursor2.fetchone()
+            if not proj_row:
+                return
+            project_id = proj_row["project_id"]
+            git_remote_url = proj_row["git_remote_url"] or ""
+
+            await db.execute(
+                "UPDATE requirements SET assignee='Coach-QA', updated_at=datetime('now','localtime') WHERE id=?",
+                (requirement_id,),
+            )
+            await db.commit()
+
+        broadcast("card_updated", {"id": requirement_id, "action": "assigned", "assignee": "Coach-QA"})
+
+        repo_path = await get_project_repo_path(project_id, git_remote_url)
+        input_context = json.dumps({"requirement_id": requirement_id, "code": card.get("code", "")})
+        session_id = await self.session_manager.create_session(
+            project_id=project_id,
+            agent_role="coach_review",
+            trigger_type=f"event:{event['event_type']}",
+            input_context=input_context,
+            requirement_id=requirement_id,
+        )
+
+        asyncio.create_task(
+            handlers.handle_coach_review_result(self.session_manager, session_id, card, repo_path, project_id)
+        )
+
     # ==================== Event-driven comment agents ===============
 
     async def _peek_pending_events(self) -> list[dict]:
@@ -404,6 +451,9 @@ class SchedulerEngine:
                 for role_name in roles:
                     if role_name == "coach_dev" and event["event_type"] != "ceo_replied":
                         continue
+                    if role_name == "coach_review" and event["event_type"] != "ceo_replied":
+                        await self._trigger_coach_review(event, context)
+                        continue
                     await self._trigger_comment_agent(role_name, event, context)
 
             except Exception as e:
@@ -418,6 +468,10 @@ class SchedulerEngine:
     async def _trigger_comment_agent(self, role_name: str, event: dict, context: dict):
         requirement_id = event.get("requirement_id")
         if not requirement_id:
+            return
+
+        if await self._has_running_session(requirement_id):
+            logger.info("[SCHED] 跳过 '%s': req=%d 已有 running session", role_name, requirement_id)
             return
 
         logger.info("[SCHED] → 触发 comment_agent '%s': req=%d, event=%s", role_name, requirement_id, event["event_type"])
@@ -462,35 +516,6 @@ class SchedulerEngine:
         )
 
         asyncio.create_task(handlers.handle_comment_agent_result(self.session_manager, session_id, role_name, card, event["project_id"]))
-
-    async def _handle_retry(self, new_session_id: int, original_session: dict):
-        """Retry handler — re-launches agent for a retried/continued session."""
-        role_name = original_session["agent_role"]
-        project_id = original_session["project_id"]
-        requirement_id = original_session.get("requirement_id")
-
-        if not requirement_id:
-            logger.warning("重试会话 %d 无 requirement_id, 跳过", new_session_id)
-            await self.session_manager.fail_session(new_session_id, "no_requirement_id")
-            return
-
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM requirements WHERE id=?", (requirement_id,))
-            card_row = await cursor.fetchone()
-            if not card_row:
-                logger.warning("重试会话 %d 的卡片 %d 不存在, 跳过", new_session_id, requirement_id)
-                await self.session_manager.fail_session(new_session_id, "card_not_found")
-                return
-            card = dict(card_row)
-
-        if role_name == "coach_dev":
-            repo_path = await get_project_repo_path(project_id, card.get("git_remote_url", ""))
-            asyncio.create_task(handlers.handle_coach_dev_result(
-                self.session_manager, new_session_id, card, repo_path))
-        else:
-            asyncio.create_task(handlers.handle_comment_agent_result(
-                self.session_manager, new_session_id, role_name, card, project_id))
 
     # ==================== Stuck card recovery ====================
 

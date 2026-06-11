@@ -2,7 +2,6 @@
 
 import os
 import sys
-import json
 import logging
 
 # Ensure project root is in sys.path so `mcp_server.kh_client` resolves
@@ -115,12 +114,14 @@ async def kh_submit_idea(idea: str, project_id: int = 0, priority: str = "P2") -
         version_id=active_version["id"],
         title=idea.strip(),
         priority=priority,
+        type="idea",
     )
 
     return (
         f"已建卡：{req['code']} — {req['title']}\n"
         f"项目：{target_project['name']} / {active_version['name']}\n"
-        f"优先级：{priority} | 状态：organizing"
+        f"优先级：{priority} | 类型：想法卡 | 状态：organizing\n"
+        f"PM 将自动拆解为具体执行卡片。"
     )
 
 
@@ -352,51 +353,6 @@ async def kh_load_guideline(name: str) -> str:
                 if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
                     available.append(skill_dir.name)
     return f"错误：指南 '{name}' 不存在。可用: {', '.join(sorted(available))}"
-
-
-# ─── Resources ───────────────────────────────────────────────────────────────
-
-@mcp.resource("kanban://board", description="看板全貌：项目→版本→各状态列的卡片（JSON）")
-async def resource_board() -> str:
-    logger.info("resource:board 已调用")
-    projects = await client.list_projects()
-    result = []
-    for proj in projects:
-        proj_data = {"id": proj["id"], "name": proj["name"], "versions": []}
-        versions = await client.list_versions(proj["id"])
-        for ver in versions:
-            if ver["status"] in ("active", "testing", "planning"):
-                reqs = await client.list_requirements(ver["id"])
-                columns = {"research": [], "organizing": [], "dev": [], "testing": [], "done": []}
-                for req in reqs:
-                    columns.setdefault(req["status"], []).append({
-                        "code": req["code"],
-                        "title": req["title"],
-                        "priority": req["priority"],
-                        "assignee": req.get("assignee", ""),
-                    })
-                proj_data["versions"].append({
-                    "id": ver["id"],
-                    "name": ver["name"],
-                    "status": ver["status"],
-                    "columns": columns,
-                })
-        result.append(proj_data)
-    return json.dumps(result, ensure_ascii=False)
-
-
-@mcp.resource("kanban://agents", description="各 AI agent 角色当前状态")
-async def resource_agents() -> str:
-    logger.info("resource:agents 已调用")
-    data = await client.get_agents_status()
-    return json.dumps(data, ensure_ascii=False)
-
-
-@mcp.resource("kanban://scheduler", description="调度器运行状态（模式、autopilot 级别）")
-async def resource_scheduler() -> str:
-    logger.info("resource:scheduler 已调用")
-    data = await client.get_scheduler_status()
-    return json.dumps(data, ensure_ascii=False)
 
 
 if __name__ == "__main__":

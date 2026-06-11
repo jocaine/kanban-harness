@@ -33,15 +33,15 @@ def _api_base_url() -> str:
 CHAT_DIRECTIVES = """## 聊天专属指令
 
 以下指令补充 PM prompt，仅在聊天界面生效（不在 PM agent 自动触发时生效）：
-- 用户描述新想法/需求 → 直接拆解为多张结构化卡片，调用 kanban MCP 创建
+- 用户描述新想法/需求 → 创建一张 type='idea' 的想法卡（标题为想法摘要，用户原话作为 initial_comment）
 - 用户说"你自己想/随便/你来决定/都行" → 基于产品记忆和项目上下文自主决策，给出方案并执行
 - 用户闲聊/问问题 → 正常对话，结合项目上下文回答
 
 原则：
-1. 宁可先行动再让用户调整，也不要反复追问细节
-2. 拆解需求时用 MVP 思维：先拆最小可用版本，不过度设计
-3. 每张卡片包含：title、description（功能目标+验收标准）、priority
-4. 创建卡片后告知用户创建了什么，让用户可以微调
+1. 想法卡只记录 CEO 的原始意图，不要在聊天阶段拆解
+2. 拆解由 PM agent 自动完成，保证每张子卡 type 正确（research/dev）
+3. 创建想法卡后告知用户已收录，PM 会自动拆解
+4. 想法卡的 title 是一句话摘要，CEO 原话放 initial_comment
 """
 
 
@@ -124,16 +124,17 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
 
         if project_id:
             cursor = await db.execute(
-                "SELECT name, description, prefix, product_memory FROM projects WHERE id=?",
+                "SELECT name, description, prefix FROM projects WHERE id=?",
                 (project_id,),
             )
             proj = await cursor.fetchone()
             if proj:
                 summary["project"] = proj["name"]
 
-                if proj["product_memory"]:
-                    memory = proj["product_memory"][:1500]
-                    sections.append(f"\n## 产品记忆（决策历史）\n\n{memory}")
+                from core.wiki import get_wiki_for_prompt
+                wiki_ctx = get_wiki_for_prompt(project_id)
+                if wiki_ctx:
+                    sections.append(f"\n## 项目知识库\n\n{wiki_ctx}")
                     has_context = True
 
             cursor = await db.execute(
@@ -179,7 +180,7 @@ async def _build_hermes_prompt(project_id: int, user_message: str) -> tuple[str,
             "\n## 上下文提示\n\n"
             "当前项目尚未配置详细上下文。你可以通过 kanban MCP 工具获取更多信息：\n"
             "- 用 kanban_list_projects 查看可用项目\n"
-            "- 用 kanban_get_product_memory 获取产品记忆\n"
+            "- 用 kanban_wiki_list_pages 查看项目知识库\n"
             "- 用 kanban_list_requirements 查看当前需求\n"
             "如果用户要创建需求，先用 kanban_list_versions 找到活跃版本再创建。"
         )

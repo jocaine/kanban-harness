@@ -224,6 +224,60 @@ async def _migrate_db(db: aiosqlite.Connection):
         )
     await db.commit()
 
+    # Migration 10: type 枚举加 'idea'（想法卡）
+    cursor = await db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='requirements'"
+    )
+    row = await cursor.fetchone()
+    if row and "'idea'" not in row[0]:
+        logger.info("迁移 requirements 表: type 枚举添加 'idea'")
+        await db.executescript("""
+            PRAGMA foreign_keys=OFF;
+            DROP TABLE IF EXISTS requirements_new;
+            CREATE TABLE requirements_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev','idea')),
+                status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
+                assignee TEXT DEFAULT '',
+                deadline TEXT DEFAULT '',
+                estimated_hours REAL DEFAULT 0,
+                actual_hours REAL DEFAULT 0,
+                tags TEXT DEFAULT '[]',
+                notes TEXT DEFAULT '',
+                queue_reason TEXT DEFAULT '',
+                code TEXT DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT (datetime('now','localtime')),
+                updated_at DATETIME DEFAULT (datetime('now','localtime')),
+                agent_timeout INTEGER DEFAULT NULL,
+                ceo_decision TEXT DEFAULT NULL,
+                progressed_at DATETIME DEFAULT NULL,
+                FOREIGN KEY (version_id) REFERENCES versions(id) ON DELETE CASCADE
+            );
+            INSERT INTO requirements_new (id, version_id, title, description, priority, type, status, assignee, deadline, estimated_hours, actual_hours, tags, notes, queue_reason, code, position, archived, created_at, updated_at, agent_timeout, ceo_decision, progressed_at)
+                SELECT id, version_id, title, description, priority, type, status, assignee, deadline, estimated_hours, actual_hours, tags, notes, queue_reason, code, position, archived, created_at, updated_at, agent_timeout, ceo_decision, progressed_at FROM requirements;
+            DROP TABLE requirements;
+            ALTER TABLE requirements_new RENAME TO requirements;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_requirements_code ON requirements(code) WHERE code != '';
+            PRAGMA foreign_keys=ON;
+        """)
+    await db.commit()
+
+    # Migration 11: requirements 加 parent_id 列（卡片链/派生关系）
+    cursor = await db.execute("PRAGMA table_info(requirements)")
+    columns = {row[1] for row in await cursor.fetchall()}
+    if "parent_id" not in columns:
+        logger.info("迁移 requirements 表: 添加 parent_id 列")
+        await db.execute(
+            "ALTER TABLE requirements ADD COLUMN parent_id INTEGER DEFAULT NULL"
+        )
+    await db.commit()
+
 
 # 首次建库 + 后续迁移，应用启动时调用一次
 # 阶段1: CREATE TABLE IF NOT EXISTS 建全部表
@@ -247,7 +301,6 @@ async def init_db():
                 description TEXT DEFAULT '',
                 color TEXT DEFAULT '#4f46e5',
                 prefix TEXT DEFAULT '',
-                product_memory TEXT DEFAULT '',
                 git_repo_path TEXT DEFAULT '',
                 git_remote_url TEXT DEFAULT '',
                 git_last_synced_at TEXT DEFAULT '',
@@ -275,7 +328,7 @@ async def init_db():
                 title TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
-                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev')),
+                type TEXT DEFAULT 'dev' CHECK(type IN ('research','dev','idea')),
                 status TEXT DEFAULT 'organizing' CHECK(status IN ('research','organizing','dev','testing','done','blocked')),
                 assignee TEXT DEFAULT '',
                 deadline TEXT DEFAULT '',
@@ -287,6 +340,7 @@ async def init_db():
                 code TEXT DEFAULT '',
                 position INTEGER NOT NULL DEFAULT 0,
                 archived INTEGER DEFAULT 0,
+                parent_id INTEGER DEFAULT NULL,
                 created_at DATETIME DEFAULT (datetime('now','localtime')),
                 updated_at DATETIME DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY (version_id) REFERENCES versions(id) ON DELETE CASCADE
@@ -315,17 +369,6 @@ async def init_db():
                 detail TEXT DEFAULT '',
                 created_at DATETIME DEFAULT (datetime('now','localtime')),
                 FOREIGN KEY (requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
-            );
-
-            -- ====== 项目附属（FK → projects） ======
-            -- project_architecture: 架构文档，每项目一条
-
-            CREATE TABLE IF NOT EXISTS project_architecture (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL UNIQUE,
-                content TEXT DEFAULT '',
-                updated_at DATETIME DEFAULT (datetime('now','localtime')),
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS requirement_commits (
