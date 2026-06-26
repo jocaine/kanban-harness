@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pencil": {
+      "command": "/home/tlr/.pencil/mcp/visual_studio_code/out/mcp-server-linux-x64",
+      "args": ["--app", "visual_studio_code"],
+      "env": {}
+    }
+  }
+}
