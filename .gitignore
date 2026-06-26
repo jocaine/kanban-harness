@@ -10,3 +10,16 @@ logs/
 # understand-anything: only track core graph files
 .understand-anything/intermediate/
 .understand-anything/tmp/
+.understand-ag/
+
+# Non-project files (other repos, temp, junk)
+BannerlordCoop/
+decompiler/
+ker
+null
+kh.new
+*.Zone.Identifier
+c35ffd808c5548ff849797b6bf199da9.png:Zone.Identifier
+
+# Claude Code local settings
+.claude/
