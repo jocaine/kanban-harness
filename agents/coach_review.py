@@ -67,6 +67,7 @@ class CoachReview:
                 "total": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
             }
 
+            await self._cleanup_worktree(worktree_path)
             return {
                 "task_done": True,
                 "success": True,
@@ -81,7 +82,6 @@ class CoachReview:
             logger.error("[FAULT:AGENT] coach_review 失败: [%s]: %s", code, e)
             raise
         finally:
-            await self._cleanup_worktree(worktree_path)
             self._cleanup_mcp_config(worktree_path)
 
     # ==================== Prompt building ====================
@@ -123,11 +123,13 @@ class CoachReview:
             "3. 用 Read 工具查看关键源文件\n"
             "4. 运行测试（如果有 package.json 用 npm test，有 pytest.ini 用 pytest）\n"
             "5. 逐项对照验收标准验证\n\n"
-            "**审查完成后调用决策工具：**\n"
+            "**审查完成后调用决策工具（只调一次）：**\n"
             f"- 通过: decide(requirement_id={req_id}, comment='审查结论', target='done')\n"
             f"- 打回: decide(requirement_id={req_id}, comment='问题说明', target='dev')\n"
             f"- 请CEO裁决: ask_ceo(requirement_id={req_id}, comment='背景', question='问题')\n\n"
-            "**禁止：** 未读代码未跑测试就判断通过或打回。"
+            "**禁止：**\n"
+            "- 未读代码未跑测试就判断通过或打回\n"
+            "- 调用 decide/ask_ceo 之前或之后再调用 add_comment（所有内容必须一次性写在 decide 的 comment+detail 中）"
         )
 
         return "\n\n".join(sections)
@@ -227,7 +229,8 @@ class CoachReview:
     async def _setup_worktree(self, branch_name: str, worktree_path: str):
         os.makedirs(WORKTREE_BASE, exist_ok=True)
         if os.path.exists(worktree_path):
-            await self._run_git("worktree", "remove", "--force", worktree_path)
+            logger.info("[CONTINUE] 复用已有 worktree: %s", worktree_path)
+            return
         await self._run_git("worktree", "add", worktree_path, branch_name)
 
     async def _cleanup_worktree(self, worktree_path: str):

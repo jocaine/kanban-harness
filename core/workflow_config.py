@@ -22,6 +22,7 @@ _DEFAULTS = {
     },
     "agent": {
         "max_concurrent_sessions": 5,
+        "max_concurrent_industry": 1,
         "default_timeout_seconds": 900,
         "max_research_rounds": 10,
         "stall_timeout_seconds": 120,
@@ -34,6 +35,7 @@ class WorkflowConfig:
     poll_interval: int = 30
     stuck_cooldown: int = 120
     max_concurrent_sessions: int = 5
+    max_concurrent_industry: int = 1
     default_timeout: int = 600
     max_research_rounds: int = 10
     stall_timeout: int = 120
@@ -71,6 +73,7 @@ class WorkflowConfig:
             self.poll_interval = int(polling.get("interval_seconds", _DEFAULTS["polling"]["interval_seconds"]))
             self.stuck_cooldown = int(polling.get("stuck_cooldown_seconds", _DEFAULTS["polling"]["stuck_cooldown_seconds"]))
             self.max_concurrent_sessions = int(agent.get("max_concurrent_sessions", _DEFAULTS["agent"]["max_concurrent_sessions"]))
+            self.max_concurrent_industry = int(agent.get("max_concurrent_industry", _DEFAULTS["agent"]["max_concurrent_industry"]))
             self.default_timeout = int(agent.get("default_timeout_seconds", _DEFAULTS["agent"]["default_timeout_seconds"]))
             self.max_research_rounds = int(agent.get("max_research_rounds", _DEFAULTS["agent"]["max_research_rounds"]))
             self.stall_timeout = int(agent.get("stall_timeout_seconds", _DEFAULTS["agent"]["stall_timeout_seconds"]))

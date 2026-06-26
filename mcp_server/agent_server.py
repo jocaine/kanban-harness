@@ -899,3 +899,107 @@ async def kh_web_extract(url: str) -> str:
         text = text[:5000] + f"\n...(截断，共 {len(text)} 字符)"
 
     return text if text else "提取失败：页面内容为空"
+
+
+# ==================== Host Daemon Tools ====================
+
+
+@mcp.tool()
+async def project_start(project_id: int = 0) -> str:
+    """启动项目程序（执行 start.sh）。返回进程信息和端口。
+
+    Args:
+        project_id: 项目 ID（默认使用当前项目）
+    """
+    from core.project_runner import start_project
+    pid = project_id or PROJECT_ID
+    if not pid:
+        return "错误：未指定 project_id"
+    logger.info("tool:project_start project=%d", pid)
+    result = await start_project(pid)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def project_stop(project_id: int = 0) -> str:
+    """停止正在运行的项目程序。
+
+    Args:
+        project_id: 项目 ID（默认使用当前项目）
+    """
+    from core.project_runner import stop_project
+    pid = project_id or PROJECT_ID
+    if not pid:
+        return "错误：未指定 project_id"
+    logger.info("tool:project_stop project=%d", pid)
+    result = await stop_project(pid)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def project_logs(project_id: int = 0, since: int = 0) -> str:
+    """获取项目程序的运行日志输出。
+
+    Args:
+        project_id: 项目 ID（默认使用当前项目）
+        since: 从第几行开始读取（用于增量获取）
+    """
+    from core.project_runner import get_project_output
+    pid = project_id or PROJECT_ID
+    if not pid:
+        return "错误：未指定 project_id"
+    logger.info("tool:project_logs project=%d since=%d", pid, since)
+    result = await get_project_output(pid, since=since)
+    lines = result.get("lines", [])
+    running = result.get("running", False)
+    total = result.get("total", 0)
+    header = f"[running={running}, total_lines={total}]\n"
+    return header + "\n".join(lines) if lines else header + "(无输出)"
+
+
+@mcp.tool()
+async def project_screenshot(project_id: int = 0) -> str:
+    """截取项目 GUI 程序的屏幕截图。返回截图文件路径。
+
+    Args:
+        project_id: 项目 ID（默认使用当前项目）
+    """
+    import base64
+    import tempfile
+    from core.project_runner import get_project_screenshot
+    pid = project_id or PROJECT_ID
+    if not pid:
+        return "错误：未指定 project_id"
+    logger.info("tool:project_screenshot project=%d", pid)
+    data = await get_project_screenshot(pid)
+    if not data:
+        return "截图失败：程序未运行或 daemon 不支持截图"
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False, dir="/tmp")
+    tmp.write(data)
+    tmp.close()
+    return f"截图已保存: {tmp.name}"
+
+
+@mcp.tool()
+async def project_send_keys(input_text: str, project_id: int = 0) -> str:
+    """向正在运行的项目程序发送键盘输入。
+
+    Args:
+        input_text: 要发送的文本（支持 \\n 换行）
+        project_id: 项目 ID（默认使用当前项目）
+    """
+    from core.project_runner import _running, _daemon_request
+    pid = project_id or PROJECT_ID
+    if not pid:
+        return "错误：未指定 project_id"
+    if pid not in _running:
+        return "错误：项目未在运行"
+    entry = _running[pid]
+    daemon_id = entry.get("daemon_id")
+    if not daemon_id:
+        return "错误：非 daemon 管理的进程，无法发送输入"
+    logger.info("tool:project_send_keys project=%d input=%r", pid, input_text[:50])
+    result = await _daemon_request("POST", "/input", {"id": daemon_id, "input": input_text})
+    if result and "_error" not in result:
+        return "已发送"
+    return f"发送失败: {result}"

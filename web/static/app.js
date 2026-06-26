@@ -436,6 +436,7 @@ function renderVersions() {
             ${allDone ? '<span class="ver-all-done" title="所有需求已完成，点击标记为已发布" onclick="event.stopPropagation();markReleased(' + v.id + ')">&#10003; 可发布</span>' : ''}
             <span class="nav-count">${v.done_count || 0}/${v.req_count || 0}</span>
             <div class="nav-actions">
+                ${v.status === 'released' ? '<button onclick="event.stopPropagation();exportVersion(' + v.id + ')" title="导出">&#8681;</button>' : ''}
                 <button onclick="event.stopPropagation();editVersion(${v.id})" title="编辑">&#9998;</button>
                 <button onclick="event.stopPropagation();deleteVersion(${v.id})" title="删除">&#10005;</button>
             </div>
@@ -1712,6 +1713,10 @@ async function markReleased(vid) {
     showToast('已标记为已发布');
 }
 
+function exportVersion(vid) {
+    window.open(API + '/api/versions/' + vid + '/export', '_blank');
+}
+
 function hideModal(id) {
     document.getElementById(id).classList.add('hidden');
     if (id === 'req-modal') {
@@ -2272,7 +2277,54 @@ async function pollActivity() {
         updateActivityInfo(schedState, status);
         updateBoardHeartbeats();
     } catch(e) {}
+    try { await pollResources(); } catch(e) {}
 }
+
+async function pollResources() {
+    const data = await api('/api/system/resources');
+    if (!data) return;
+    _updateResItem('res-mem', data.memory.percent);
+    _updateResItem('res-disk', data.disk.percent);
+}
+
+function _updateResItem(id, percent) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const p = Math.round(percent);
+    el.querySelector('.res-value').textContent = p + '%';
+    el.className = 'res-item ' + (p < 60 ? 'res-ok' : p < 80 ? 'res-warn' : 'res-danger');
+}
+
+document.getElementById('resource-bar').addEventListener('mouseenter', async () => {
+    const body = document.getElementById('res-popup-body');
+    body.innerHTML = '加载中...';
+    try {
+        const [res, agentMem] = await Promise.all([
+            api('/api/system/resources'),
+            api('/api/system/agent-memory'),
+        ]);
+        const memMB = Math.round(res.memory.used / 1024 / 1024);
+        const memTotalMB = Math.round(res.memory.total / 1024 / 1024);
+        const LABELS = {coach_dev: 'Coach-Dev', coach_review: 'Coach-Review', pm: 'PM', industry: '行业顾问'};
+        let html = '';
+        html += '<div class="res-popup-row"><span class="res-popup-role">容器内存</span><span class="res-popup-val">' + memMB + ' / ' + memTotalMB + ' MB (' + res.memory.percent + '%)</span></div>';
+        html += '<div class="res-popup-row"><span class="res-popup-role">磁盘</span><span class="res-popup-val">' + res.disk.percent + '%</span></div>';
+        html += '<div class="res-popup-row"><span class="res-popup-role">CPU</span><span class="res-popup-val">' + Math.round(res.cpu_percent) + '%</span></div>';
+        const agents = (agentMem && agentMem.agents) || [];
+        if (agents.length > 0) {
+            html += '<div class="res-popup-section">Agent 内存占用</div>';
+            for (const a of agents) {
+                const name = LABELS[a.agent_role] || a.agent_role;
+                html += '<div class="res-popup-row"><span class="res-popup-role">' + name + ' <span style="opacity:.6">[' + (a.card_code || '') + ']</span></span><span class="res-popup-val">' + a.memory_mb + ' MB</span></div>';
+            }
+        } else {
+            html += '<div class="res-popup-section">当前无 Agent 运行</div>';
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = '<span style="color:var(--danger)">加载失败</span>';
+    }
+});
 
 function updateSchedulerToggle(mode) {
     schedulerMode = mode;
@@ -3102,6 +3154,15 @@ function buildSpeech(decision) {
         return chat.replace(/\n/g, '<br>');
     }
 
+    // For agent_no_decision: agent wrote analysis but forgot to call tool — show its message directly
+    if (decision.reason === 'agent_no_decision' && decision.message) {
+        let chat = decision.message;
+        if (typeof marked !== 'undefined') {
+            return DOMPurify.sanitize(marked.parse(chat));
+        }
+        return escapeHtml(chat).replace(/\n/g, '<br>');
+    }
+
     let summary = decision.pm_summary || '';
     // Strip any role prefix
     summary = summary.replace(/^\*\*\[?[^\]]*\]?\s*[：:]\s*\*\*/m, '');
@@ -3167,6 +3228,24 @@ function buildActionButtons(decision) {
     const roleNames = { pm: '产品经理', industry: '行业顾问', coach_dev: 'Coach-Dev', coach_review: 'Coach-QA' };
     const roleName = roleNames[role] || role;
     const actions = decision.actions || ['reply_to_role'];
+
+    // For agent_no_decision or agent_d: show approve/reject quick-actions
+    const showQuickDecision = (decision.reason === 'agent_no_decision' || decision.reason === 'agent_d');
+
+    if (showQuickDecision) {
+        return `<button class="decision-btn primary" onclick="submitDecision('reply_to_role','确认，按此方案推进')">
+            <span class="decision-btn-icon">✅</span>
+            <div class="decision-btn-text">确认推进<div class="decision-btn-hint">同意方案，继续流转</div></div>
+        </button>
+        <button class="decision-btn" onclick="submitDecision('reply_to_role','否决，暂不推进')">
+            <span class="decision-btn-icon">❌</span>
+            <div class="decision-btn-text">否决<div class="decision-btn-hint">不同意，打回重新考虑</div></div>
+        </button>
+        <button class="decision-btn" onclick="submitDecision('retry')">
+            <span class="decision-btn-icon">🔄</span>
+            <div class="decision-btn-text">重试<div class="decision-btn-hint">让 AI 重新处理</div></div>
+        </button>`;
+    }
 
     const ACTION_DEFS = {
         reply_to_role: { icon: '💬', label: `回复${roleName}`, hint: '回答问题，卡片留在原列', cls: 'primary' },
@@ -3666,9 +3745,47 @@ async function showConfigModal() {
         document.getElementById('cfg-key-hint').textContent = cfg.configured ? '留空则保持原 Key 不变' : '';
         document.getElementById('cfg-api-url').value = cfg.api_base_url || '';
         document.getElementById('cfg-model').value = cfg.chat_model || '';
+        document.getElementById('cfg-model-heavy').value = cfg.chat_model_heavy || '';
+        document.getElementById('cfg-model-light').value = cfg.chat_model_light || '';
     } catch (e) {
         console.error('加载配置失败', e);
     }
+    try {
+        const cc = await api('/api/system/container-config');
+        document.getElementById('cfg-mem-limit').value = cc.memory_limit || '';
+        document.getElementById('cfg-mem-current').textContent = cc.memory_limit || '未设置';
+    } catch (e) {}
+}
+
+function switchConfigTab(tab) {
+    document.querySelectorAll('.config-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.getElementById('cfg-tab-llm').style.display = tab === 'llm' ? '' : 'none';
+    document.getElementById('cfg-tab-system').style.display = tab === 'system' ? '' : 'none';
+    document.getElementById('cfg-footer-llm').style.display = tab === 'llm' ? '' : 'none';
+    document.getElementById('cfg-footer-system').style.display = tab === 'system' ? '' : 'none';
+    if (tab === 'system') pollConfigResources();
+}
+
+async function pollConfigResources() {
+    try {
+        const data = await api('/api/system/resources');
+        if (!data) return;
+        _updateCfgRes('mem', data.memory.percent);
+        _updateCfgRes('disk', data.disk.percent);
+        _updateCfgRes('cpu', data.cpu_percent);
+    } catch (e) {}
+}
+
+function _updateCfgRes(key, percent) {
+    const fill = document.getElementById('cfg-res-' + key + '-fill');
+    const pct = document.getElementById('cfg-res-' + key + '-pct');
+    if (!fill || !pct) return;
+    const p = Math.round(percent);
+    pct.textContent = p + '%';
+    fill.style.width = p + '%';
+    const color = p < 60 ? 'var(--success)' : p < 80 ? 'var(--warning,#f59e0b)' : 'var(--danger)';
+    fill.style.background = color;
+    pct.style.color = color;
 }
 
 function onProviderChange() {}
@@ -3684,6 +3801,8 @@ async function saveConfig() {
     const apiKey = document.getElementById('cfg-api-key').value;
     const apiUrl = document.getElementById('cfg-api-url').value.trim();
     const model = document.getElementById('cfg-model').value.trim();
+    const modelHeavy = document.getElementById('cfg-model-heavy').value.trim();
+    const modelLight = document.getElementById('cfg-model-light').value.trim();
 
     if (!apiUrl) { alert('请填写 API URL'); return; }
     if (!model) { alert('请填写 Model 名称'); return; }
@@ -3691,6 +3810,8 @@ async function saveConfig() {
     try {
         const body = { provider, api_base_url: apiUrl, chat_model: model };
         if (apiKey) body.api_key = apiKey;
+        if (modelHeavy) body.chat_model_heavy = modelHeavy;
+        if (modelLight) body.chat_model_light = modelLight;
         await api('/api/config', { method: 'PUT', body });
         hideModal('config-modal');
         showToast('配置已保存并生效');
@@ -3748,4 +3869,23 @@ function showToast(msg) {
     el.textContent = msg;
     el.classList.add('show');
     setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+async function saveMemLimit() {
+    const val = document.getElementById('cfg-mem-limit').value.trim();
+    if (!val) { alert('请填写内存限制，如 4G, 2G, 512M'); return; }
+    const btn = document.getElementById('cfg-mem-btn');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    try {
+        const res = await api('/api/system/container-config', {
+            method: 'PUT',
+            body: { memory_limit: val },
+        });
+        showToast(res.message || '已保存');
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = '保存并重启';
 }

@@ -34,6 +34,23 @@ class CommentAgent:
             raise ValueError(f"Unknown role: {role_name}")
         self.project_id = project_id
 
+    def _resolve_model(self, card: dict) -> str:
+        """Pick model based on role and card status. Heavy for complex reasoning, light for bulk work."""
+        heavy = os.getenv("CHAT_MODEL_HEAVY") or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+        light = os.getenv("CHAT_MODEL_LIGHT") or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+
+        role = self.role_config.role
+        if role == "industry":
+            return light
+        if role == "coach_dev":
+            return heavy
+        if role == "pm":
+            status = card.get("status", "")
+            return heavy if status == "organizing" else light
+        if role == "coach_review":
+            return light
+        return heavy
+
     async def execute(self, card: dict, existing_comments: list[dict] | None = None,
                       on_heartbeat=None, on_process_started=None) -> dict:
         """Generate a review comment for the given card.
@@ -49,7 +66,7 @@ class CommentAgent:
                 effective_timeout = card.get("agent_timeout") or self.role_config.model.timeout
             else:
                 effective_timeout = self.role_config.model.timeout
-            response, usage = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat, on_process_started=on_process_started, requirement_id=card.get("id"))
+            response, usage = await self._call_model(prompt, timeout=effective_timeout, on_heartbeat=on_heartbeat, on_process_started=on_process_started, requirement_id=card.get("id"), card=card)
 
             if usage:
                 tokens = {
@@ -315,20 +332,20 @@ class CommentAgent:
 
         return "\n".join(sections)
 
-    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None, on_process_started=None, requirement_id: int | None = None) -> tuple[str, dict]:
+    async def _call_model(self, prompt: str, timeout: int | None = None, on_heartbeat=None, on_process_started=None, requirement_id: int | None = None, card: dict | None = None) -> tuple[str, dict]:
         """Returns (response_text, usage_dict)."""
         cfg = self.role_config.model
         effective_timeout = timeout or cfg.timeout
 
         if cfg.provider == "hermes":
-            text = await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat, requirement_id=requirement_id)
+            text = await self._call_hermes(prompt, cfg, effective_timeout, on_heartbeat, requirement_id=requirement_id, card=card)
             return text, {}
         elif cfg.provider == "claude_cli":
-            return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat, on_process_started)
+            return await self._call_claude_cli(prompt, effective_timeout, on_heartbeat, on_process_started, card=card)
         else:
             raise RuntimeError(f"Unsupported provider: {cfg.provider}")
 
-    async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None, requirement_id: int | None = None) -> str:
+    async def _call_hermes(self, prompt: str, cfg, timeout: int, on_heartbeat=None, requirement_id: int | None = None, card: dict | None = None) -> str:
         """Call hermes AIAgent in-process with MCP tools and streaming heartbeat.
 
         Key: discover_mcp_tools() must be called before AIAgent creation so the
@@ -339,7 +356,7 @@ class CommentAgent:
         from web.hermes_chat import ensure_hermes_config, _api_key, _api_base_url
         await ensure_hermes_config(mode="agent")
 
-        model_name = cfg.name or os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
+        model_name = cfg.name or self._resolve_model(card or {})
         model_name = re.sub(r'\[.*?\]', '', model_name).strip()
 
         api_key = _api_key()
@@ -352,7 +369,7 @@ class CommentAgent:
             base_url = base
             provider = "custom"
 
-        logger.info("调用 hermes AIAgent (进程内): model=%s", model_name)
+        logger.info("调用 hermes AIAgent: role=%s model=%s (路由)", self.role_config.role, model_name)
 
         def _heartbeat_cb(*_args, **_kwargs):
             if on_heartbeat:
@@ -453,7 +470,7 @@ class CommentAgent:
         output = re.sub(r'<HermesTool:[^>]*/>', '', output)
         return output.strip()
 
-    async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None, on_process_started=None) -> str:
+    async def _call_claude_cli(self, prompt: str, timeout: int, on_heartbeat=None, on_process_started=None, card: dict | None = None) -> str:
         """Call Claude CLI subprocess with kanban MCP tools.
 
         Uses --output-format stream-json: each stdout line is a heartbeat signal.
@@ -467,13 +484,15 @@ class CommentAgent:
             f"mcp__kanban__{t}" for t in self.role_config.allowed_tools
         )
 
+        model_name = self.role_config.model.name or self._resolve_model(card or {})
+
         cmd = [
             "claude",
             "-p", prompt,
             "--output-format", "stream-json",
             "--verbose",
             "--allowedTools", tools,
-            "--model", self.role_config.model.name or "claude-sonnet-4-6",
+            "--model", model_name,
             "--append-system-prompt", self.role_config.system_prompt,
         ]
 

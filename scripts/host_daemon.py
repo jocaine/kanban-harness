@@ -125,6 +125,7 @@ async def handle_start(request: web.Request) -> web.Response:
         return web.json_response({"error": "workspace not allowed"}, status=403)
 
     if not os.path.isdir(workspace):
+        logger.warning("404: workspace %s not found", workspace)
         return web.json_response({"error": "workspace directory not found"}, status=404)
 
     run_id = _gen_id()
@@ -489,6 +490,8 @@ def main():
                         help="Comma-separated list of allowed workspace directories")
     args = parser.parse_args()
 
+    os.makedirs(Path("~/.kh").expanduser(), exist_ok=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -497,8 +500,6 @@ def main():
             logging.FileHandler(Path("~/.kh/daemon.log").expanduser(), mode="a"),
         ],
     )
-
-    os.makedirs(Path("~/.kh").expanduser(), exist_ok=True)
 
     allowed_dirs = _resolve_allowed_dirs(args.allowed_dirs)
     logger.info("KH Host Daemon v%s starting on 127.0.0.1:%d", VERSION, args.port)

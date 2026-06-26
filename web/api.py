@@ -113,6 +113,172 @@ async def get_version():
     return {"version": _get_app_version()}
 
 
+@router.get("/system/resources")
+async def system_resources():
+    import psutil
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    cgroup_limit = _get_cgroup_memory_limit()
+    cgroup_used = _get_cgroup_memory_used()
+    if cgroup_limit and cgroup_used is not None:
+        mem_total = cgroup_limit
+        mem_used = cgroup_used
+        mem_percent = round(mem_used / mem_total * 100, 1)
+    else:
+        mem_total = mem.total
+        mem_used = mem.used
+        mem_percent = mem.percent
+    return {
+        "memory": {"total": mem_total, "used": mem_used, "percent": mem_percent},
+        "disk": {"total": disk.total, "used": disk.used, "percent": disk.percent},
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "container_memory_limit": _get_container_memory_limit(),
+    }
+
+
+def _get_cgroup_memory_limit() -> int | None:
+    """Read cgroup v2/v1 memory limit. Returns bytes or None if unlimited."""
+    try:
+        with open("/sys/fs/cgroup/memory.max") as f:
+            val = f.read().strip()
+            if val == "max":
+                return None
+            return int(val)
+    except FileNotFoundError:
+        pass
+    try:
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+            val = int(f.read().strip())
+            if val >= 2**62:
+                return None
+            return val
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def _get_cgroup_memory_used() -> int | None:
+    """Read cgroup v2/v1 current memory usage in bytes."""
+    try:
+        with open("/sys/fs/cgroup/memory.current") as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        pass
+    try:
+        with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
+            return int(f.read().strip())
+    except FileNotFoundError:
+        pass
+    return None
+
+
+@router.get("/system/agent-memory")
+async def agent_memory_usage():
+    """Return memory usage of each running agent process (by PID via cgroup or psutil)."""
+    import psutil
+    from core.database import DB_PATH
+    scheduler = _get_scheduler()
+    processes = scheduler.session_manager._processes
+    heartbeats = scheduler.session_manager._heartbeats
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, agent_role, input_context FROM agent_sessions WHERE status='running'"
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+
+    import json as _json
+    result = []
+    for row in rows:
+        sid = row["id"]
+        proc = processes.get(sid)
+        if not proc or proc.returncode is not None:
+            continue
+        try:
+            p = psutil.Process(proc.pid)
+            children = p.children(recursive=True)
+            mem_bytes = p.memory_info().rss
+            for child in children:
+                try:
+                    mem_bytes += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            mem_bytes = 0
+
+        card_code = ""
+        try:
+            ctx = _json.loads(row["input_context"] or "{}")
+            card_code = ctx.get("code", "")
+        except (ValueError, TypeError):
+            pass
+
+        result.append({
+            "agent_role": row["agent_role"],
+            "card_code": card_code,
+            "pid": proc.pid,
+            "memory_mb": round(mem_bytes / 1024 / 1024, 1),
+        })
+
+    return {"agents": result}
+
+
+@router.get("/system/container-config")
+async def get_container_config():
+    """Read current container memory limit from docker-compose.yml."""
+    return {"memory_limit": _get_container_memory_limit()}
+
+
+@router.put("/system/container-config")
+async def update_container_config(body: dict):
+    """Update container memory limit and restart via docker compose."""
+    import subprocess
+    memory_limit = body.get("memory_limit", "").strip()
+    if not memory_limit:
+        raise HTTPException(400, "memory_limit is required")
+    if not re.match(r'^\d+(\.\d+)?[GMgm]$', memory_limit):
+        raise HTTPException(400, "格式错误，示例: 4G, 2G, 512M")
+
+    compose_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker-compose.yml")
+
+    import yaml
+    with open(compose_path, "r") as f:
+        data = yaml.safe_load(f)
+
+    data.setdefault("services", {}).setdefault("web", {}).setdefault("deploy", {}).setdefault("resources", {}).setdefault("limits", {})["memory"] = memory_limit
+
+    with open(compose_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    logger.info("容器内存限制已更新为 %s，正在重启...", memory_limit)
+
+    try:
+        subprocess.Popen(
+            ["docker", "compose", "up", "-d", "--no-deps", "web"],
+            cwd=os.path.dirname(compose_path),
+        )
+    except Exception as e:
+        logger.error("docker compose restart 失败: %s", e)
+        return {"ok": True, "message": f"已保存为 {memory_limit}，但自动重启失败，请手动执行 docker compose up -d"}
+
+    return {"ok": True, "message": f"已保存为 {memory_limit}，容器正在重启..."}
+
+
+def _get_container_memory_limit() -> str:
+    """Read memory limit from docker-compose.yml."""
+    compose_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker-compose.yml")
+    try:
+        import yaml
+        with open(compose_path, "r") as f:
+            data = yaml.safe_load(f)
+        return (data.get("services", {}).get("web", {})
+                .get("deploy", {}).get("resources", {})
+                .get("limits", {}).get("memory", "未设置"))
+    except Exception:
+        return "未设置"
+
+
 # ==================== 1. Kanban Data API ====================
 
 @router.get("/projects")
@@ -266,8 +432,53 @@ async def update_version(vid: int, data: VersionUpdate, db: aiosqlite.Connection
     params.append(vid)
     await db.execute(f"UPDATE versions SET {','.join(updates)} WHERE id=?", params)
     await db.commit()
+
+    if data.status == "released":
+        proj_cur = await db.execute("SELECT project_id, name, git_tag FROM versions WHERE id=?", (vid,))
+        vinfo = await proj_cur.fetchone()
+        if vinfo:
+            from core.stable_build import tag_version_release
+            tag_name = vinfo["git_tag"] or vinfo["name"]
+            await tag_version_release(vinfo["project_id"], tag_name)
+
     row = await db.execute("SELECT * FROM versions WHERE id=?", (vid,))
     return dict(await row.fetchone())
+
+
+@router.get("/versions/{vid}/export")
+async def export_version(vid: int, db: aiosqlite.Connection = Depends(get_db)):
+    import shutil
+    import tempfile
+    from fastapi.responses import FileResponse
+
+    cursor = await db.execute(
+        "SELECT v.project_id, v.name, v.git_tag, v.status, p.name as project_name "
+        "FROM versions v JOIN projects p ON v.project_id = p.id WHERE v.id=?",
+        (vid,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "version not found")
+    if row["status"] != "released":
+        raise HTTPException(400, "only released versions can be exported")
+    if not row["git_tag"]:
+        raise HTTPException(400, "version has no git tag")
+
+    from core.stable_build import get_version_dir
+    version_dir = await get_version_dir(row["project_id"], row["git_tag"])
+    if not version_dir:
+        raise HTTPException(404, "version tag not found in git")
+
+    zip_name = f"{row['project_name']}_{row['name']}"
+    tmp_dir = tempfile.mkdtemp()
+    zip_path = shutil.make_archive(os.path.join(tmp_dir, zip_name), "zip", version_dir)
+
+    return FileResponse(
+        zip_path,
+        filename=f"{zip_name}.zip",
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}.zip"'},
+    )
 
 
 @router.delete("/versions/{vid}")
@@ -450,6 +661,14 @@ async def move_requirement(rid: int, data: ReqMove, request: Request, db: aiosql
             )
 
     await db.commit()
+
+    if data.status == "done" and req_type == "dev" and vrow:
+        from core.stable_build import promote_to_stable
+        cur_code = await db.execute("SELECT code FROM requirements WHERE id=?", (rid,))
+        code_row = await cur_code.fetchone()
+        card_code = code_row["code"] if code_row else ""
+        await promote_to_stable(vrow[0], card_code)
+
     row = await db.execute("SELECT * FROM requirements WHERE id=?", (rid,))
     return dict(await row.fetchone())
 
@@ -1606,6 +1825,8 @@ class ConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     api_base_url: str
     chat_model: str
+    chat_model_heavy: Optional[str] = None
+    chat_model_light: Optional[str] = None
 
 
 def _mask_key(key: str) -> str:
@@ -1630,7 +1851,8 @@ def _read_env_file() -> dict:
     return result
 
 
-def _write_env_file(provider: str, api_key: str, api_base_url: str, chat_model: str):
+def _write_env_file(provider: str, api_key: str, api_base_url: str, chat_model: str,
+                    chat_model_heavy: str | None = None, chat_model_light: str | None = None):
     """Write .env in the same format as kh config CLI."""
     env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     if provider == "openai":
@@ -1661,8 +1883,13 @@ def _write_env_file(provider: str, api_key: str, api_base_url: str, chat_model: 
     managed_keys = {
         "API_PROVIDER", "OPENAI_API_KEY", "OPENAI_BASE_URL",
         "API_KEY", "API_BASE_URL", "CHAT_MODEL",
+        "CHAT_MODEL_HEAVY", "CHAT_MODEL_LIGHT",
         "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
     }
+    if chat_model_heavy:
+        content += f"CHAT_MODEL_HEAVY={chat_model_heavy}\n"
+    if chat_model_light:
+        content += f"CHAT_MODEL_LIGHT={chat_model_light}\n"
     extras = []
     for k, v in existing.items():
         if k not in managed_keys:
@@ -1686,6 +1913,8 @@ async def get_config():
         "api_key_masked": _mask_key(api_key),
         "api_base_url": api_base_url,
         "chat_model": chat_model,
+        "chat_model_heavy": env.get("CHAT_MODEL_HEAVY", ""),
+        "chat_model_light": env.get("CHAT_MODEL_LIGHT", ""),
         "configured": bool(api_key and api_base_url and chat_model),
     }
 
@@ -1702,7 +1931,9 @@ async def update_config(body: ConfigUpdate):
     if not api_key:
         raise HTTPException(400, "API Key is required")
 
-    _write_env_file(body.provider, api_key, body.api_base_url, body.chat_model)
+    _write_env_file(body.provider, api_key, body.api_base_url, body.chat_model,
+                    chat_model_heavy=body.chat_model_heavy,
+                    chat_model_light=body.chat_model_light)
     load_dotenv(override=True)
     logger.info("配置已更新: provider=%s, model=%s", body.provider, body.chat_model)
 

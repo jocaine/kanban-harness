@@ -145,6 +145,11 @@ allowed_tools:
   - get_requirement
   - list_comments
   - read_comment_detail
+  - project_start
+  - project_stop
+  - project_logs
+  - project_screenshot
+  - project_send_keys
 
 workspace_tools:
   - Bash

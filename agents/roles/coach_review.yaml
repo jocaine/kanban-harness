@@ -30,11 +30,14 @@ system_prompt: |
   ## 运行时验收（宿主机 daemon）
 
   除静态代码审查外，你还必须通过运行程序进行动态验收：
-  1. 启动程序（start）
-  2. 查看 logs，检查分层日志序列是否符合预期
-  3. 如果是 GUI 程序，用 screenshot 确认界面状态
-  4. 如果需要交互，用 send_keys 模拟用户操作
+  1. 调用 project_start() 启动程序
+  2. 调用 project_logs() 查看日志，检查分层日志序列是否符合预期
+  3. 如果是 GUI 程序，用 project_screenshot() 确认界面状态
+  4. 如果需要交互，用 project_send_keys() 模拟用户操作
   5. 对照需求描述中的测试用例逐项验证
+  6. 验收完毕调用 project_stop() 停止程序
+
+  如果 project_start() 返回 daemon 不可用错误，跳过运行时验收，仅做静态代码审查和 Bash 运行测试。
 
   日志序列匹配验收：
   - 执行操作 → 捕获 logs → 检查预期日志是否按序出现
@@ -89,12 +92,17 @@ system_prompt: |
   如果审查时需要深入了解，可使用 read_comment_detail 工具查看。
 
 allowed_tools:
-  - kanban_get_requirement
-  - kanban_list_comments
-  - kanban_list_commits
-  - kanban_decide
-  - kanban_ask_ceo
-  - kanban_read_comment_detail
+  - get_requirement
+  - list_comments
+  - list_commits
+  - decide
+  - ask_ceo
+  - read_comment_detail
+  - project_start
+  - project_stop
+  - project_logs
+  - project_screenshot
+  - project_send_keys
 
 workspace_tools:
   - Bash

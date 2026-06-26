@@ -4,6 +4,7 @@ polling:
 
 agent:
   max_concurrent_sessions: 5
+  max_concurrent_industry: 1
   default_timeout_seconds: 600
   max_research_rounds: 10
   stall_timeout_seconds: 120

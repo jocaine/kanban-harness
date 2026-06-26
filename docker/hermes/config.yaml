@@ -25,9 +25,9 @@ mcp_servers:
 memory:
   memory_enabled: false
 model:
-  base_url: http://192.168.3.15:8317/v1
+  base_url: http://192.168.3.15:8317
   default: claude-opus-4-6
-  provider: custom
+  provider: anthropic
 platform_toolsets:
   cli:
   - browser

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 from datetime import date, datetime
 
@@ -132,6 +133,9 @@ async def handle_coach_review_result(session_manager, session_id: int, card: dic
             tokens=result.get("tokens"),
         )
 
+        # If QA approved (card moved to done), merge feature branch into main
+        await _merge_if_approved(card, repo_path, branch_name)
+
     except Exception as e:
         logger.error("[FAULT:AGENT] coach_review 失败 [%s]: %s", card.get('code', ''), e)
         await card_log(card["id"], f"coach_review 失败: {e}", level="error", source="coach_review")
@@ -248,21 +252,45 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
             if latest_pm:
                 parsed = parse_pm_research_conclusion(latest_pm["content"])
                 if parsed:
-                    _archive_research_to_wiki(project_id, card.get("code", ""), parsed)
+                    _archive_research_to_wiki(
+                        project_id, card.get("code", ""), parsed,
+                        requirement_id=req_id, version_id=card.get("version_id", 0),
+                    )
                     logger.info("[WIKI] 调研结论已归档 [%s]", card.get("code", ""))
 
         await session_manager.complete_session(session_id, f"{role_name} decided [{card.get('code', '')}]", tokens=tokens)
     else:
-        # Agent did NOT make a decision - immediate escalation
+        # Agent did NOT make a decision - extract its last comment for context
         logger.warning("[DECISION-FAIL] %s 未做出决策 [%s], 升级给 CEO",
                        role_name, card.get("code"))
         await card_log(req_id, f"{role_name} 未做出决策, 升级给 CEO", level="warning", source=role_name)
+
+        # Fetch agent's last comment to use as CEO speech (usually contains useful analysis)
+        role_display = {"pm": "产品经理", "industry": "行业顾问", "coach_dev": "Coach-Dev", "coach_review": "Coach-QA"}
+        author_name = role_display.get(role_name, role_name)
+        agent_message = ""
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT content FROM comments WHERE requirement_id=? AND author=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (req_id, author_name),
+            )
+            row = await cursor.fetchone()
+            if row:
+                agent_message = row["content"]
+
+        if agent_message:
+            display_message = agent_message[:600]
+        else:
+            display_message = f"{role_name} 执行完毕但未做出决策（未调用决策工具）"
+
         escalation_comment = f"{role_name} 执行完毕但未调用决策工具，系统自动升级给 CEO。"
         ceo_dec = json.dumps({
             "role": role_name,
             "reason": "agent_no_decision",
-            "message": f"{role_name} 执行完毕但未做出决策（未调用决策工具）",
-            "actions": ["retry", "reply_to_role", "move_to_dev", "archive"],
+            "message": display_message,
+            "actions": ["reply_to_role", "retry"],
             "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, ensure_ascii=False)
         async with aiosqlite.connect(DB_PATH) as db:
@@ -276,6 +304,46 @@ async def _validate_agent_decision(session_manager, session_id: int, card: dict,
             )
             await db.commit()
         await session_manager.complete_session(session_id, f"{role_name} escalated to CEO (no decision tool called)")
+
+
+async def _merge_if_approved(card: dict, repo_path: str, branch_name: str):
+    """Merge feature branch into dev after QA approves (card → done)."""
+    import asyncio
+    req_id = card["id"]
+    code = card.get("code", "")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT status FROM requirements WHERE id=?", (req_id,))
+        row = await cursor.fetchone()
+        if not row or row[0] != "done":
+            return
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_path, "branch", "--list", branch_name,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    if not stdout.decode().strip():
+        logger.debug("[MERGE] %s: branch %s not found, skip", code, branch_name)
+        return
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_path, "checkout", "dev",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-C", repo_path, "merge", branch_name, "--no-edit",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        logger.info("[MERGE] %s: %s merged into dev", code, branch_name)
+        await card_log(req_id, f"QA 通过，{branch_name} 已合入 dev", source="coach_review")
+    else:
+        logger.error("[MERGE] %s: merge failed: %s", code, stderr.decode()[:200])
+        await card_log(req_id, f"合并失败: {stderr.decode()[:100]}", level="error", source="coach_review")
 
 
 # ==================== Research conclusion extraction ====================
@@ -307,8 +375,10 @@ def parse_pm_research_conclusion(comment: str) -> dict | None:
             in_conclusions = True
             continue
 
-        if in_conclusions and stripped.startswith("- "):
-            conclusions.append(stripped[2:].strip())
+        if in_conclusions and (stripped.startswith("- ") or re.match(r'^\d+[\.\)]\s', stripped)):
+            item = re.sub(r'^[-\d\.\)]+\s*', '', stripped).strip()
+            if item:
+                conclusions.append(item)
 
     if not conclusions:
         return None
@@ -320,14 +390,20 @@ def parse_pm_research_conclusion(comment: str) -> dict | None:
     }
 
 
-def _archive_research_to_wiki(project_id: int, card_code: str, parsed: dict) -> None:
+def _archive_research_to_wiki(project_id: int, card_code: str, parsed: dict,
+                              requirement_id: int = 0, version_id: int = 0) -> None:
     """Write PM's research conclusions to wiki as a structured page."""
     from core.wiki import write_wiki_page
 
     today = date.today().isoformat()
-    slug = card_code.lower().replace("-", "_")
+    slug = re.sub(r'[^a-zA-Z0-9_\-]', '', card_code.lower().replace("-", "_"))
+    if not slug or slug.startswith("_"):
+        slug = "do" + slug
 
-    lines = [
+    dashboard_port = os.getenv("DASHBOARD_PORT", "8766")
+    card_url = f"http://localhost:{dashboard_port}/#p={project_id}&v={version_id}&r={requirement_id}"
+
+    lines_out = [
         "---",
         "type: research",
         f"updated: {today}",
@@ -339,18 +415,22 @@ def _archive_research_to_wiki(project_id: int, card_code: str, parsed: dict) -> 
         "",
     ]
     if parsed.get("reliability"):
-        lines.append(f"**可靠性:** {parsed['reliability']}")
-        lines.append("")
-    lines.append("## 核心结论")
-    lines.append("")
+        lines_out.append(f"**可靠性:** {parsed['reliability']}")
+        lines_out.append("")
+    lines_out.append("## 核心结论")
+    lines_out.append("")
     for point in parsed["conclusions"]:
-        lines.append(f"- {point}")
+        lines_out.append(f"- {point}")
     if parsed.get("archive_target"):
-        lines.append("")
-        lines.append("## 归档建议")
-        lines.append("")
-        lines.append(parsed["archive_target"])
+        lines_out.append("")
+        lines_out.append(f"**归档方向:** {parsed['archive_target']}")
+    lines_out.append("")
+    lines_out.append("## 来源")
+    lines_out.append("")
+    lines_out.append(f"- 卡片: [{card_code}]({card_url})")
+    lines_out.append(f"- 审核: 产品经理 ({today})")
 
-    content = "\n".join(lines) + "\n"
+    content = "\n".join(lines_out) + "\n"
     write_wiki_page(project_id, f"research/{slug}", content, f"归档调研结论 {card_code}")
     logger.info("[WIKI] 调研结论已写入 research/%s, project=%d", slug, project_id)
+

@@ -178,22 +178,33 @@ async def start_project(project_id: int) -> dict:
     if not os.path.isdir(project_path):
         return {"status": "error", "message": f"workspace not found: project_{project_id}"}
 
-    info = parse_start_script(project_path)
+    from core.stable_build import get_stable_dir
+    stable_dir = await get_stable_dir(project_id)
+    run_path = stable_dir or project_path
+    is_stable = stable_dir is not None
+
+    info = parse_start_script(run_path)
     if not info:
-        return {"status": "error", "message": "no_start_sh"}
+        if is_stable:
+            info = parse_start_script(project_path)
+        if not info:
+            return {"status": "error", "message": "no_start_sh"}
 
     cmd = info["command"]
     port = info["port"]
     path = info["path"]
     proj_type = info["type"]
 
-    logger.info("[RUNNER] start project_%d: %s (type=%s, port=%s)", project_id, cmd, proj_type, port)
+    logger.info("[RUNNER] start project_%d: %s (type=%s, port=%s, stable=%s)", project_id, cmd, proj_type, port, is_stable)
 
     # 统一宿主机执行，daemon 不在线则报错
     if not await _daemon_available():
         return {"status": "error", "message": "host daemon not running (start: python3 scripts/host_daemon.py)"}
 
-    host_path = os.path.join(HOST_WORKSPACE_BASE, f"project_{project_id}")
+    if stable_dir:
+        host_path = os.path.join(HOST_WORKSPACE_BASE, f"project_{project_id}", "_stable")
+    else:
+        host_path = os.path.join(HOST_WORKSPACE_BASE, f"project_{project_id}")
     result = await _daemon_request("POST", "/start", {"workspace": host_path, "cmd": cmd})
     if result and "_error" not in result:
         run_id = result["id"]

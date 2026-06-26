@@ -45,6 +45,23 @@
                 <span class="activity-idle">AI 团队空闲</span>
             </div>
             <div class="activity-bar-right">
+                <div class="resource-bar" id="resource-bar">
+                    <span class="res-item" id="res-mem">
+                        <span class="res-dot"></span>
+                        <span class="res-label">内存</span>
+                        <span class="res-value">--</span>
+                    </span>
+                    <span class="res-sep"></span>
+                    <span class="res-item" id="res-disk">
+                        <span class="res-dot"></span>
+                        <span class="res-label">磁盘</span>
+                        <span class="res-value">--</span>
+                    </span>
+                    <div class="res-popup" id="res-popup">
+                        <div class="res-popup-title">资源占用明细</div>
+                        <div class="res-popup-body" id="res-popup-body">加载中...</div>
+                    </div>
+                </div>
                 <button class="btn-settings-top" onclick="showConfigModal()" title="系统设置">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-1.42 3.42 2 2 0 0 1-1.42-.58l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-3.42-1.42 2 2 0 0 1 .58-1.42l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 1.42-3.42 2 2 0 0 1 1.42.58l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 3.42 1.42 2 2 0 0 1-.58 1.42l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"/></svg>
                 </button>
@@ -456,13 +473,19 @@
             <div class="config-dialog-header">
                 <div class="config-dialog-title">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-1.42 3.42 2 2 0 0 1-1.42-.58l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-3.42-1.42 2 2 0 0 1 .58-1.42l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 1.42-3.42 2 2 0 0 1 1.42.58l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 3.42 1.42 2 2 0 0 1-.58 1.42l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"/></svg>
-                    <span>LLM 配置</span>
+                    <span>系统设置</span>
                 </div>
                 <button class="config-close-btn" onclick="hideModal('config-modal')">&times;</button>
             </div>
+            <div class="config-tabs">
+                <button class="config-tab active" data-tab="llm" onclick="switchConfigTab('llm')">LLM 配置</button>
+                <button class="config-tab" data-tab="system" onclick="switchConfigTab('system')">系统资源</button>
+            </div>
             <div class="config-dialog-body">
-                <div class="config-section">
-                    <label class="config-label">Provider</label>
+                <!-- Tab: LLM 配置 -->
+                <div class="config-tab-panel" id="cfg-tab-llm">
+                    <div class="config-section">
+                        <label class="config-label">Provider</label>
                     <div class="config-provider-group">
                         <label class="config-radio" id="cfg-radio-openai">
                             <input type="radio" name="cfg-provider" value="openai" checked onchange="onProviderChange()">
@@ -498,12 +521,69 @@
                     <label class="config-label">Model</label>
                     <input type="text" id="cfg-model" class="config-input" placeholder="gpt-4o, deepseek-chat, claude-sonnet-4-6...">
                 </div>
+                <div class="config-field config-dual-model">
+                    <label class="config-label">模型路由（可选）</label>
+                    <span class="config-hint">按任务复杂度自动分配，不填则统一用上方 Model</span>
+                    <div class="config-dual-row">
+                        <div class="config-dual-item">
+                            <label class="config-sublabel">Heavy（决策/写代码）</label>
+                            <input type="text" id="cfg-model-heavy" class="config-input" placeholder="如 claude-opus-4-6">
+                        </div>
+                        <div class="config-dual-item">
+                            <label class="config-sublabel">Light（调研/审查）</label>
+                            <input type="text" id="cfg-model-light" class="config-input" placeholder="如 claude-sonnet-4-6">
+                        </div>
+                    </div>
+                </div>
+                </div><!-- end cfg-tab-llm -->
+                <!-- Tab: 系统资源 -->
+                <div class="config-tab-panel" id="cfg-tab-system" style="display:none">
+                    <div class="cfg-sys-card">
+                        <div class="cfg-sys-card-header">
+                            <span class="cfg-sys-card-title">容器内存限制</span>
+                            <span class="cfg-sys-card-badge" id="cfg-mem-current">--</span>
+                        </div>
+                        <span class="config-hint">修改后自动重启容器生效，会短暂断连</span>
+                        <div class="cfg-mem-row">
+                            <input type="text" id="cfg-mem-limit" class="config-input" placeholder="新值，如 4G, 2G, 512M" style="flex:1">
+                            <button class="btn-primary" id="cfg-mem-btn" onclick="saveMemLimit()" style="white-space:nowrap">保存并重启</button>
+                        </div>
+                    </div>
+                    <div class="cfg-sys-card">
+                        <div class="cfg-sys-card-header">
+                            <span class="cfg-sys-card-title">实时资源占用</span>
+                        </div>
+                        <div class="cfg-res-live" id="cfg-res-live">
+                            <div class="cfg-res-row">
+                                <span class="cfg-res-name">内存</span>
+                                <div class="cfg-res-track"><div class="cfg-res-fill" id="cfg-res-mem-fill"></div></div>
+                                <span class="cfg-res-pct" id="cfg-res-mem-pct">--</span>
+                            </div>
+                            <div class="cfg-res-row">
+                                <span class="cfg-res-name">磁盘</span>
+                                <div class="cfg-res-track"><div class="cfg-res-fill" id="cfg-res-disk-fill"></div></div>
+                                <span class="cfg-res-pct" id="cfg-res-disk-pct">--</span>
+                            </div>
+                            <div class="cfg-res-row">
+                                <span class="cfg-res-name">CPU</span>
+                                <div class="cfg-res-track"><div class="cfg-res-fill" id="cfg-res-cpu-fill"></div></div>
+                                <span class="cfg-res-pct" id="cfg-res-cpu-pct">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="config-dialog-footer">
+            <div class="config-dialog-footer" id="cfg-footer-llm">
                 <button class="btn-test-conn" id="cfg-test-btn" onclick="testConnection()">测试连接</button>
                 <div class="config-footer-right">
                     <button class="btn-cancel" onclick="hideModal('config-modal')">取消</button>
                     <button class="btn-primary" onclick="saveConfig()">保存并生效</button>
+                </div>
+            </div>
+            <div class="config-dialog-footer" id="cfg-footer-system" style="display:none">
+                <div></div>
+                <div class="config-footer-right">
+                    <button class="btn-cancel" onclick="hideModal('config-modal')">关闭</button>
                 </div>
             </div>
         </div>

@@ -493,12 +493,18 @@ async def ensure_hermes_config(mode: str = "chat"):
     config.setdefault("model", {})
     config["model"]["default"] = model
     if _api_base_url():
-        # Custom provider uses OpenAI SDK which needs /v1 in base_url
-        base = _api_base_url().rstrip("/")
-        if not base.endswith("/v1"):
-            base += "/v1"
-        config["model"]["base_url"] = base
-        config["model"]["provider"] = "custom"
+        api_provider = os.getenv("API_PROVIDER", "openai")
+        anthropic_base = os.getenv("ANTHROPIC_BASE_URL", "")
+        if api_provider == "anthropic" and anthropic_base:
+            base = anthropic_base.rstrip("/")
+            config["model"]["base_url"] = base
+            config["model"]["provider"] = "anthropic"
+        else:
+            base = _api_base_url().rstrip("/")
+            if not base.endswith("/v1"):
+                base += "/v1"
+            config["model"]["base_url"] = base
+            config["model"]["provider"] = "custom"
 
     # Always patch MCP server
     config.setdefault("mcp_servers", {})

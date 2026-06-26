@@ -49,9 +49,12 @@ class CoachDev:
 
         logger.info("Coach-Dev 启动: [%s] %s", code, title)
 
+        from core.stable_build import ensure_dev_branch
+        await ensure_dev_branch(self.project_id)
+
         current_branch = await self._get_current_branch()
         if current_branch and current_branch.startswith("feature/"):
-            await self._run_git("checkout", "main")
+            await self._run_git("checkout", "dev")
 
         is_scaffold = await self._is_scaffold_mode()
 
@@ -118,10 +121,7 @@ class CoachDev:
             logger.error("[FAULT:AGENT] coach_dev 失败: [%s]: %s", code, e)
             raise
         finally:
-            if is_scaffold:
-                await self._run_git("checkout", "main")
-                await self._run_git("merge", branch_name, "--no-edit")
-            else:
+            if not is_scaffold:
                 await self._cleanup_worktree(worktree_path)
             self._cleanup_mcp_config(work_path)
 
@@ -181,7 +181,8 @@ class CoachDev:
                 "请在当前工作目录中实现上述需求。完成后：\n"
                 "- 调用 decide(requirement_id=%d, comment='实现说明', target='testing')\n"
                 "- 如果需求有问题无法实现：decide(requirement_id=%d, comment='退回原因', target='organizing')\n"
-                "- 如果需要 CEO 决策：ask_ceo(requirement_id=%d, comment='背景', question='问题')"
+                "- 如果需要 CEO 决策：ask_ceo(requirement_id=%d, comment='背景', question='问题')\n\n"
+                "**禁止：** 调用 decide/ask_ceo 之前或之后再调用 add_comment。所有内容必须一次性写在 decide 的 comment+detail 中，不要分多次发。"
                 % (req_id, req_id, req_id)
             )
 
@@ -369,7 +370,7 @@ class CoachDev:
                     "file_ops": ops_validation["file_ops_count"]}
 
         # Verify diff is non-trivial (not just config artifacts)
-        diff_stat = await self._run_git_in(work_path, "diff", "--stat", f"main..HEAD")
+        diff_stat = await self._run_git_in(work_path, "show", "--stat", "HEAD")
         ignored_patterns = (".mcp.json", ".claude/")
         real_changes = [
             line for line in diff_stat.splitlines()
@@ -437,7 +438,7 @@ class CoachDev:
             await self._run_git("worktree", "remove", "--force", worktree_path)
         proc = await self._run_git("branch", "--list", branch_name)
         if not proc.strip():
-            await self._run_git("branch", branch_name, "main")
+            await self._run_git("branch", branch_name, "dev")
         await self._run_git("worktree", "add", worktree_path, branch_name)
 
     async def _cleanup_worktree(self, worktree_path: str):
@@ -477,7 +478,7 @@ class CoachDev:
         return stdout.decode(errors="replace").strip()
 
     async def _check_commits(self, branch_name: str) -> bool:
-        output = await self._run_git("log", f"main..{branch_name}", "--oneline")
+        output = await self._run_git("log", f"dev..{branch_name}", "--oneline")
         return len(output.strip()) > 0
 
     async def _get_latest_commit(self, worktree_path: str) -> str:

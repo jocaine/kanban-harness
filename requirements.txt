@@ -9,3 +9,4 @@ anthropic>=0.40.0
 croniter>=2.0.0
 pyyaml>=6.0
 aiohttp>=3.9
+psutil>=5.9

@@ -83,6 +83,7 @@ class SchedulerEngine:
         workflow_config.reload_if_changed()
         await self._reconcile_running_sessions()
         await self._reconcile_ceo_decisions()
+        await self._reconcile_merged_dev_cards()
 
         cards = await self._find_actionable_cards()
         events = await self._peek_pending_events()
@@ -268,6 +269,89 @@ class SchedulerEngine:
                 (requirement_id,),
             )
             await db.commit()
+
+    # ==================== Git state reconciliation ====================
+
+    async def _reconcile_merged_dev_cards(self):
+        """Detect dev cards whose feature branch is already merged into main."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT r.id, r.code, r.status, v.project_id, p.git_remote_url "
+                "FROM requirements r "
+                "JOIN versions v ON r.version_id = v.id "
+                "JOIN projects p ON v.project_id = p.id "
+                "WHERE r.status = 'dev' AND r.type = 'dev' AND r.archived = 0"
+            )
+            dev_cards = [dict(row) for row in await cursor.fetchall()]
+
+        for card in dev_cards:
+            try:
+                if await self._was_rejected_by_qa(card["id"]):
+                    continue
+                repo_path = await get_project_repo_path(
+                    card["project_id"], card.get("git_remote_url", "")
+                )
+                branch_name = f"feature/{card['code'].lower()}"
+                if await self._is_branch_merged(repo_path, branch_name):
+                    logger.info(
+                        "[RECONCILE] %s: feature branch 已在 main，自动推进 testing",
+                        card["code"],
+                    )
+                    await card_log(
+                        card["id"],
+                        "代码已在 main（reconciliation 检测），自动推进 testing",
+                        source="sched",
+                    )
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute(
+                            "UPDATE requirements SET status='testing', ceo_decision=NULL, "
+                            "progressed_at=? WHERE id=?",
+                            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), card["id"]),
+                        )
+                        await db.commit()
+                    broadcast("card_updated", {
+                        "id": card["id"],
+                        "action": "status_changed",
+                        "status": "testing",
+                    })
+            except Exception as e:
+                logger.debug("[RECONCILE] %s: git 检查跳过: %s", card.get("code", ""), e)
+
+    async def _was_rejected_by_qa(self, requirement_id: int) -> bool:
+        """Card has been through QA (any state) -- don't auto-advance."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT 1 FROM agent_sessions "
+                "WHERE requirement_id=? AND agent_role='coach_review' "
+                "LIMIT 1",
+                (requirement_id,),
+            )
+            return await cursor.fetchone() is not None
+
+    async def _is_branch_merged(self, repo_path: str, branch_name: str) -> bool:
+        """Check if branch_name is an ancestor of main (i.e. fully merged)."""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", repo_path, "branch", "--list", branch_name,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if not stdout.decode().strip():
+            merge_proc = await asyncio.create_subprocess_exec(
+                "git", "-C", repo_path, "log", "main", "--oneline", "-1",
+                "--grep", f"Merge branch '{branch_name}'",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await merge_proc.communicate()
+            return bool(stdout.decode().strip())
+
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", repo_path, "merge-base", "--is-ancestor", branch_name, "main",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        return proc.returncode == 0
+
 
     # ==================== Card discovery & dispatch ====================
 
@@ -474,6 +558,22 @@ class SchedulerEngine:
             logger.info("[SCHED] 跳过 '%s': req=%d 已有 running session", role_name, requirement_id)
             return
 
+        if role_name == "industry":
+            running = await self.session_manager.get_running_sessions()
+            industry_running = [s for s in running if s["agent_role"] == "industry"]
+            if len(industry_running) >= workflow_config.max_concurrent_industry:
+                logger.info("[SCHED] 跳过 industry: 并发上限 %d 已达 (req=%d 排队等待)",
+                            workflow_config.max_concurrent_industry, requirement_id)
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "UPDATE requirements SET queue_reason='waiting_turn', "
+                        "updated_at=datetime('now','localtime') WHERE id=?",
+                        (requirement_id,),
+                    )
+                    await db.commit()
+                broadcast("card_updated", {"id": requirement_id, "action": "queued"})
+                return
+
         logger.info("[SCHED] → 触发 comment_agent '%s': req=%d, event=%s", role_name, requirement_id, event["event_type"])
         await card_log(requirement_id, f"触发 comment_agent '{role_name}'", source="sched")
 
@@ -493,7 +593,8 @@ class SchedulerEngine:
             }
             col_role = AGENT_COLUMN_ROLE.get(role_name, role_name)
             await db.execute(
-                "UPDATE requirements SET assignee=?, updated_at=datetime('now','localtime') WHERE id=?",
+                "UPDATE requirements SET assignee=?, queue_reason='', "
+                "updated_at=datetime('now','localtime') WHERE id=?",
                 (col_role, requirement_id),
             )
             await db.commit()
